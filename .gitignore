@@ -25,6 +25,9 @@ xcuserdata/
 *.xcuserstate
 DerivedData/
 build/
+# SwiftPM's build directory. Note this is `.build/`, NOT `build/` — gitignore patterns
+# match on the exact name, so the `build/` line above does not cover it.
+.build/
 *.moved-aside
 *.hmap
 *.ipa
