@@ -151,7 +151,12 @@ values
   ('shoulder-passthrough',     'Shoulder Pass-Through',      'mobility',   'band',       'reps', null, 12),
   ('foam-roll-quads',          'Foam Roll Quads',            'mobility',   'other',      'time',   60, null),
   ('downward-dog',             'Downward Dog',               'mobility',   'bodyweight', 'time',   45, null),
-  ('childs-pose',              'Child''s Pose',              'mobility',   'bodyweight', 'time',   60, null)
+  ('childs-pose',              'Child''s Pose',              'mobility',   'bodyweight', 'time',   60, null),
+
+  -- warm-up staples
+  ('arm-circles',              'Arm Circles',                'mobility',   'bodyweight', 'reps', null, 15),
+  ('scapular-push-up',         'Scapular Push-Up',           'chest',      'bodyweight', 'reps', null, 10),
+  ('inchworm',                 'Inchworm',                   'full_body',  'bodyweight', 'reps', null,  5)
 on conflict (slug) do update set
   name                     = excluded.name,
   muscle_group             = excluded.muscle_group,

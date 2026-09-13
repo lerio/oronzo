@@ -28,8 +28,13 @@ public struct PlanStep: Codable, Equatable, Sendable {
     public var label: String?
     public var mode: StepMode
     public var duration: TimeInterval?
+    /// Base of the rep range — the number you start at. Nil for a timed step.
     public var reps: Int?
+    /// Optional ceiling, making the target a range ("6-8"). Never below `reps`.
+    public var repsMax: Int?
     public var targetWeightKg: Double?
+    /// Optional ceiling, making the load a range ("50-60 kg").
+    public var targetWeightMaxKg: Double?
     /// Rest inserted after this step *within* a round. Fires even on the last step of a
     /// round — see `PlanFlattener` for why.
     public var restAfter: TimeInterval?
@@ -41,7 +46,9 @@ public struct PlanStep: Codable, Equatable, Sendable {
         mode: StepMode = .reps,
         duration: TimeInterval? = nil,
         reps: Int? = nil,
+        repsMax: Int? = nil,
         targetWeightKg: Double? = nil,
+        targetWeightMaxKg: Double? = nil,
         restAfter: TimeInterval? = nil
     ) {
         self.exerciseID = exerciseID
@@ -50,8 +57,22 @@ public struct PlanStep: Codable, Equatable, Sendable {
         self.mode = mode
         self.duration = duration
         self.reps = reps
+        self.repsMax = repsMax
         self.targetWeightKg = targetWeightKg
+        self.targetWeightMaxKg = targetWeightMaxKg
         self.restAfter = restAfter
+    }
+
+    // MARK: - Display
+
+    /// "6–8 reps", "10 reps", or nil for a timed step.
+    public var repsDisplay: String? {
+        kind == .rest ? nil : RangeFormat.reps(mode == .reps ? reps : nil, mode == .reps ? repsMax : nil)
+    }
+
+    /// "50–60 kg" or "20 kg".
+    public var weightDisplay: String? {
+        kind == .rest ? nil : RangeFormat.weight(targetWeightKg, targetWeightMaxKg)
     }
 }
 
@@ -93,7 +114,9 @@ public struct Interval: Codable, Equatable, Sendable, Identifiable {
     /// Non-nil for timed intervals *and* rests; nil for rep-based intervals.
     public let duration: TimeInterval?
     public let reps: Int?
+    public let repsMax: Int?
     public let targetWeightKg: Double?
+    public let targetWeightMaxKg: Double?
     public let roundIndex: Int
     public let blockIndex: Int
     public let blockName: String?
@@ -111,7 +134,9 @@ public struct Interval: Codable, Equatable, Sendable, Identifiable {
         mode: StepMode?,
         duration: TimeInterval?,
         reps: Int?,
+        repsMax: Int? = nil,
         targetWeightKg: Double?,
+        targetWeightMaxKg: Double? = nil,
         roundIndex: Int,
         blockIndex: Int,
         blockName: String?,
@@ -123,10 +148,49 @@ public struct Interval: Codable, Equatable, Sendable, Identifiable {
         self.mode = mode
         self.duration = duration
         self.reps = reps
+        self.repsMax = repsMax
         self.targetWeightKg = targetWeightKg
+        self.targetWeightMaxKg = targetWeightMaxKg
         self.roundIndex = roundIndex
         self.blockIndex = blockIndex
         self.blockName = blockName
         self.exerciseID = exerciseID
+    }
+
+    // MARK: - Display
+
+    /// "6–8 reps", "10 reps", or nil for a timed interval.
+    public var repsDisplay: String? { RangeFormat.reps(reps, repsMax) }
+
+    /// "50–60 kg" or "20 kg".
+    public var weightDisplay: String? { RangeFormat.weight(targetWeightKg, targetWeightMaxKg) }
+
+    /// The single value the Watch should lead with, if any — the base of the range.
+    public var primaryTarget: String? {
+        if let duration { return "\(Int(duration))s" }
+        return repsDisplay
+    }
+}
+
+/// Formats the "6–8" / "50–60 kg" shapes. One implementation, used by both `PlanStep` (the
+/// prescription) and `Interval` (what actually runs), so the two cannot drift apart in how
+/// they read.
+public enum RangeFormat {
+
+    /// Whole numbers lose their trailing ".0"; halves keep theirs.
+    public static func number(_ value: Double) -> String {
+        value == value.rounded() ? String(Int(value)) : String(format: "%.1f", value)
+    }
+
+    public static func reps(_ low: Int?, _ high: Int?) -> String? {
+        guard let low else { return nil }
+        if let high, high > low { return "\(low)–\(high) reps" }
+        return "\(low) reps"
+    }
+
+    public static func weight(_ low: Double?, _ high: Double?) -> String? {
+        guard let low else { return nil }
+        if let high, high > low { return "\(number(low))–\(number(high)) kg" }
+        return "\(number(low)) kg"
     }
 }

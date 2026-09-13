@@ -74,20 +74,13 @@ private struct BlockView: View {
 
     private func target(_ step: PlanStep) -> String {
         var parts: [String] = []
-        if step.kind == .rest {
-            if let duration = step.duration { parts.append("\(Int(duration))s") }
-        } else if step.mode == .time, let duration = step.duration {
+        if let duration = step.duration, step.kind == .rest || step.mode == .time {
             parts.append("\(Int(duration))s")
-        } else if let reps = step.reps {
-            parts.append("\(reps) reps")
         }
-        if let weight = step.targetWeightKg { parts.append("@ \(formatted(weight))kg") }
+        if let reps = step.repsDisplay { parts.append(reps) }
+        if let weight = step.weightDisplay { parts.append("@ \(weight)") }
         if let rest = step.restAfter { parts.append("+\(Int(rest))s rest") }
         return parts.joined(separator: " ")
-    }
-
-    private func formatted(_ value: Double) -> String {
-        value == value.rounded() ? String(Int(value)) : String(format: "%.1f", value)
     }
 }
 
@@ -119,8 +112,8 @@ private struct IntervalRow: View {
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
                     .labelStyle(.titleAndIcon)
-            } else if let reps = interval.reps {
-                Text("\(reps) reps")
+            } else if let reps = interval.repsDisplay {
+                Text(reps)
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
             }

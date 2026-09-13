@@ -4,7 +4,8 @@ import type { Exercise, Plan, PlanBlock, PlanStep, StepMode } from './types';
 /** Kept on one line: PostgREST parses this as a query string, and embedded newlines break it. */
 const PLAN_SELECT =
   'id,name,notes,updated_at,plan_blocks(id,position,name,rounds,rest_between_rounds_seconds,' +
-  'plan_steps(id,position,kind,exercise_id,label,mode,duration_seconds,reps,target_weight_kg,rest_after_seconds,notes))';
+  'plan_steps(id,position,kind,exercise_id,label,mode,duration_seconds,reps,reps_max,' +
+  'target_weight_kg,target_weight_max_kg,rest_after_seconds,notes))';
 
 type PlanRow = {
   id: string;
@@ -61,7 +62,9 @@ export async function savePlan(plan: Plan): Promise<string> {
         mode: step.mode,
         duration_seconds: step.duration_seconds,
         reps: step.reps,
+        reps_max: step.reps_max,
         target_weight_kg: step.target_weight_kg,
+        target_weight_max_kg: step.target_weight_max_kg,
         rest_after_seconds: step.rest_after_seconds,
         notes: step.notes,
         position: stepIndex,

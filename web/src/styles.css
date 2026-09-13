@@ -284,6 +284,12 @@ textarea:focus {
   width: 72px;
 }
 
+/* The dash between the two ends of a range ("6–8"). */
+.range-sep {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .search {
   width: 220px;
 }
