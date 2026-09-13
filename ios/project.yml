@@ -25,13 +25,28 @@ settings:
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
 
+# Shared logic lives in a local SwiftPM package rather than a folder of shared sources,
+# so that it can be unit-tested on macOS with `swift test` — no simulator, no signing.
+packages:
+  OronzoCore:
+    path: OronzoCore
+
 targets:
   Oronzo:
     type: application
     platform: iOS
     sources:
       - path: Oronzo
-      - path: Shared
+    dependencies:
+      - package: OronzoCore
+        product: OronzoCore
+      # Embeds the watch app at <Oronzo.app>/Watch/OronzoWatch.app — where watchOS expects it.
+      # Verified in M0 by inspecting the built bundle, not by trusting the YAML.
+      - target: OronzoWatch
+        embed: true
+        copy:
+          destination: wrapper
+          subpath: Watch
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.lerio.oronzo
@@ -40,21 +55,15 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         SUPPORTS_MACCATALYST: NO
         SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
-    dependencies:
-      # Embeds the watch app at <Oronzo.app>/Watch/OronzoWatch.app — where watchOS expects it.
-      # Verified in M0 by inspecting the built bundle, not by trusting the YAML.
-      - target: OronzoWatch
-        embed: true
-        copy:
-          destination: wrapper
-          subpath: Watch
 
   OronzoWatch:
     type: application
     platform: watchOS
     sources:
       - path: OronzoWatch
-      - path: Shared
+    dependencies:
+      - package: OronzoCore
+        product: OronzoCore
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.lerio.oronzo.watchkitapp

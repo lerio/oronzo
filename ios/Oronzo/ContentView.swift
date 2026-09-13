@@ -1,3 +1,4 @@
+import OronzoCore
 import SwiftUI
 
 /// Milestone M0 placeholder. Replaced by the plan list and session engine in M4–M5.
