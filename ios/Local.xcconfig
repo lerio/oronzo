@@ -1,0 +1,22 @@
+// Committed, publishable defaults. Safe to be in a public repository — everything here
+// is empty on purpose.
+//
+// Your real values go in `Local.private.xcconfig`, which is gitignored and pulled in by
+// the optional include at the bottom of this file. `#include?` (with the question mark)
+// means "include if it exists, and do not fail if it does not" — which is what lets a
+// fresh clone build with no local configuration at all.
+//
+// Deliberately ordered: in xcconfig, later assignments win, so these empty defaults must
+// come BEFORE the include in order for the include to override them.
+//
+//   cp ios/Local.private.xcconfig.example ios/Local.private.xcconfig
+
+// Apple Developer team ID — the OU= field of your Apple Development certificate.
+DEVELOPMENT_TEAM =
+
+// Supabase. The project *ref* only, never the full URL: `//` starts a comment in
+// xcconfig, so `https://xyz.supabase.co` would silently truncate to `https:`.
+SUPABASE_PROJECT_REF =
+SUPABASE_PUBLISHABLE_KEY =
+
+#include? "Local.private.xcconfig"

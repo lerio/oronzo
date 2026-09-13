@@ -24,6 +24,16 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<!--
+	  Backend config, substituted at build time from ios/Local.xcconfig (gitignored) so no
+	  account-specific values are published. Empty values are what a fresh clone gets: the
+	  app builds and runs, and reports clearly at runtime that it is unconfigured rather
+	  than failing in a confusing way.
+	-->
+	<key>SupabaseProjectRef</key>
+	<string>$(SUPABASE_PROJECT_REF)</string>
+	<key>SupabasePublishableKey</key>
+	<string>$(SUPABASE_PUBLISHABLE_KEY)</string>
 	<!-- Keeps the session engine alive while the phone is in a pocket. See docs/decisions.md. -->
 	<key>UIBackgroundModes</key>
 	<array>

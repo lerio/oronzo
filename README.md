@@ -29,19 +29,23 @@ Plans are authored **only** in the web app; the iPhone executes them.
 ```bash
 # Web app
 cd web
-cp .env.example .env.local     # fill in your Supabase URL + publishable key
+cp .env.example .env.local                    # fill in your Supabase URL + publishable key
 npm install && npm run dev
 
 # iOS / watchOS
 cd ios
-cp Signing.xcconfig.example Signing.xcconfig   # fill in your Apple team ID
-xcodegen generate && open Oronzo.xcodeproj     # requires: brew install xcodegen
+cp Local.private.xcconfig.example Local.private.xcconfig   # team ID + Supabase values
+xcodegen generate && open Oronzo.xcodeproj                 # requires: brew install xcodegen
 ```
 
+The iOS project builds with or without that last file — the committed `Local.xcconfig`
+includes it optionally, so a fresh clone compiles and simply tells you at runtime that it
+is unconfigured.
+
 The `.xcodeproj` is **generated and gitignored** — edit `ios/project.yml` instead. Likewise
-`.env.local` and `Signing.xcconfig` are gitignored: this repo is public, so the Supabase
-project URL and the signing team ID stay local. See `docs/decisions.md` for the reasoning
-behind the architecture and `docs/runbook.md` for the weekly re-signing ritual.
+`.env.local` and `Local.private.xcconfig` are gitignored: this repo is public, so the
+Supabase project and the signing team ID stay local. See `docs/decisions.md` for the
+architecture and `docs/runbook.md` for the weekly re-signing ritual.
 
 ## Constraints we build around
 

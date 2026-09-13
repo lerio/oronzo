@@ -1,0 +1,33 @@
+// Copy to `Local.private.xcconfig` (which is gitignored) and fill in your own values.
+//
+//   cp ios/Local.private.xcconfig.example ios/Local.private.xcconfig
+//
+// The committed `Local.xcconfig` includes this file optionally, so the project builds
+// with or without it — without it, the app runs and explains that it is unconfigured.
+
+// --- Signing -----------------------------------------------------------------
+// Your team ID is the OU= field of your Apple Development certificate:
+//
+//   security find-certificate -c "Apple Development" -p | openssl x509 -noout -subject
+//
+// Output looks like:
+//   subject=UID=XXXXXXXXXX, CN=Apple Development: you@example.com (YYYYYYYYYY),
+//           OU=ZZZZZZZZZZ, O=Your Name, C=US
+//                ^^^^^^^^^^ this is the team ID
+//
+// A free "personal team" works — it is what this project is developed against. It just
+// expires provisioning profiles every 7 days, so you re-run from Xcode weekly.
+DEVELOPMENT_TEAM = YOUR_TEAM_ID
+
+// --- Supabase ----------------------------------------------------------------
+// From the Supabase dashboard: Project Settings -> API Keys.
+//
+// Store the project REF only, never the full URL: in xcconfig files `//` begins a
+// comment, so `https://xyz.supabase.co` would silently become `https:`. The app
+// rebuilds the URL from the ref.
+//
+// Only ever put the PUBLISHABLE key here. It is safe in a shipped client — it grants no
+// privileges by itself and row-level security protects every table. The secret key
+// (sb_secret_...) must never appear in this file, in the app, or in this repository.
+SUPABASE_PROJECT_REF = your-project-ref
+SUPABASE_PUBLISHABLE_KEY = sb_publishable_your_key

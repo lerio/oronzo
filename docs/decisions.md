@@ -79,5 +79,6 @@ row-level security protects every table, and `anon` is granted nothing. The `sb_
 key is never used by this project.
 
 The Supabase URL and key live in `web/.env.local` (gitignored); only placeholders are
-committed. The signing team ID lives in `ios/Signing.xcconfig` (gitignored) for the same
-reason — this repo is public.
+committed. On iOS they live in `ios/Local.private.xcconfig` (gitignored, and included
+*optionally* by the committed `ios/Local.xcconfig` so a fresh clone still builds). The
+signing team ID sits in the same file, for the same reason — this repository is public.

@@ -34,13 +34,16 @@ picked up by folder, no project edit needed.
 
 ```bash
 cd ios
-cp Signing.xcconfig.example Signing.xcconfig   # then fill in your team ID
+cp Local.private.xcconfig.example Local.private.xcconfig   # then fill in your values
 xcodegen generate
 
 cd ../web
 cp .env.example .env.local                    # then fill in URL + publishable key
 npm install
 ```
+
+Both files are gitignored and optional: without the iOS one the project still builds and
+the app reports that it is unconfigured.
 
 ## Running the web app
 

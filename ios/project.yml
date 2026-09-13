@@ -10,13 +10,13 @@ options:
     iOS: "26.0"
     watchOS: "26.0"
 
-# The signing team lives in ios/Signing.xcconfig, which is gitignored — this repo is
-# public and a team ID is an account identifier we would rather not publish. Copy
-# ios/Signing.xcconfig.example to create it:
-#   cp ios/Signing.xcconfig.example ios/Signing.xcconfig
+# Everything account-specific — the signing team and the Supabase project — lives in
+# ios/Local.xcconfig, which is gitignored, so this repository can be public without
+# publishing anyone's identifiers. Copy the example to create it:
+#   cp ios/Local.xcconfig.example ios/Local.xcconfig
 configFiles:
-  Debug: Signing.xcconfig
-  Release: Signing.xcconfig
+  Debug: Local.xcconfig
+  Release: Local.xcconfig
 
 settings:
   base:
@@ -30,6 +30,11 @@ settings:
 packages:
   OronzoCore:
     path: OronzoCore
+  # Auth + PostgREST + token refresh. Only the iOS app talks to the backend — the Watch
+  # gets everything from the phone over WatchConnectivity, so it stays dependency-free.
+  Supabase:
+    url: https://github.com/supabase/supabase-swift
+    from: 2.55.2
 
 targets:
   Oronzo:
@@ -40,6 +45,8 @@ targets:
     dependencies:
       - package: OronzoCore
         product: OronzoCore
+      - package: Supabase
+        product: Supabase
       # Embeds the watch app at <Oronzo.app>/Watch/OronzoWatch.app — where watchOS expects it.
       # Verified in M0 by inspecting the built bundle, not by trusting the YAML.
       - target: OronzoWatch

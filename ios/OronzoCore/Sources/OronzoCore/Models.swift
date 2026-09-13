@@ -22,7 +22,7 @@ public struct Exercise: Equatable, Sendable, Identifiable {
     }
 }
 
-public struct PlanStep: Equatable, Sendable {
+public struct PlanStep: Codable, Equatable, Sendable {
     public var exerciseID: UUID?
     public var kind: StepKind
     public var label: String?
@@ -55,7 +55,7 @@ public struct PlanStep: Equatable, Sendable {
     }
 }
 
-public struct PlanBlock: Equatable, Sendable {
+public struct PlanBlock: Codable, Equatable, Sendable {
     public var name: String?
     public var rounds: Int
     /// Rest between rounds only — *not* after the final round.
@@ -70,7 +70,7 @@ public struct PlanBlock: Equatable, Sendable {
     }
 }
 
-public struct Plan: Equatable, Sendable {
+public struct Plan: Codable, Equatable, Identifiable, Sendable {
     public var id: UUID
     public var name: String
     public var blocks: [PlanBlock]
@@ -84,7 +84,7 @@ public struct Plan: Equatable, Sendable {
 
 /// One entry in the flattened execution sequence — the unit the engine runs and the Watch
 /// displays.
-public struct Interval: Equatable, Sendable, Identifiable {
+public struct Interval: Codable, Equatable, Sendable, Identifiable {
     public let index: Int
     public let kind: StepKind
     /// What to show: the exercise name, or "Break".
