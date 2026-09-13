@@ -1,0 +1,79 @@
+# XcodeGen source of truth. The .xcodeproj is generated — never edit or commit it.
+#   cd ios && xcodegen generate && open Oronzo.xcodeproj
+
+name: Oronzo
+
+options:
+  bundleIdPrefix: com.lerio
+  createIntermediateGroups: true
+  deploymentTarget:
+    iOS: "26.0"
+    watchOS: "26.0"
+
+# The signing team lives in ios/Signing.xcconfig, which is gitignored — this repo is
+# public and a team ID is an account identifier we would rather not publish. Copy
+# ios/Signing.xcconfig.example to create it:
+#   cp ios/Signing.xcconfig.example ios/Signing.xcconfig
+configFiles:
+  Debug: Signing.xcconfig
+  Release: Signing.xcconfig
+
+settings:
+  base:
+    CODE_SIGN_STYLE: Automatic
+    SWIFT_VERSION: "6.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+
+targets:
+  Oronzo:
+    type: application
+    platform: iOS
+    sources:
+      - path: Oronzo
+      - path: Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.lerio.oronzo
+        PRODUCT_NAME: Oronzo
+        INFOPLIST_FILE: Oronzo/Info.plist
+        TARGETED_DEVICE_FAMILY: "1"
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+    dependencies:
+      # Embeds the watch app at <Oronzo.app>/Watch/OronzoWatch.app — where watchOS expects it.
+      # Verified in M0 by inspecting the built bundle, not by trusting the YAML.
+      - target: OronzoWatch
+        embed: true
+        copy:
+          destination: wrapper
+          subpath: Watch
+
+  OronzoWatch:
+    type: application
+    platform: watchOS
+    sources:
+      - path: OronzoWatch
+      - path: Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.lerio.oronzo.watchkitapp
+        PRODUCT_NAME: OronzoWatch
+        INFOPLIST_FILE: OronzoWatch/Info.plist
+        TARGETED_DEVICE_FAMILY: "4"
+
+schemes:
+  Oronzo:
+    build:
+      targets:
+        Oronzo: all
+    run:
+      config: Debug
+    archive:
+      config: Release
+  OronzoWatch:
+    build:
+      targets:
+        OronzoWatch: all
+    run:
+      config: Debug
