@@ -1,50 +1,54 @@
--- Exercises get their own set count.
+-- A step is an exercise. The rest/exercise distinction goes away.
 --
--- Until now only a *block* could repeat, so "4 x 6-8 bench press" had to be modelled as a
--- block wrapping a single step. That worked but read backwards: the set count belongs to
--- the exercise, not to a group containing one thing. Now both can repeat, and the two
--- words mean different things:
+-- Rest is now expressed where it actually belongs, rather than as a step that pretends to
+-- be one:
 --
---   plan_steps.sets    repeat one exercise -> "4 x 6-8 bench press"      (sets)
---   plan_blocks.rounds repeat the whole group -> "6 x (20s hard, 40s easy)" (rounds)
+--   step.rest_after_seconds      rest after each set of that exercise
+--   block.rest_between_rounds_seconds  rest between rounds of a group
 --
--- `rest_after_seconds` keeps its behaviour: it fires after EACH set of the step, including
--- the final one, so an exercise's rest carries you into the next exercise. Its label in the
--- builder is "rest sets", which describes its main job; the trailing
--- rest is deliberate (agreed 2026-09-14).
-
-alter table public.plan_steps
-  add column if not exists sets integer not null default 1;
-
-alter table public.plan_steps
-  drop constraint if exists plan_steps_sets_positive;
-alter table public.plan_steps
-  add constraint plan_steps_sets_positive check (sets >= 1);
-
--- The session record has always wanted to say "which set of the exercise was this"; now it
--- can, and the name says so. block_round is the other dimension: which pass through the
--- block.
-do $rename$
-begin
-  if exists (
-    select 1 from information_schema.columns
-    where table_schema = 'public' and table_name = 'session_steps' and column_name = 'round_index'
-  ) then
-    alter table public.session_steps rename column round_index to set_index;
-  end if;
-end;
-$rename$;
-
-alter table public.session_steps
-  add column if not exists block_round integer;
-
-comment on column public.session_steps.set_index is
-  'Which set of the exercise this was (1-based).';
-comment on column public.session_steps.block_round is
-  'Which round of the enclosing block this was (1-based).';
+-- A standalone rest step had nothing left to do, and it could not be edited once the
+-- builder stopped offering the choice, so it is gone rather than merely hidden.
+--
+-- NOTE: the execution stream still distinguishes exercises from rests — a synthetic rest
+-- interval is emitted between sets. `session_steps.kind` and `Interval.kind` therefore
+-- stay; only the *plan* stops pretending a rest is a kind of exercise.
 
 -- ---------------------------------------------------------------------------
--- save_plan, carrying the set count.
+-- Any existing rest steps have to go: with `kind` removed they would be steps with no
+-- exercise, which the last constraint below forbids. They carry nothing but a duration.
+-- Reported rather than silent.
+-- ---------------------------------------------------------------------------
+
+do $cleanup$
+declare
+  v_removed integer;
+begin
+  delete from public.plan_steps where kind = 'rest';
+  get diagnostics v_removed = row_count;
+  if v_removed > 0 then
+    raise notice 'Removed % standalone rest step(s). Use a step''s "rest between exercise rounds", or a block''s "rest between rounds", instead.', v_removed;
+  end if;
+end;
+$cleanup$;
+
+-- Constraints that referenced `kind` must go before the column can.
+alter table public.plan_steps drop constraint if exists plan_steps_shape;
+alter table public.plan_steps drop constraint if exists plan_steps_exercise_required;
+alter table public.plan_steps drop constraint if exists plan_steps_mode_shape;
+
+alter table public.plan_steps drop column if exists kind;
+
+-- Now that a step is always an exercise, these hold unconditionally.
+alter table public.plan_steps alter column exercise_id set not null;
+
+alter table public.plan_steps
+  add constraint plan_steps_mode_shape check (
+    (mode = 'time' and duration_seconds is not null)
+    or (mode = 'reps' and reps is not null)
+  );
+
+-- ---------------------------------------------------------------------------
+-- save_plan without `kind`.
 -- ---------------------------------------------------------------------------
 
 create or replace function public.save_plan(payload jsonb)
@@ -97,12 +101,11 @@ begin
     for v_step in select * from jsonb_array_elements(coalesce(v_block->'steps', '[]'::jsonb))
     loop
       insert into public.plan_steps (
-        block_id, position, kind, exercise_id, label, sets, mode,
+        block_id, position, exercise_id, label, sets, mode,
         duration_seconds, reps, target_weight_kg, rest_after_seconds, notes
       ) values (
         v_block_id,
         v_step_pos,
-        coalesce(nullif(v_step->>'kind', ''), 'exercise'),
         nullif(v_step->>'exercise_id', '')::uuid,
         nullif(v_step->>'label', ''),
         coalesce(nullif(v_step->>'sets', '')::int, 1),

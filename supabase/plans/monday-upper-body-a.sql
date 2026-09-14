@@ -66,10 +66,10 @@ begin
   end if;
 
   insert into public.plan_steps (
-    block_id, position, kind, exercise_id, label, sets, mode,
+    block_id, position, exercise_id, label, sets, mode,
     duration_seconds, reps, target_weight_kg, rest_after_seconds, notes
   ) values (
-    p_block, p_position, 'exercise', v_exercise,
+    p_block, p_position, v_exercise,
     nullif(p_label, ''), coalesce(p_sets, 1), p_mode,
     p_duration, p_reps, p_weight,
     p_rest_after, nullif(p_notes, '')

@@ -21,28 +21,11 @@ function stepFromExercise(exercise: Exercise | undefined): PlanStep {
   return {
     exercise_id: exercise?.id ?? null,
     position: 0,
-    kind: 'exercise',
     label: null,
     sets: 1,
     mode: exercise?.default_mode ?? 'reps',
     duration_seconds: isTime ? (exercise?.default_duration_seconds ?? 45) : null,
     reps: isTime ? null : (exercise?.default_reps ?? 10),
-    target_weight_kg: null,
-    rest_after_seconds: null,
-    notes: null,
-  };
-}
-
-function restStep(): PlanStep {
-  return {
-    exercise_id: null,
-    position: 0,
-    kind: 'rest',
-    label: null,
-    sets: 1,
-    mode: 'time',
-    duration_seconds: 60,
-    reps: null,
     target_weight_kg: null,
     rest_after_seconds: null,
     notes: null,
@@ -66,7 +49,7 @@ function normalize(plan: Plan): Plan {
  * rather than as a raw Postgres error.
  */
 function stepProblem(step: PlanStep): string | null {
-  if (step.kind === 'exercise' && !step.exercise_id) return 'Pick an exercise';
+  if (!step.exercise_id) return 'Pick an exercise';
   if (step.mode === 'time' && !step.duration_seconds) return 'Needs a duration';
   if (step.mode === 'reps' && !step.reps) return 'Needs a rep target';
   return null;
@@ -329,36 +312,16 @@ export default function PlanEditor() {
                 <span className="step-index">{stepIndex + 1}</span>
 
                 <select
-                  value={step.kind}
-                  onChange={(e) =>
-                    e.target.value === 'rest'
-                      ? updateStep(blockIndex, stepIndex, restStep())
-                      : updateStep(blockIndex, stepIndex, stepFromExercise(exercises[0]))
-                  }
+                  value={step.exercise_id ?? ''}
+                  onChange={(e) => changeExercise(blockIndex, stepIndex, e.target.value)}
                 >
-                  <option value="exercise">exercise</option>
-                  <option value="rest">rest</option>
+                  <option value="">— pick —</option>
+                  {exercises.map((exercise) => (
+                    <option key={exercise.id} value={exercise.id}>
+                      {exercise.name}
+                    </option>
+                  ))}
                 </select>
-
-                {step.kind === 'exercise' ? (
-                  <select
-                    value={step.exercise_id ?? ''}
-                    onChange={(e) => changeExercise(blockIndex, stepIndex, e.target.value)}
-                  >
-                    <option value="">— pick —</option>
-                    {exercises.map((exercise) => (
-                      <option key={exercise.id} value={exercise.id}>
-                        {exercise.name}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <input
-                    placeholder="Break"
-                    value={step.label ?? ''}
-                    onChange={(e) => updateStep(blockIndex, stepIndex, { label: e.target.value || null })}
-                  />
-                )}
 
                 <label className="inline-field" title="How many times this exercise repeats — its set count">
                   <span>sets</span>
@@ -372,15 +335,13 @@ export default function PlanEditor() {
                   />
                 </label>
 
-                {step.kind === 'exercise' && (
-                  <select
-                    value={step.mode}
-                    onChange={(e) => changeMode(blockIndex, stepIndex, e.target.value as StepMode, step)}
-                  >
-                    <option value="reps">reps</option>
-                    <option value="time">time</option>
-                  </select>
-                )}
+                <select
+                  value={step.mode}
+                  onChange={(e) => changeMode(blockIndex, stepIndex, e.target.value as StepMode, step)}
+                >
+                  <option value="reps">reps</option>
+                  <option value="time">time</option>
+                </select>
 
                 {step.mode === 'time' ? (
                   <label className="inline-field">
@@ -408,29 +369,27 @@ export default function PlanEditor() {
                   </label>
                 )}
 
-                {step.kind === 'exercise' && (
-                  <label className="inline-field">
-                    <span>kg</span>
-                    <input
-                      type="number"
-                      min={0}
-                      step="0.5"
-                      placeholder="—"
-                      value={step.target_weight_kg ?? ''}
-                      onChange={(e) =>
-                        updateStep(blockIndex, stepIndex, {
-                          target_weight_kg: e.target.value === '' ? null : Number(e.target.value),
-                        })
-                      }
-                    />
-                  </label>
-                )}
+                <label className="inline-field">
+                  <span>kg</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.5"
+                    placeholder="—"
+                    value={step.target_weight_kg ?? ''}
+                    onChange={(e) =>
+                      updateStep(blockIndex, stepIndex, {
+                        target_weight_kg: e.target.value === '' ? null : Number(e.target.value),
+                      })
+                    }
+                  />
+                </label>
 
                 <label
                   className="inline-field"
-                  title="Rest after each round of this exercise, including the last — so it carries you into the next exercise"
+                  title="Rest after each set of this exercise, including the last — so it carries you into the next exercise"
                 >
-                  <span>rest between exercise rounds (s)</span>
+                  <span>rest between sets (s)</span>
                   <input
                     type="number"
                     min={0}
@@ -467,9 +426,6 @@ export default function PlanEditor() {
           <div className="step-add">
             <button className="link-btn" onClick={() => addStep(blockIndex, stepFromExercise(exercises[0]))}>
               + exercise
-            </button>
-            <button className="link-btn" onClick={() => addStep(blockIndex, restStep())}>
-              + rest
             </button>
           </div>
         </div>

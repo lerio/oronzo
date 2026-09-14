@@ -94,12 +94,8 @@ public enum PlanFlattener {
         block: PlanBlock,
         exerciseNames: [UUID: String]
     ) -> Interval {
-        let isRest = step.kind == .rest
-
         let name: String
-        if isRest {
-            name = step.label ?? restLabel
-        } else if let label = step.label {
+        if let label = step.label {
             name = label
         } else if let id = step.exerciseID, let known = exerciseNames[id] {
             name = known
@@ -109,23 +105,19 @@ public enum PlanFlattener {
             name = "Exercise"
         }
 
-        let duration: TimeInterval? = isRest
-            ? step.duration
-            : (step.mode == .time ? step.duration : nil)
-
         return Interval(
             index: index,
-            kind: step.kind,
+            kind: .exercise,
             name: name,
-            mode: isRest ? .time : step.mode,
-            duration: duration,
-            reps: isRest ? nil : (step.mode == .reps ? step.reps : nil),
-            targetWeightKg: isRest ? nil : step.targetWeightKg,
+            mode: step.mode,
+            duration: step.mode == .time ? step.duration : nil,
+            reps: step.mode == .reps ? step.reps : nil,
+            targetWeightKg: step.targetWeightKg,
             setIndex: setIndex,
             blockRound: blockRound,
             blockIndex: blockIndex,
             blockName: block.name,
-            exerciseID: isRest ? nil : step.exerciseID
+            exerciseID: step.exerciseID
         )
     }
 

@@ -56,7 +56,7 @@ private struct BlockView: View {
 
             ForEach(Array(block.steps.enumerated()), id: \.offset) { _, step in
                 HStack(spacing: 6) {
-                    Image(systemName: step.kind == .rest ? "pause" : "figure.strengthtraining.traditional")
+                    Image(systemName: "figure.strengthtraining.traditional")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .frame(width: 14)
@@ -81,7 +81,7 @@ private struct BlockView: View {
 
     private func target(_ step: PlanStep) -> String {
         var parts: [String] = []
-        if let duration = step.duration, step.kind == .rest || step.mode == .time {
+        if let duration = step.duration, step.mode == .time {
             parts.append("\(Int(duration))s")
         }
         if let reps = step.repsDisplay { parts.append(reps) }

@@ -22,9 +22,12 @@ public struct Exercise: Equatable, Sendable, Identifiable {
     }
 }
 
+/// A step is an **exercise**, always. Rest is not a kind of step: it comes from
+/// `restAfter` below, or from a block's `restBetweenRounds`. (`StepKind` still exists and is
+/// used by `Interval` — the execution stream really does contain rests, emitted between
+/// sets. It is the *plan* that no longer pretends they are steps.)
 public struct PlanStep: Codable, Equatable, Sendable {
     public var exerciseID: UUID?
-    public var kind: StepKind
     public var label: String?
     /// How many times this exercise repeats — its set count. (A *block's* `rounds` repeats
     /// a whole group; the two are deliberately different words.)
@@ -34,13 +37,12 @@ public struct PlanStep: Codable, Equatable, Sendable {
     /// The rep target. Nil for a timed step.
     public var reps: Int?
     public var targetWeightKg: Double?
-    /// Rest after EACH round of this step, including the final one, so an exercise's rest
+    /// Rest after EACH set of this step, including the final one, so an exercise's rest
     /// carries you into the next exercise. See `PlanFlattener`.
     public var restAfter: TimeInterval?
 
     public init(
         exerciseID: UUID? = nil,
-        kind: StepKind = .exercise,
         label: String? = nil,
         sets: Int = 1,
         mode: StepMode = .reps,
@@ -50,7 +52,6 @@ public struct PlanStep: Codable, Equatable, Sendable {
         restAfter: TimeInterval? = nil
     ) {
         self.exerciseID = exerciseID
-        self.kind = kind
         self.label = label
         self.sets = max(1, sets)
         self.mode = mode
@@ -62,14 +63,14 @@ public struct PlanStep: Codable, Equatable, Sendable {
 
     // MARK: - Display
 
-    /// "10 reps", or nil for a timed or rest step.
+    /// "10 reps", or nil for a timed step.
     public var repsDisplay: String? {
-        kind == .rest || mode == .time ? nil : MeasurementFormat.reps(reps)
+        mode == .time ? nil : MeasurementFormat.reps(reps)
     }
 
     /// "20 kg", or nil when no load is prescribed.
     public var weightDisplay: String? {
-        kind == .rest ? nil : MeasurementFormat.weight(targetWeightKg)
+        MeasurementFormat.weight(targetWeightKg)
     }
 }
 

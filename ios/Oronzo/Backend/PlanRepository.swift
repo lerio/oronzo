@@ -27,7 +27,6 @@ private struct BlockRow: Decodable {
 private struct StepRow: Decodable {
     let id: UUID
     let position: Int
-    let kind: String
     let exercise_id: UUID?
     let label: String?
     let sets: Int
@@ -63,9 +62,6 @@ private extension PlanRow {
                             .map { step in
                                 PlanStep(
                                     exerciseID: step.exercise_id,
-                                    // Unknown values from the wire degrade to the safe default
-                                    // rather than being force-unwrapped.
-                                    kind: StepKind(rawValue: step.kind) ?? .exercise,
                                     label: step.label,
                                     sets: max(1, step.sets),
                                     mode: StepMode(rawValue: step.mode ?? "reps") ?? .reps,
@@ -89,7 +85,7 @@ struct PlanRepository: Sendable {
     /// or stray whitespace break it.
     private static let planSelect =
         "id,name,notes,plan_blocks(id,position,name,rounds,rest_between_rounds_seconds,"
-        + "plan_steps(id,position,kind,exercise_id,label,sets,mode,duration_seconds,reps,"
+        + "plan_steps(id,position,exercise_id,label,sets,mode,duration_seconds,reps,"
         + "target_weight_kg,rest_after_seconds,notes))"
 
     func fetchPlans() async throws -> [Plan] {

@@ -314,7 +314,7 @@ final class ExecutionEngineTests: XCTestCase {
         let squat = UUID()
         let plan = Plan(name: "Squats", blocks: [
             PlanBlock(steps: [
-                PlanStep(exerciseID: squat, kind: .exercise, sets: 3, mode: .reps, reps: 12, restAfter: 90),
+                PlanStep(exerciseID: squat, sets: 3, mode: .reps, reps: 12, restAfter: 90),
             ]),
         ])
         let intervals = PlanFlattener.flatten(plan, exerciseNames: [squat: "Back Squat"])
@@ -344,8 +344,8 @@ final class ExecutionEngineTests: XCTestCase {
     func testTheCanonicalCircuitRunsEndToEnd() {
         let plan = Plan(name: "HIIT", blocks: [
             PlanBlock(rounds: 3, steps: [
-                PlanStep(kind: .exercise, label: "Hard", mode: .time, duration: 20),
-                PlanStep(kind: .exercise, label: "Easy", mode: .time, duration: 40),
+                PlanStep(label: "Hard", mode: .time, duration: 20),
+                PlanStep(label: "Easy", mode: .time, duration: 40),
             ]),
         ])
         var engine = ExecutionEngine(intervals: PlanFlattener.flatten(plan))

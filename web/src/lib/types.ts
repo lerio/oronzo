@@ -23,12 +23,17 @@ export interface Exercise {
   notes: string | null;
 }
 
+/**
+ * A step is an **exercise**, always. Rest is not a kind of step: it comes from a step's
+ * `rest_after_seconds` or a block's `rest_between_rounds_seconds`. (`StepKind` still exists
+ * and is used by `Interval` — the execution stream really does contain rests, emitted
+ * between sets. It is the *plan* that no longer pretends they are steps.)
+ */
 export interface PlanStep {
   /** Absent on a step that has never been saved. */
   id?: string;
   exercise_id: string | null;
   position: number;
-  kind: StepKind;
   label: string | null;
   /** How many times this exercise repeats — its set count. (A block's `rounds`
    * repeats a whole group; the two are deliberately different words.) */
@@ -171,19 +176,16 @@ function toInterval(
   block: PlanBlock,
   exerciseNames: Map<string, string>,
 ): Interval {
-  const isRest = step.kind === 'rest';
-  const name = isRest
-    ? (step.label || REST_LABEL)
-    : (step.label || (step.exercise_id ? exerciseNames.get(step.exercise_id) : null) || 'Exercise');
+  const name = step.label || (step.exercise_id ? exerciseNames.get(step.exercise_id) : null) || 'Exercise';
 
   return {
     index,
-    kind: step.kind,
+    kind: 'exercise',
     name,
-    mode: isRest ? 'time' : step.mode,
-    duration_seconds: isRest ? step.duration_seconds : (step.mode === 'time' ? step.duration_seconds : null),
-    reps: isRest ? null : (step.mode === 'reps' ? step.reps : null),
-    target_weight_kg: isRest ? null : step.target_weight_kg,
+    mode: step.mode,
+    duration_seconds: step.mode === 'time' ? step.duration_seconds : null,
+    reps: step.mode === 'reps' ? step.reps : null,
+    target_weight_kg: step.target_weight_kg,
     set_index: setIndex,
     block_round: blockRound,
     block_index: blockIndex,
