@@ -30,8 +30,9 @@ export interface PlanStep {
   position: number;
   kind: StepKind;
   label: string | null;
-  /** How many times this exercise repeats — its set count. */
-  rounds: number;
+  /** How many times this exercise repeats — its set count. (A block's `rounds`
+   * repeats a whole group; the two are deliberately different words.) */
+  sets: number;
   mode: StepMode;
   duration_seconds: number | null;
   /** The rep target. */
@@ -70,8 +71,8 @@ export interface Interval {
   duration_seconds: number | null;
   reps: number | null;
   target_weight_kg: number | null;
-  /** Which round of the step this is — i.e. which set. */
-  round_index: number;
+  /** Which set of the exercise this is (1-based). */
+  set_index: number;
   /** Which round of the enclosing block this is. */
   block_round: number;
   block_index: number;
@@ -114,16 +115,17 @@ const REST_LABEL = 'Break';
  *   for block in blocks ordered by position:
  *     for blockRound in 1..block.rounds:
  *       for step in steps ordered by position:
- *         for stepRound in 1..step.rounds:
+ *         for setIndex in 1..step.sets:
  *           emit step; if step.rest_after_seconds: emit rest
  *       if blockRound < block.rounds and block.rest_between_rounds_seconds: emit rest
  *
- * Both a step and a block can repeat. A step's rounds is its set count ("4 x 6-8 bench
- * press"); a block's rounds repeats a group ("6 x (20s hard, 40s easy)").
+ * Both an exercise and a block can repeat, and the two words mean different things: a step's
+ * `sets` is its set count ("4 x 6-8 bench press"), while a block's `rounds` repeats a whole
+ * group ("6 x (20s hard, 40s easy)").
  *
- * The two rest mechanisms differ deliberately: `rest_after_seconds` fires after EVERY
- * round including the last, so an exercise's rest carries you into the next exercise,
- * whereas `rest_between_rounds_seconds` fires only BETWEEN a block's rounds.
+ * The two rest mechanisms differ deliberately: `rest_after_seconds` fires after EVERY set
+ * including the last, so an exercise's rest carries you into the next exercise, whereas
+ * `rest_between_rounds_seconds` fires only BETWEEN a block's rounds.
  */
 export function flattenPlan(plan: Plan, exerciseNames: Map<string, string>): Interval[] {
   const intervals: Interval[] = [];
@@ -136,14 +138,14 @@ export function flattenPlan(plan: Plan, exerciseNames: Map<string, string>): Int
       const steps = [...block.steps].sort((a, b) => a.position - b.position);
 
       for (const step of steps) {
-        for (let stepRound = 1; stepRound <= Math.max(1, step.rounds); stepRound++) {
+        for (let setIndex = 1; setIndex <= Math.max(1, step.sets); setIndex++) {
           intervals.push(
-            toInterval(step, intervals.length, stepRound, blockRound, blockIndex, block, exerciseNames),
+            toInterval(step, intervals.length, setIndex, blockRound, blockIndex, block, exerciseNames),
           );
 
           if (step.rest_after_seconds && step.rest_after_seconds > 0) {
             intervals.push(
-              restInterval(intervals.length, step.rest_after_seconds, stepRound, blockRound, blockIndex, block),
+              restInterval(intervals.length, step.rest_after_seconds, setIndex, blockRound, blockIndex, block),
             );
           }
         }
@@ -163,7 +165,7 @@ export function flattenPlan(plan: Plan, exerciseNames: Map<string, string>): Int
 function toInterval(
   step: PlanStep,
   index: number,
-  roundIndex: number,
+  setIndex: number,
   blockRound: number,
   blockIndex: number,
   block: PlanBlock,
@@ -182,7 +184,7 @@ function toInterval(
     duration_seconds: isRest ? step.duration_seconds : (step.mode === 'time' ? step.duration_seconds : null),
     reps: isRest ? null : (step.mode === 'reps' ? step.reps : null),
     target_weight_kg: isRest ? null : step.target_weight_kg,
-    round_index: roundIndex,
+    set_index: setIndex,
     block_round: blockRound,
     block_index: blockIndex,
     block_name: block.name,
@@ -192,7 +194,7 @@ function toInterval(
 function restInterval(
   index: number,
   duration: number,
-  roundIndex: number,
+  setIndex: number,
   blockRound: number,
   blockIndex: number,
   block: PlanBlock,
@@ -205,7 +207,7 @@ function restInterval(
     duration_seconds: duration,
     reps: null,
     target_weight_kg: null,
-    round_index: roundIndex,
+    set_index: setIndex,
     block_round: blockRound,
     block_index: blockIndex,
     block_name: block.name,

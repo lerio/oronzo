@@ -8,7 +8,7 @@
 --
 -- How the workout maps onto the model. Both an exercise and a block can repeat:
 --
---   "4 x 6-8 bench press, rest 90s"  -> ONE STEP with rounds = 4 and rest_after = 90.
+--   "4 x 6-8 bench press, rest 90s"  -> ONE STEP with sets = 4 and rest_after = 90.
 --                                       The set count belongs to the exercise, so the step
 --                                       repeats on its own — no wrapper block needed.
 --   "Rest: 90 sec"                   -> that step's rest_after, which fires after every
@@ -16,7 +16,8 @@
 --                                       you into lat pulldown.
 --   "6 x (20s hard, 40s easy)"       -> a BLOCK with rounds = 6 holding two timed steps.
 --                                       Here the *group* repeats, which is what a block is
---                                       for.
+--                                       for. Steps and blocks therefore repeat at different
+--                                       levels, and the words are kept distinct.
 --
 -- A step holds ONE rep target and ONE load, so where the programme gave ranges those are
 -- pinned to the LOW end — the number you should always be able to hit — and the range
@@ -53,7 +54,7 @@ $fn$;
 
 create or replace function pg_temp.new_exercise_step(
   p_block uuid, p_position int, p_slug text, p_label text,
-  p_rounds int, p_mode text, p_duration int, p_reps int,
+  p_sets int, p_mode text, p_duration int, p_reps int,
   p_weight numeric, p_rest_after int, p_notes text
 ) returns void language plpgsql as $fn$
 declare
@@ -65,11 +66,11 @@ begin
   end if;
 
   insert into public.plan_steps (
-    block_id, position, kind, exercise_id, label, rounds, mode,
+    block_id, position, kind, exercise_id, label, sets, mode,
     duration_seconds, reps, target_weight_kg, rest_after_seconds, notes
   ) values (
     p_block, p_position, 'exercise', v_exercise,
-    nullif(p_label, ''), coalesce(p_rounds, 1), p_mode,
+    nullif(p_label, ''), coalesce(p_sets, 1), p_mode,
     p_duration, p_reps, p_weight,
     p_rest_after, nullif(p_notes, '')
   );
@@ -102,7 +103,7 @@ begin
   values (v_user, 'Monday — Upper Body A + HIIT', $notes$
 Target: strength + hypertrophy. Roughly 45–50 min.
 
-How to read this: an exercise's "rounds" is its set count, and "rest between exercise
+How to read this: an exercise's "sets" is its set count, and "rest between exercise
 rounds" is the rest after each set — including the last, so it carries you into the next
 exercise. A *block's* rounds instead repeats the whole group, which is how the HIIT
 section works (6 rounds of 20 sec hard / 40 sec easy).

@@ -23,7 +23,7 @@ function stepFromExercise(exercise: Exercise | undefined): PlanStep {
     position: 0,
     kind: 'exercise',
     label: null,
-    rounds: 1,
+    sets: 1,
     mode: exercise?.default_mode ?? 'reps',
     duration_seconds: isTime ? (exercise?.default_duration_seconds ?? 45) : null,
     reps: isTime ? null : (exercise?.default_reps ?? 10),
@@ -39,7 +39,7 @@ function restStep(): PlanStep {
     position: 0,
     kind: 'rest',
     label: null,
-    rounds: 1,
+    sets: 1,
     mode: 'time',
     duration_seconds: 60,
     reps: null,
@@ -264,8 +264,8 @@ export default function PlanEditor() {
           {totalSeconds > 0 && ` · ~${formatDuration(totalSeconds)} of timed work`}
         </span>
         <span className="muted small">
-          A block's <em>rounds</em> repeats everything inside it — that is how sets and circuits are
-          expressed.
+          An exercise's <em>sets</em> is its set count; a block's <em>rounds</em> repeats the whole
+          group — that is how circuits are expressed.
         </span>
       </div>
 
@@ -360,14 +360,14 @@ export default function PlanEditor() {
                   />
                 )}
 
-                <label className="inline-field" title="How many times this repeats — the set count">
-                  <span>rounds</span>
+                <label className="inline-field" title="How many times this exercise repeats — its set count">
+                  <span>sets</span>
                   <input
                     type="number"
                     min={1}
-                    value={step.rounds}
+                    value={step.sets}
                     onChange={(e) =>
-                      updateStep(blockIndex, stepIndex, { rounds: Math.max(1, Number(e.target.value) || 1) })
+                      updateStep(blockIndex, stepIndex, { sets: Math.max(1, Number(e.target.value) || 1) })
                     }
                   />
                 </label>
@@ -491,7 +491,7 @@ export default function PlanEditor() {
                     ? `${interval.duration_seconds}s`
                     : repsDisplay(interval)}
                   {weightDisplay(interval) && ` @ ${weightDisplay(interval)}`}
-                  {interval.round_index > 1 && ` · round ${interval.round_index}`}
+                  {interval.set_index > 1 && ` · set ${interval.set_index}`}
                   {interval.block_round > 1 && ` · block round ${interval.block_round}`}
                 </span>
               </li>

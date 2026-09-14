@@ -3,29 +3,27 @@ import Foundation
 /// Turns a plan into the ordered sequence of intervals the engine executes.
 ///
 /// This is *the* contract of the project — the web preview, the iOS engine and the Watch
-/// all consume its output, and `supabase/migrations/0005_step_rounds.sql` documents the
-/// same rule in SQL comments. Change it in one place and you must change it in all of them.
+/// all consume its output, and `supabase/migrations/0005_step_sets.sql` documents the same
+/// rule in SQL comments. Change it in one place and change it in all of them.
 ///
 ///     for block in blocks ordered by position:
 ///       for blockRound in 1...block.rounds:
 ///         for step in steps ordered by position:
-///           for stepRound in 1...step.rounds:
+///           for setIndex in 1...step.sets:
 ///             emit step
 ///             if step.restAfter: emit rest
 ///         if blockRound < block.rounds and block.restBetweenRounds: emit rest
 ///
-/// Both a step and a block can repeat, which is what lets the two natural shapes be written
-/// the way a programme writes them:
+/// **Sets and rounds are different things**, deliberately:
 ///
-/// * `"4 x 6-8 bench press, rest 90s"` — a step with `rounds = 4`. The set count belongs to
-///   the exercise, so it no longer needs a block wrapped around one thing.
-/// * `"6 x (20s hard, 40s easy)"` — a block with `rounds = 6` holding two steps, i.e. a
-///   group that repeats.
+/// * `step.sets` — an exercise repeating: `"4 x 6-8 bench press"`. The set count belongs to
+///   the exercise, so it does not need a block wrapped around one thing.
+/// * `block.rounds` — a *group* repeating: `"6 x (20s hard, 40s easy)"`.
 ///
-/// The two rest mechanisms differ deliberately:
+/// The two rest mechanisms differ too:
 ///
-/// * `restAfter` on a step fires after **every** round, including the last, so an
-///   exercise's rest carries you into the next exercise. Four sets means four rests.
+/// * `restAfter` on a step fires after **every** set, including the last, so an exercise's
+///   rest carries you into the next exercise. Four sets means four rests.
 /// * `restBetweenRounds` on a block fires **only between** rounds of that block, never
 ///   after the final one.
 public enum PlanFlattener {
@@ -40,12 +38,12 @@ public enum PlanFlattener {
 
             for blockRound in 1...blockRounds {
                 for step in block.steps {
-                    for stepRound in 1...max(1, step.rounds) {
+                    for setIndex in 1...max(1, step.sets) {
                         intervals.append(
                             interval(
                                 for: step,
                                 index: intervals.count,
-                                round: stepRound,
+                                setIndex: setIndex,
                                 blockRound: blockRound,
                                 blockIndex: blockIndex,
                                 block: block,
@@ -58,7 +56,7 @@ public enum PlanFlattener {
                                 restInterval(
                                     index: intervals.count,
                                     duration: rest,
-                                    round: stepRound,
+                                    setIndex: setIndex,
                                     blockRound: blockRound,
                                     blockIndex: blockIndex,
                                     block: block
@@ -74,7 +72,7 @@ public enum PlanFlattener {
                         restInterval(
                             index: intervals.count,
                             duration: between,
-                            round: blockRound,
+                            setIndex: blockRound,
                             blockRound: blockRound,
                             blockIndex: blockIndex,
                             block: block
@@ -90,7 +88,7 @@ public enum PlanFlattener {
     private static func interval(
         for step: PlanStep,
         index: Int,
-        round: Int,
+        setIndex: Int,
         blockRound: Int,
         blockIndex: Int,
         block: PlanBlock,
@@ -123,7 +121,7 @@ public enum PlanFlattener {
             duration: duration,
             reps: isRest ? nil : (step.mode == .reps ? step.reps : nil),
             targetWeightKg: isRest ? nil : step.targetWeightKg,
-            roundIndex: round,
+            setIndex: setIndex,
             blockRound: blockRound,
             blockIndex: blockIndex,
             blockName: block.name,
@@ -135,7 +133,7 @@ public enum PlanFlattener {
     private static func restInterval(
         index: Int,
         duration: TimeInterval,
-        round: Int,
+        setIndex: Int,
         blockRound: Int,
         blockIndex: Int,
         block: PlanBlock
@@ -148,7 +146,7 @@ public enum PlanFlattener {
             duration: duration,
             reps: nil,
             targetWeightKg: nil,
-            roundIndex: round,
+            setIndex: setIndex,
             blockRound: blockRound,
             blockIndex: blockIndex,
             blockName: block.name,

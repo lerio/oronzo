@@ -26,8 +26,9 @@ public struct PlanStep: Codable, Equatable, Sendable {
     public var exerciseID: UUID?
     public var kind: StepKind
     public var label: String?
-    /// How many times this exercise repeats — its set count.
-    public var rounds: Int
+    /// How many times this exercise repeats — its set count. (A *block's* `rounds` repeats
+    /// a whole group; the two are deliberately different words.)
+    public var sets: Int
     public var mode: StepMode
     public var duration: TimeInterval?
     /// The rep target. Nil for a timed step.
@@ -41,7 +42,7 @@ public struct PlanStep: Codable, Equatable, Sendable {
         exerciseID: UUID? = nil,
         kind: StepKind = .exercise,
         label: String? = nil,
-        rounds: Int = 1,
+        sets: Int = 1,
         mode: StepMode = .reps,
         duration: TimeInterval? = nil,
         reps: Int? = nil,
@@ -51,7 +52,7 @@ public struct PlanStep: Codable, Equatable, Sendable {
         self.exerciseID = exerciseID
         self.kind = kind
         self.label = label
-        self.rounds = max(1, rounds)
+        self.sets = max(1, sets)
         self.mode = mode
         self.duration = duration
         self.reps = reps
@@ -111,8 +112,8 @@ public struct Interval: Codable, Equatable, Sendable, Identifiable {
     public let duration: TimeInterval?
     public let reps: Int?
     public let targetWeightKg: Double?
-    /// Which round of the step this is (1-based) — i.e. which set.
-    public let roundIndex: Int
+    /// Which set of the exercise this is (1-based).
+    public let setIndex: Int
     /// Which round of the enclosing block this is (1-based).
     public let blockRound: Int
     public let blockIndex: Int
@@ -132,7 +133,7 @@ public struct Interval: Codable, Equatable, Sendable, Identifiable {
         duration: TimeInterval?,
         reps: Int?,
         targetWeightKg: Double?,
-        roundIndex: Int,
+        setIndex: Int,
         blockRound: Int,
         blockIndex: Int,
         blockName: String?,
@@ -145,7 +146,7 @@ public struct Interval: Codable, Equatable, Sendable, Identifiable {
         self.duration = duration
         self.reps = reps
         self.targetWeightKg = targetWeightKg
-        self.roundIndex = roundIndex
+        self.setIndex = setIndex
         self.blockRound = blockRound
         self.blockIndex = blockIndex
         self.blockName = blockName

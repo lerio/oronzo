@@ -8,7 +8,7 @@ final class ExecutionEngineTests: XCTestCase {
     private func timed(_ index: Int, _ seconds: TimeInterval, name: String = "Work") -> Interval {
         Interval(
             index: index, kind: .exercise, name: name, mode: .time, duration: seconds,
-            reps: nil, targetWeightKg: nil, roundIndex: 1, blockRound: 1, blockIndex: 0,
+            reps: nil, targetWeightKg: nil, setIndex: 1, blockRound: 1, blockIndex: 0,
             blockName: nil, exerciseID: nil
         )
     }
@@ -16,7 +16,7 @@ final class ExecutionEngineTests: XCTestCase {
     private func reps(_ index: Int, _ count: Int = 10, weight: Double? = nil, name: String = "Squat") -> Interval {
         Interval(
             index: index, kind: .exercise, name: name, mode: .reps, duration: nil,
-            reps: count, targetWeightKg: weight, roundIndex: 1, blockRound: 1, blockIndex: 0,
+            reps: count, targetWeightKg: weight, setIndex: 1, blockRound: 1, blockIndex: 0,
             blockName: nil, exerciseID: nil
         )
     }
@@ -24,7 +24,7 @@ final class ExecutionEngineTests: XCTestCase {
     private func rest(_ index: Int, _ seconds: TimeInterval) -> Interval {
         Interval(
             index: index, kind: .rest, name: "Break", mode: .time, duration: seconds,
-            reps: nil, targetWeightKg: nil, roundIndex: 1, blockRound: 1, blockIndex: 0,
+            reps: nil, targetWeightKg: nil, setIndex: 1, blockRound: 1, blockIndex: 0,
             blockName: nil, exerciseID: nil
         )
     }
@@ -314,7 +314,7 @@ final class ExecutionEngineTests: XCTestCase {
         let squat = UUID()
         let plan = Plan(name: "Squats", blocks: [
             PlanBlock(steps: [
-                PlanStep(exerciseID: squat, kind: .exercise, rounds: 3, mode: .reps, reps: 12, restAfter: 90),
+                PlanStep(exerciseID: squat, kind: .exercise, sets: 3, mode: .reps, reps: 12, restAfter: 90),
             ]),
         ])
         let intervals = PlanFlattener.flatten(plan, exerciseNames: [squat: "Back Squat"])
@@ -337,7 +337,7 @@ final class ExecutionEngineTests: XCTestCase {
         XCTAssertTrue(session.steps.allSatisfy { $0.status == .completed })
         XCTAssertEqual(session.steps[0].exerciseName, "Back Squat")
         XCTAssertEqual(session.steps[1].exerciseName, "Break")
-        XCTAssertEqual(session.steps.map(\.roundIndex), [1, 1, 2, 2, 3, 3])
+        XCTAssertEqual(session.steps.map(\.setIndex), [1, 1, 2, 2, 3, 3])
     }
 
     /// The other shape: a group that repeats, driven by auto-advance rather than taps.

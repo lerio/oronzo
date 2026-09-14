@@ -62,8 +62,8 @@ private struct BlockView: View {
                         .frame(width: 14)
                     Text(step.label ?? "—")
                         .font(.callout)
-                    if step.rounds > 1 {
-                        Text("×\(step.rounds)")
+                    if step.sets > 1 {
+                        Text("×\(step.sets)")
                             .font(.caption2.monospacedDigit())
                             .padding(.horizontal, 6)
                             .padding(.vertical, 1)
@@ -97,7 +97,7 @@ private struct IntervalRow: View {
     /// Only mentions the round dimensions that actually repeat, so a plain step stays clean.
     private var contextLabel: String? {
         var parts: [String] = []
-        if interval.roundIndex > 1 { parts.append("round \(interval.roundIndex)") }
+        if interval.setIndex > 1 { parts.append("set \(interval.setIndex)") }
         if interval.blockRound > 1 { parts.append("block round \(interval.blockRound)") }
         if let name = interval.blockName { parts.append(name) }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")

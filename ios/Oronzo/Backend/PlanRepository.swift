@@ -30,7 +30,7 @@ private struct StepRow: Decodable {
     let kind: String
     let exercise_id: UUID?
     let label: String?
-    let rounds: Int
+    let sets: Int
     let mode: String?
     let duration_seconds: Int?
     let reps: Int?
@@ -67,7 +67,7 @@ private extension PlanRow {
                                     // rather than being force-unwrapped.
                                     kind: StepKind(rawValue: step.kind) ?? .exercise,
                                     label: step.label,
-                                    rounds: max(1, step.rounds),
+                                    sets: max(1, step.sets),
                                     mode: StepMode(rawValue: step.mode ?? "reps") ?? .reps,
                                     duration: step.duration_seconds.map(TimeInterval.init),
                                     reps: step.reps,
@@ -89,7 +89,7 @@ struct PlanRepository: Sendable {
     /// or stray whitespace break it.
     private static let planSelect =
         "id,name,notes,plan_blocks(id,position,name,rounds,rest_between_rounds_seconds,"
-        + "plan_steps(id,position,kind,exercise_id,label,rounds,mode,duration_seconds,reps,"
+        + "plan_steps(id,position,kind,exercise_id,label,sets,mode,duration_seconds,reps,"
         + "target_weight_kg,rest_after_seconds,notes))"
 
     func fetchPlans() async throws -> [Plan] {
