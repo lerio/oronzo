@@ -492,6 +492,97 @@ textarea:focus {
   border-top: 1px solid var(--border);
 }
 
+/* --- Exercise picker --------------------------------------------------------
+   Takes the row's slack, like the native select it replaced. The open list floats
+   over the rest of the form rather than pushing it down. */
+
+.picker {
+  position: relative;
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.picker-button,
+.picker-search {
+  width: 100%;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 9px;
+}
+
+.picker-button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.picker-caret {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.picker-list {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  /* The list may be wider than the field it hangs from — exercise names are long and the
+     row is narrow. Clamped to the viewport so it cannot run off a phone screen. */
+  min-width: min(340px, calc(100vw - 40px));
+  max-height: 260px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 10px 28px rgb(0 0 0 / 0.14);
+}
+
+.picker-option {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 8px;
+  cursor: pointer;
+}
+
+.picker-option.active {
+  background: var(--bg);
+}
+
+.picker-option .picker-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.picker-meta {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.picker-empty {
+  padding: 8px;
+}
+
 .preview summary {
   cursor: pointer;
   font-weight: 600;

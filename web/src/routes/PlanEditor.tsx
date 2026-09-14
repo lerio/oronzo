@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import ExercisePicker from '../components/ExercisePicker';
 import { getPlan, listExercises, savePlan } from '../lib/api';
 import {
   estimateSeconds,
@@ -313,17 +314,11 @@ export default function PlanEditor() {
               <div key={stepIndex} className={problem ? 'step-row invalid' : 'step-row'}>
                 <span className="step-index">{stepIndex + 1}</span>
 
-                <select
-                  value={step.exercise_id ?? ''}
-                  onChange={(e) => changeExercise(blockIndex, stepIndex, e.target.value)}
-                >
-                  <option value="">— pick —</option>
-                  {exercises.map((exercise) => (
-                    <option key={exercise.id} value={exercise.id}>
-                      {exercise.name}
-                    </option>
-                  ))}
-                </select>
+                <ExercisePicker
+                  exercises={exercises}
+                  value={step.exercise_id}
+                  onChange={(exerciseId) => changeExercise(blockIndex, stepIndex, exerciseId)}
+                />
 
                 <label className="inline-field" title="How many times this exercise repeats — its set count">
                   <span>sets</span>
