@@ -33,10 +33,9 @@ private struct StepRow: Decodable {
     let mode: String?
     let duration_seconds: Int?
     let reps: Int?
-    let reps_max: Int?
     let target_weight_kg: Double?
-    let target_weight_max_kg: Double?
     let rest_after_seconds: Int?
+    let notes: String?
 }
 
 private struct ExerciseRow: Decodable {
@@ -70,9 +69,7 @@ private extension PlanRow {
                                     mode: StepMode(rawValue: step.mode ?? "reps") ?? .reps,
                                     duration: step.duration_seconds.map(TimeInterval.init),
                                     reps: step.reps,
-                                    repsMax: step.reps_max,
                                     targetWeightKg: step.target_weight_kg,
-                                    targetWeightMaxKg: step.target_weight_max_kg,
                                     restAfter: step.rest_after_seconds.map(TimeInterval.init)
                                 )
                             }
@@ -90,8 +87,8 @@ struct PlanRepository: Sendable {
     /// or stray whitespace break it.
     private static let planSelect =
         "id,name,notes,plan_blocks(id,position,name,rounds,rest_between_rounds_seconds,"
-        + "plan_steps(id,position,kind,exercise_id,label,mode,duration_seconds,reps,reps_max,"
-        + "target_weight_kg,target_weight_max_kg,rest_after_seconds))"
+        + "plan_steps(id,position,kind,exercise_id,label,mode,duration_seconds,reps,"
+        + "target_weight_kg,rest_after_seconds,notes))"
 
     func fetchPlans() async throws -> [Plan] {
         let rows: [PlanRow] = try await Backend.client

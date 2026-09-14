@@ -192,69 +192,42 @@ final class PlanFlattenerTests: XCTestCase {
         XCTAssertEqual(PlanFlattener.flatten(plan).count, 1)
     }
 
-    // MARK: - Ranges
-    //
-    // Hypertrophy programming is written "4 x 6-8" and "50-60 kg". A single integer would
-    // misrepresent the prescription, so the ceiling has to survive flattening intact.
+    // MARK: - Display
 
-    func testRepAndWeightRangesReachTheInterval() {
+    func testRepsAndWeightReachTheInterval() {
         let plan = Plan(name: "P", blocks: [
             PlanBlock(rounds: 4, restBetweenRounds: 90, steps: [
-                PlanStep(
-                    kind: .exercise, label: "Flat DB Bench Press", mode: .reps,
-                    reps: 6, repsMax: 8, targetWeightKg: 20, targetWeightMaxKg: nil
-                ),
+                PlanStep(kind: .exercise, label: "Flat DB Bench Press", mode: .reps,
+                         reps: 8, targetWeightKg: 20),
             ]),
         ])
 
         let intervals = PlanFlattener.flatten(plan)
 
         XCTAssertEqual(intervals.count, 7, "4 sets + 3 rests")
-        XCTAssertEqual(intervals[0].reps, 6)
-        XCTAssertEqual(intervals[0].repsMax, 8)
-        XCTAssertEqual(intervals[0].repsDisplay, "6–8 reps")
-        XCTAssertEqual(intervals[0].weightDisplay, "20 kg", "a single load reads without a dash")
-        XCTAssertEqual(intervals[0].primaryTarget, "6–8 reps")
+        XCTAssertEqual(intervals[0].reps, 8)
+        XCTAssertEqual(intervals[0].repsDisplay, "8 reps")
+        XCTAssertEqual(intervals[0].weightDisplay, "20 kg")
+        XCTAssertEqual(intervals[0].primaryTarget, "8 reps")
     }
 
-    func testWeightRangeDisplaysWithADash() {
-        let plan = Plan(name: "P", blocks: [
-            PlanBlock(rounds: 4, steps: [
-                PlanStep(kind: .exercise, label: "Lat Pulldown", mode: .reps,
-                         reps: 6, repsMax: 8, targetWeightKg: 50, targetWeightMaxKg: 60),
-            ]),
-        ])
-
-        let interval = PlanFlattener.flatten(plan)[0]
-
-        XCTAssertEqual(interval.weightDisplay, "50–60 kg")
-        XCTAssertEqual(interval.repsDisplay, "6–8 reps")
-    }
-
-    func testFractionalWeightRangeReadsCleanly() {
+    func testFractionalWeightReadsCleanly() {
         let plan = Plan(name: "P", blocks: [
             PlanBlock(rounds: 3, steps: [
                 PlanStep(kind: .exercise, label: "Lateral Raise", mode: .reps,
-                         reps: 12, repsMax: 15, targetWeightKg: 6, targetWeightMaxKg: 7.5),
+                         reps: 12, targetWeightKg: 7.5),
             ]),
         ])
 
-        let interval = PlanFlattener.flatten(plan)[0]
-
-        XCTAssertEqual(interval.weightDisplay, "6–7.5 kg", "wholes lose their .0, halves keep theirs")
+        XCTAssertEqual(PlanFlattener.flatten(plan)[0].weightDisplay, "7.5 kg")
     }
 
-    func testEqualBoundsAreNotShownAsARange() {
-        let plan = Plan(name: "P", blocks: [
-            PlanBlock(rounds: 1, steps: [
-                PlanStep(kind: .exercise, label: "A", mode: .reps, reps: 10, repsMax: 10),
-            ]),
-        ])
-
-        XCTAssertEqual(PlanFlattener.flatten(plan)[0].repsDisplay, "10 reps")
+    func testWholeWeightHasNoTrailingDecimal() {
+        XCTAssertEqual(MeasurementFormat.weight(20), "20 kg")
+        XCTAssertEqual(MeasurementFormat.weight(7.5), "7.5 kg")
     }
 
-    func testRangesDoNotLeakOntoTimedOrRestIntervals() {
+    func testRepsAndWeightDoNotLeakOntoTimedOrRestIntervals() {
         let plan = Plan(name: "P", blocks: [
             PlanBlock(rounds: 1, steps: [
                 PlanStep(kind: .exercise, label: "Plank", mode: .time, duration: 45),
@@ -267,5 +240,15 @@ final class PlanFlattenerTests: XCTestCase {
         XCTAssertNil(intervals[0].repsDisplay, "a timed step has no rep target")
         XCTAssertNil(intervals[1].repsDisplay)
         XCTAssertEqual(intervals[0].primaryTarget, "45s")
+    }
+
+    func testStepWithNoLoadHasNoWeightDisplay() {
+        let plan = Plan(name: "P", blocks: [
+            PlanBlock(rounds: 1, steps: [
+                PlanStep(kind: .exercise, label: "Push-Up", mode: .reps, reps: 12),
+            ]),
+        ])
+
+        XCTAssertNil(PlanFlattener.flatten(plan)[0].weightDisplay)
     }
 }

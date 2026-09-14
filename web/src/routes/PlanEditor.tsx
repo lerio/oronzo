@@ -26,9 +26,7 @@ function stepFromExercise(exercise: Exercise | undefined): PlanStep {
     mode: exercise?.default_mode ?? 'reps',
     duration_seconds: isTime ? (exercise?.default_duration_seconds ?? 45) : null,
     reps: isTime ? null : (exercise?.default_reps ?? 10),
-    reps_max: null,
     target_weight_kg: null,
-    target_weight_max_kg: null,
     rest_after_seconds: null,
     notes: null,
   };
@@ -43,9 +41,7 @@ function restStep(): PlanStep {
     mode: 'time',
     duration_seconds: 60,
     reps: null,
-    reps_max: null,
     target_weight_kg: null,
-    target_weight_max_kg: null,
     rest_after_seconds: null,
     notes: null,
   };
@@ -64,19 +60,13 @@ function normalize(plan: Plan): Plan {
 }
 
 /**
- * Mirrors the DB's plan_steps_shape and plan_steps_range_shape constraints, so problems
- * surface before a failed save rather than as a raw Postgres error.
+ * Mirrors the DB's plan_steps_shape constraint, so problems surface before a failed save
+ * rather than as a raw Postgres error.
  */
 function stepProblem(step: PlanStep): string | null {
   if (step.kind === 'exercise' && !step.exercise_id) return 'Pick an exercise';
   if (step.mode === 'time' && !step.duration_seconds) return 'Needs a duration';
   if (step.mode === 'reps' && !step.reps) return 'Needs a rep target';
-  if (step.reps != null && step.reps_max != null && step.reps_max < step.reps) {
-    return 'Rep range ends below where it starts';
-  }
-  if (step.target_weight_kg != null && step.target_weight_max_kg != null && step.target_weight_max_kg < step.target_weight_kg) {
-    return 'Weight range ends below where it starts';
-  }
   return null;
 }
 
@@ -263,14 +253,6 @@ export default function PlanEditor() {
             onChange={(e) => mutate((draft) => ({ ...draft, name: e.target.value }))}
           />
         </label>
-        <label className="field">
-          <span>Notes</span>
-          <textarea
-            rows={2}
-            value={plan.notes ?? ''}
-            onChange={(e) => mutate((draft) => ({ ...draft, notes: e.target.value || null }))}
-          />
-        </label>
       </div>
 
       <div className="summary-bar">
@@ -409,19 +391,6 @@ export default function PlanEditor() {
                         updateStep(blockIndex, stepIndex, { reps: Number(e.target.value) || null })
                       }
                     />
-                    <span className="range-sep">–</span>
-                    <input
-                      type="number"
-                      min={1}
-                      placeholder="max"
-                      title="Optional upper bound — makes this a rep range, e.g. 6–8"
-                      value={step.reps_max ?? ''}
-                      onChange={(e) =>
-                        updateStep(blockIndex, stepIndex, {
-                          reps_max: e.target.value === '' ? null : Number(e.target.value),
-                        })
-                      }
-                    />
                   </label>
                 )}
 
@@ -437,20 +406,6 @@ export default function PlanEditor() {
                       onChange={(e) =>
                         updateStep(blockIndex, stepIndex, {
                           target_weight_kg: e.target.value === '' ? null : Number(e.target.value),
-                        })
-                      }
-                    />
-                    <span className="range-sep">–</span>
-                    <input
-                      type="number"
-                      min={0}
-                      step="0.5"
-                      placeholder="max"
-                      title="Optional upper bound — makes this a weight range, e.g. 50–60"
-                      value={step.target_weight_max_kg ?? ''}
-                      onChange={(e) =>
-                        updateStep(blockIndex, stepIndex, {
-                          target_weight_max_kg: e.target.value === '' ? null : Number(e.target.value),
                         })
                       }
                     />

@@ -32,13 +32,11 @@ export interface PlanStep {
   label: string | null;
   mode: StepMode;
   duration_seconds: number | null;
-  /** Base of the rep range — the number you start at. */
+  /** The rep target. */
   reps: number | null;
-  /** Optional ceiling, making the target a range ("6–8"). */
-  reps_max: number | null;
   target_weight_kg: number | null;
-  target_weight_max_kg: number | null;
   rest_after_seconds: number | null;
+  /** Free-form guidance: "per side", "1–2 reps in reserve". */
   notes: string | null;
 }
 
@@ -69,35 +67,27 @@ export interface Interval {
   /** Non-null for timed intervals AND for rest intervals. */
   duration_seconds: number | null;
   reps: number | null;
-  reps_max: number | null;
   target_weight_kg: number | null;
-  target_weight_max_kg: number | null;
   round_index: number;
   block_index: number;
   block_name: string | null;
 }
 
-/** "6–8 reps", "10 reps", or null for a timed interval. */
+/** "10 reps", or null for a timed interval. */
 export function repsDisplay(interval: Interval): string | null {
   if (interval.reps == null) return null;
-  if (interval.reps_max != null && interval.reps_max > interval.reps) {
-    return `${interval.reps}–${interval.reps_max} reps`;
-  }
   return `${interval.reps} reps`;
 }
 
+/** Whole numbers lose their trailing ".0"; halves keep theirs. */
 function formatNumber(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
-/** "50–60 kg" or "20 kg". */
+/** "20 kg", or null when nothing is prescribed. */
 export function weightDisplay(interval: Interval): string | null {
   if (interval.target_weight_kg == null) return null;
-  const low = formatNumber(interval.target_weight_kg);
-  if (interval.target_weight_max_kg != null && interval.target_weight_max_kg > interval.target_weight_kg) {
-    return `${low}–${formatNumber(interval.target_weight_max_kg)} kg`;
-  }
-  return `${low} kg`;
+  return `${formatNumber(interval.target_weight_kg)} kg`;
 }
 
 export const MUSCLE_GROUPS = [
@@ -172,9 +162,7 @@ function toInterval(
     mode: isRest ? 'time' : step.mode,
     duration_seconds: isRest ? step.duration_seconds : (step.mode === 'time' ? step.duration_seconds : null),
     reps: isRest ? null : (step.mode === 'reps' ? step.reps : null),
-    reps_max: isRest ? null : (step.mode === 'reps' ? step.reps_max : null),
     target_weight_kg: isRest ? null : step.target_weight_kg,
-    target_weight_max_kg: isRest ? null : step.target_weight_max_kg,
     round_index: roundIndex,
     block_index: blockIndex,
     block_name: block.name,
@@ -195,9 +183,7 @@ function restInterval(
     mode: 'time',
     duration_seconds: duration,
     reps: null,
-    reps_max: null,
     target_weight_kg: null,
-    target_weight_max_kg: null,
     round_index: roundIndex,
     block_index: blockIndex,
     block_name: block.name,
