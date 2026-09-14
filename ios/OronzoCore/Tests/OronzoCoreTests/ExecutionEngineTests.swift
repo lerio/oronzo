@@ -8,7 +8,7 @@ final class ExecutionEngineTests: XCTestCase {
     private func timed(_ index: Int, _ seconds: TimeInterval, name: String = "Work") -> Interval {
         Interval(
             index: index, kind: .exercise, name: name, mode: .time, duration: seconds,
-            reps: nil, targetWeightKg: nil, roundIndex: 1, blockIndex: 0,
+            reps: nil, targetWeightKg: nil, roundIndex: 1, blockRound: 1, blockIndex: 0,
             blockName: nil, exerciseID: nil
         )
     }
@@ -16,7 +16,7 @@ final class ExecutionEngineTests: XCTestCase {
     private func reps(_ index: Int, _ count: Int = 10, weight: Double? = nil, name: String = "Squat") -> Interval {
         Interval(
             index: index, kind: .exercise, name: name, mode: .reps, duration: nil,
-            reps: count, targetWeightKg: weight, roundIndex: 1, blockIndex: 0,
+            reps: count, targetWeightKg: weight, roundIndex: 1, blockRound: 1, blockIndex: 0,
             blockName: nil, exerciseID: nil
         )
     }
@@ -24,7 +24,7 @@ final class ExecutionEngineTests: XCTestCase {
     private func rest(_ index: Int, _ seconds: TimeInterval) -> Interval {
         Interval(
             index: index, kind: .rest, name: "Break", mode: .time, duration: seconds,
-            reps: nil, targetWeightKg: nil, roundIndex: 1, blockIndex: 0,
+            reps: nil, targetWeightKg: nil, roundIndex: 1, blockRound: 1, blockIndex: 0,
             blockName: nil, exerciseID: nil
         )
     }
@@ -309,12 +309,12 @@ final class ExecutionEngineTests: XCTestCase {
 
     // MARK: - End to end
 
-    /// The squats plan from the flattener tests, run to completion.
+    /// "3 x 12 squats, 90s rest", run to completion by tapping through.
     func testTheCanonicalSetsPlanRunsEndToEnd() {
         let squat = UUID()
         let plan = Plan(name: "Squats", blocks: [
-            PlanBlock(rounds: 3, restBetweenRounds: 90, steps: [
-                PlanStep(exerciseID: squat, kind: .exercise, mode: .reps, reps: 12),
+            PlanBlock(steps: [
+                PlanStep(exerciseID: squat, kind: .exercise, rounds: 3, mode: .reps, reps: 12, restAfter: 90),
             ]),
         ])
         let intervals = PlanFlattener.flatten(plan, exerciseNames: [squat: "Back Squat"])
@@ -322,9 +322,9 @@ final class ExecutionEngineTests: XCTestCase {
 
         _ = engine.start(at: t0)
 
-        // Set 1 → rest → set 2 → rest → set 3, driven by taps.
+        // set → rest → set → rest → set → rest
         var clock = t0
-        for _ in 0..<5 {
+        for _ in 0..<6 {
             engine.record(reps: 12, weightKg: 60)
             clock = clock.addingTimeInterval(45)
             _ = engine.advance(at: clock)
@@ -332,11 +332,34 @@ final class ExecutionEngineTests: XCTestCase {
 
         let session = engine.finish(at: clock)
 
-        XCTAssertEqual(session.steps.count, 5)
+        XCTAssertEqual(session.steps.count, 6)
         XCTAssertEqual(session.steps.filter { $0.kind == .exercise }.count, 3)
         XCTAssertTrue(session.steps.allSatisfy { $0.status == .completed })
         XCTAssertEqual(session.steps[0].exerciseName, "Back Squat")
         XCTAssertEqual(session.steps[1].exerciseName, "Break")
-        XCTAssertEqual(session.steps.map(\.roundIndex), [1, 1, 2, 2, 3])
+        XCTAssertEqual(session.steps.map(\.roundIndex), [1, 1, 2, 2, 3, 3])
+    }
+
+    /// The other shape: a group that repeats, driven by auto-advance rather than taps.
+    func testTheCanonicalCircuitRunsEndToEnd() {
+        let plan = Plan(name: "HIIT", blocks: [
+            PlanBlock(rounds: 3, steps: [
+                PlanStep(kind: .exercise, label: "Hard", mode: .time, duration: 20),
+                PlanStep(kind: .exercise, label: "Easy", mode: .time, duration: 40),
+            ]),
+        ])
+        var engine = ExecutionEngine(intervals: PlanFlattener.flatten(plan))
+        _ = engine.start(at: t0)
+
+        // 3 rounds x 60s. Tick once past the end and expect a single coalesced event.
+        let events = engine.tick(now: t0.addingTimeInterval(999))
+
+        XCTAssertEqual(events, [.finished])
+        XCTAssertEqual(engine.phase, .finished)
+
+        let session = engine.finish(at: t0.addingTimeInterval(999))
+        XCTAssertEqual(session.steps.count, 6)
+        XCTAssertEqual(session.steps.map(\.blockRound), [1, 1, 2, 2, 3, 3])
+        XCTAssertTrue(session.steps.allSatisfy { $0.status == .completed })
     }
 }

@@ -3,75 +3,90 @@ import XCTest
 
 final class PlanFlattenerTests: XCTestCase {
 
-    // MARK: - The two canonical shapes
+    // MARK: - Step rounds ("4 x 6-8 bench press")
 
-    /// "3 sets of 12 squats, 90s rest between sets."
-    /// Repetition is the block's `rounds`; there is no separate "sets" concept.
-    func testSetsAreExpressedAsRoundsOfOneStep() {
+    /// The set count belongs to the exercise, so a step repeats on its own.
+    func testStepRoundsRepeatTheExercise() {
         let squat = UUID()
         let plan = Plan(name: "Squats", blocks: [
-            PlanBlock(rounds: 3, restBetweenRounds: 90, steps: [
-                PlanStep(exerciseID: squat, kind: .exercise, mode: .reps, reps: 12),
+            PlanBlock(steps: [
+                PlanStep(exerciseID: squat, kind: .exercise, rounds: 3, mode: .reps, reps: 12, restAfter: 90),
             ]),
         ])
 
         let intervals = PlanFlattener.flatten(plan, exerciseNames: [squat: "Back Squat"])
 
-        XCTAssertEqual(intervals.count, 5, "3 sets + 2 rests between them")
-        XCTAssertEqual(intervals.map(\.kind), [.exercise, .rest, .exercise, .rest, .exercise])
-        XCTAssertEqual(intervals.map(\.name), ["Back Squat", "Break", "Back Squat", "Break", "Back Squat"])
-        XCTAssertEqual(intervals.map(\.roundIndex), [1, 1, 2, 2, 3])
+        // Three sets, and a rest after EACH of them — including the last, which carries you
+        // into whatever comes next.
+        XCTAssertEqual(intervals.map(\.kind), [.exercise, .rest, .exercise, .rest, .exercise, .rest])
+        XCTAssertEqual(intervals.count, 6)
+        XCTAssertEqual(intervals.map(\.roundIndex), [1, 1, 2, 2, 3, 3], "the step's own round number")
+        XCTAssertEqual(intervals.map(\.blockRound), [1, 1, 1, 1, 1, 1])
         XCTAssertEqual(intervals[0].reps, 12)
-        XCTAssertNil(intervals[0].duration, "a rep interval has no length")
         XCTAssertEqual(intervals[1].duration, 90)
-        XCTAssertFalse(intervals[0].advancesAutomatically)
+        XCTAssertEqual(intervals[5].kind, .rest, "the final set is followed by rest too")
     }
 
-    /// "Circuit of 4 exercises x 3 rounds, 20s between exercises."
-    func testCircuitOfFourRepeatedThreeTimes() {
-        let plan = Plan(name: "Circuit", blocks: [
-            PlanBlock(rounds: 3, steps: (1...4).map { n in
-                PlanStep(
-                    exerciseID: nil,
-                    kind: .exercise,
-                    label: "Move \(n)",
-                    mode: .time,
-                    duration: 40,
-                    restAfter: 20
-                )
-            }),
+    func testStepWithNoRoundsDefaultsToOne() {
+        let plan = Plan(name: "P", blocks: [
+            PlanBlock(steps: [PlanStep(kind: .exercise, label: "A", mode: .reps, reps: 5, restAfter: 30)]),
         ])
 
         let intervals = PlanFlattener.flatten(plan)
 
-        // 4 moves + 4 rests per round, 3 rounds.
-        XCTAssertEqual(intervals.count, 24)
-        XCTAssertEqual(intervals.filter { $0.kind == .rest }.count, 12)
-        XCTAssertEqual(intervals.filter { $0.kind == .exercise }.count, 12)
-        XCTAssertEqual(intervals[0].name, "Move 1")
-        XCTAssertEqual(intervals[0].duration, 40)
-        XCTAssertEqual(intervals[1].kind, .rest)
-        XCTAssertEqual(intervals[1].duration, 20)
-        XCTAssertTrue(intervals[0].advancesAutomatically)
+        XCTAssertEqual(intervals.count, 2, "one set plus its rest")
+        XCTAssertEqual(PlanStep(kind: .exercise, mode: .reps, reps: 5).rounds, 1)
     }
 
-    // MARK: - The documented asymmetry between the two rest mechanisms
-
-    func testRestAfterFiresEvenOnTheLastStepOfARound() {
+    func testStepWithRoundsButNoRestEmitsNoRests() {
         let plan = Plan(name: "P", blocks: [
-            PlanBlock(rounds: 2, steps: [
-                PlanStep(kind: .exercise, label: "A", mode: .time, duration: 30, restAfter: 15),
+            PlanBlock(steps: [PlanStep(kind: .exercise, label: "Squat", rounds: 4, mode: .reps, reps: 8)]),
+        ])
+
+        let intervals = PlanFlattener.flatten(plan)
+
+        XCTAssertEqual(intervals.count, 4)
+        XCTAssertTrue(intervals.allSatisfy { $0.kind == .exercise })
+    }
+
+    // MARK: - Block rounds ("6 x (20s hard, 40s easy)")
+
+    /// A block is a *group* that repeats — the other shape a programme uses.
+    func testBlockRoundsRepeatTheWholeGroup() {
+        let plan = Plan(name: "HIIT", blocks: [
+            PlanBlock(name: "Intervals", rounds: 6, steps: [
+                PlanStep(kind: .exercise, label: "Hard — 20 sec", mode: .time, duration: 20),
+                PlanStep(kind: .exercise, label: "Easy — 40 sec", mode: .time, duration: 40),
             ]),
         ])
 
         let intervals = PlanFlattener.flatten(plan)
 
-        // [A, rest, A, rest] — the rest after round 1's step is the rest before round 2.
-        XCTAssertEqual(intervals.count, 4)
-        XCTAssertEqual(intervals.map(\.kind), [.exercise, .rest, .exercise, .rest])
+        XCTAssertEqual(intervals.count, 12, "6 rounds x 2 steps, no rests at all")
+        XCTAssertEqual(intervals.map(\.blockRound), [1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6])
+        XCTAssertEqual(intervals.map(\.roundIndex), Array(repeating: 1, count: 12), "each step runs once per round")
+        XCTAssertEqual(intervals[0].name, "Hard — 20 sec")
+        XCTAssertEqual(intervals[1].duration, 40)
     }
 
-    func testRestBetweenRoundsDoesNotFireAfterTheFinalRound() {
+    func testCircuitOfFourRepeatedThreeTimes() {
+        let plan = Plan(name: "Circuit", blocks: [
+            PlanBlock(rounds: 3, steps: (1...4).map { n in
+                PlanStep(kind: .exercise, label: "Move \(n)", mode: .time, duration: 40, restAfter: 20)
+            }),
+        ])
+
+        let intervals = PlanFlattener.flatten(plan)
+
+        XCTAssertEqual(intervals.count, 24, "3 rounds x (4 moves + 4 rests)")
+        XCTAssertEqual(intervals.filter { $0.kind == .rest }.count, 12)
+        XCTAssertEqual(intervals[0].name, "Move 1")
+        XCTAssertEqual(intervals[1].duration, 20)
+    }
+
+    // MARK: - The two rest mechanisms
+
+    func testBlockRestFiresOnlyBetweenRoundsNeverAfterTheLast() {
         let plan = Plan(name: "P", blocks: [
             PlanBlock(rounds: 3, restBetweenRounds: 60, steps: [
                 PlanStep(kind: .exercise, label: "A", mode: .time, duration: 30),
@@ -82,26 +97,48 @@ final class PlanFlattenerTests: XCTestCase {
 
         XCTAssertEqual(intervals.count, 5, "3 work + 2 rests — never a trailing rest")
         XCTAssertEqual(intervals.last?.kind, .exercise)
+        XCTAssertEqual(intervals.map(\.kind), [.exercise, .rest, .exercise, .rest, .exercise])
     }
 
-    func testSingleRoundProducesNoRestsAtAll() {
+    func testBlockRestIsMeaninglessWithOneRound() {
         let plan = Plan(name: "P", blocks: [
             PlanBlock(rounds: 1, restBetweenRounds: 60, steps: [
                 PlanStep(kind: .exercise, label: "A", mode: .time, duration: 30),
             ]),
         ])
 
-        let intervals = PlanFlattener.flatten(plan)
-
-        XCTAssertEqual(intervals.count, 1, "rest_between_rounds is meaningless with one round")
-        XCTAssertEqual(intervals[0].kind, .exercise)
+        XCTAssertEqual(PlanFlattener.flatten(plan).count, 1)
     }
 
-    // MARK: - Rest steps and naming
+    // MARK: - Both at once
+
+    /// A block that repeats, containing an exercise that repeats — the two mechanisms nest.
+    func testStepAndBlockRoundsNest() {
+        let plan = Plan(name: "P", blocks: [
+            PlanBlock(rounds: 2, restBetweenRounds: 30, steps: [
+                PlanStep(kind: .exercise, label: "A", rounds: 2, mode: .time, duration: 10, restAfter: 5),
+            ]),
+        ])
+
+        let intervals = PlanFlattener.flatten(plan)
+
+        // round 1: A, r5, A, r5, then the between-rounds rest
+        // round 2: A, r5, A, r5, with no trailing block rest
+        XCTAssertEqual(intervals.count, 9)
+        XCTAssertEqual(
+            intervals.map(\.kind),
+            [.exercise, .rest, .exercise, .rest, .rest, .exercise, .rest, .exercise, .rest]
+        )
+        XCTAssertEqual(intervals.map(\.blockRound), [1, 1, 1, 1, 1, 2, 2, 2, 2])
+        XCTAssertEqual(intervals.map(\.roundIndex), [1, 1, 2, 2, 1, 1, 1, 2, 2])
+        XCTAssertEqual(intervals.count { $0.duration == 30 }, 1, "exactly one between-rounds rest")
+    }
+
+    // MARK: - Rests as steps, and naming
 
     func testExplicitRestStepIsEmittedWithItsOwnLabel() {
         let plan = Plan(name: "P", blocks: [
-            PlanBlock(rounds: 1, steps: [
+            PlanBlock(steps: [
                 PlanStep(kind: .exercise, label: "Squat", mode: .reps, reps: 10),
                 PlanStep(kind: .rest, label: "Breathe", mode: .time, duration: 120),
             ]),
@@ -118,7 +155,7 @@ final class PlanFlattenerTests: XCTestCase {
 
     func testUnlabelledRestFallsBackToBreak() {
         let plan = Plan(name: "P", blocks: [
-            PlanBlock(rounds: 1, steps: [PlanStep(kind: .rest, mode: .time, duration: 30)]),
+            PlanBlock(steps: [PlanStep(kind: .rest, mode: .time, duration: 30)]),
         ])
 
         XCTAssertEqual(PlanFlattener.flatten(plan).first?.name, "Break")
@@ -127,22 +164,18 @@ final class PlanFlattenerTests: XCTestCase {
     func testLabelOverridesTheExerciseName() {
         let id = UUID()
         let plan = Plan(name: "P", blocks: [
-            PlanBlock(rounds: 1, steps: [
+            PlanBlock(steps: [
                 PlanStep(exerciseID: id, kind: .exercise, label: "Warm-up squats", mode: .reps, reps: 5),
             ]),
         ])
 
-        let intervals = PlanFlattener.flatten(plan, exerciseNames: [id: "Back Squat"])
-
-        XCTAssertEqual(intervals[0].name, "Warm-up squats")
+        XCTAssertEqual(PlanFlattener.flatten(plan, exerciseNames: [id: "Back Squat"])[0].name, "Warm-up squats")
     }
 
     /// An exercise deleted out from under a plan must still let the workout run.
     func testUnknownExerciseFallsBackToAPlaceholderRatherThanCrashing() {
         let plan = Plan(name: "P", blocks: [
-            PlanBlock(rounds: 1, steps: [
-                PlanStep(exerciseID: UUID(), kind: .exercise, mode: .reps, reps: 5),
-            ]),
+            PlanBlock(steps: [PlanStep(exerciseID: UUID(), kind: .exercise, mode: .reps, reps: 5)]),
         ])
 
         XCTAssertEqual(PlanFlattener.flatten(plan).first?.name, "Exercise")
@@ -150,7 +183,7 @@ final class PlanFlattenerTests: XCTestCase {
 
     func testRepStepCarriesWeightAndTimeStepDoesNotCarryReps() {
         let plan = Plan(name: "P", blocks: [
-            PlanBlock(rounds: 1, steps: [
+            PlanBlock(steps: [
                 PlanStep(kind: .exercise, label: "Squat", mode: .reps, reps: 8, targetWeightKg: 60),
                 PlanStep(kind: .exercise, label: "Plank", mode: .time, duration: 45, targetWeightKg: 10),
             ]),
@@ -168,7 +201,7 @@ final class PlanFlattenerTests: XCTestCase {
 
     func testMultipleBlocksConcatenateInOrder() {
         let plan = Plan(name: "P", blocks: [
-            PlanBlock(name: "Warm-up", rounds: 1, steps: [PlanStep(label: "Jumping Jack", mode: .time, duration: 60)]),
+            PlanBlock(name: "Warm-up", steps: [PlanStep(label: "Jumping Jack", mode: .time, duration: 60)]),
             PlanBlock(name: "Main", rounds: 2, steps: [PlanStep(label: "Squat", mode: .reps, reps: 10)]),
         ])
 
@@ -185,27 +218,30 @@ final class PlanFlattenerTests: XCTestCase {
     }
 
     func testZeroRoundsIsTreatedAsOne() {
-        let plan = Plan(name: "P", blocks: [
+        let zeroBlock = Plan(name: "P", blocks: [
             PlanBlock(rounds: 0, steps: [PlanStep(kind: .exercise, label: "A", mode: .time, duration: 10)]),
         ])
+        XCTAssertEqual(PlanFlattener.flatten(zeroBlock).count, 1)
 
-        XCTAssertEqual(PlanFlattener.flatten(plan).count, 1)
+        let zeroStep = Plan(name: "P", blocks: [
+            PlanBlock(steps: [PlanStep(kind: .exercise, label: "A", rounds: 0, mode: .time, duration: 10)]),
+        ])
+        XCTAssertEqual(PlanFlattener.flatten(zeroStep).count, 1)
     }
 
     // MARK: - Display
 
     func testRepsAndWeightReachTheInterval() {
         let plan = Plan(name: "P", blocks: [
-            PlanBlock(rounds: 4, restBetweenRounds: 90, steps: [
-                PlanStep(kind: .exercise, label: "Flat DB Bench Press", mode: .reps,
-                         reps: 8, targetWeightKg: 20),
+            PlanBlock(steps: [
+                PlanStep(kind: .exercise, label: "Flat DB Bench Press", rounds: 4, mode: .reps,
+                         reps: 8, targetWeightKg: 20, restAfter: 90),
             ]),
         ])
 
         let intervals = PlanFlattener.flatten(plan)
 
-        XCTAssertEqual(intervals.count, 7, "4 sets + 3 rests")
-        XCTAssertEqual(intervals[0].reps, 8)
+        XCTAssertEqual(intervals.count, 8, "4 sets + 4 rests")
         XCTAssertEqual(intervals[0].repsDisplay, "8 reps")
         XCTAssertEqual(intervals[0].weightDisplay, "20 kg")
         XCTAssertEqual(intervals[0].primaryTarget, "8 reps")
@@ -213,10 +249,8 @@ final class PlanFlattenerTests: XCTestCase {
 
     func testFractionalWeightReadsCleanly() {
         let plan = Plan(name: "P", blocks: [
-            PlanBlock(rounds: 3, steps: [
-                PlanStep(kind: .exercise, label: "Lateral Raise", mode: .reps,
-                         reps: 12, targetWeightKg: 7.5),
-            ]),
+            PlanBlock(steps: [PlanStep(kind: .exercise, label: "Lateral Raise", mode: .reps,
+                                       reps: 12, targetWeightKg: 7.5)]),
         ])
 
         XCTAssertEqual(PlanFlattener.flatten(plan)[0].weightDisplay, "7.5 kg")
@@ -229,7 +263,7 @@ final class PlanFlattenerTests: XCTestCase {
 
     func testRepsAndWeightDoNotLeakOntoTimedOrRestIntervals() {
         let plan = Plan(name: "P", blocks: [
-            PlanBlock(rounds: 1, steps: [
+            PlanBlock(steps: [
                 PlanStep(kind: .exercise, label: "Plank", mode: .time, duration: 45),
                 PlanStep(kind: .rest, mode: .time, duration: 30),
             ]),
@@ -244,9 +278,7 @@ final class PlanFlattenerTests: XCTestCase {
 
     func testStepWithNoLoadHasNoWeightDisplay() {
         let plan = Plan(name: "P", blocks: [
-            PlanBlock(rounds: 1, steps: [
-                PlanStep(kind: .exercise, label: "Push-Up", mode: .reps, reps: 12),
-            ]),
+            PlanBlock(steps: [PlanStep(kind: .exercise, label: "Push-Up", mode: .reps, reps: 12)]),
         ])
 
         XCTAssertNil(PlanFlattener.flatten(plan)[0].weightDisplay)

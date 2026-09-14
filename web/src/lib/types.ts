@@ -30,6 +30,8 @@ export interface PlanStep {
   position: number;
   kind: StepKind;
   label: string | null;
+  /** How many times this exercise repeats — its set count. */
+  rounds: number;
   mode: StepMode;
   duration_seconds: number | null;
   /** The rep target. */
@@ -68,7 +70,10 @@ export interface Interval {
   duration_seconds: number | null;
   reps: number | null;
   target_weight_kg: number | null;
+  /** Which round of the step this is — i.e. which set. */
   round_index: number;
+  /** Which round of the enclosing block this is. */
+  block_round: number;
   block_index: number;
   block_name: string | null;
 }
@@ -107,34 +112,47 @@ const REST_LABEL = 'Break';
  * Flatten a plan into the ordered interval sequence the session engine executes.
  *
  *   for block in blocks ordered by position:
- *     for round in 1..block.rounds:
+ *     for blockRound in 1..block.rounds:
  *       for step in steps ordered by position:
- *         emit step; if step.rest_after_seconds: emit rest
- *       if round < block.rounds and block.rest_between_rounds_seconds: emit rest
+ *         for stepRound in 1..step.rounds:
+ *           emit step; if step.rest_after_seconds: emit rest
+ *       if blockRound < block.rounds and block.rest_between_rounds_seconds: emit rest
  *
- * Note the deliberate asymmetry: `rest_after_seconds` DOES fire after the final step of a
- * round (usually desired — it doubles as the rest before the next round), whereas
- * `rest_between_rounds_seconds` fires only BETWEEN rounds.
+ * Both a step and a block can repeat. A step's rounds is its set count ("4 x 6-8 bench
+ * press"); a block's rounds repeats a group ("6 x (20s hard, 40s easy)").
+ *
+ * The two rest mechanisms differ deliberately: `rest_after_seconds` fires after EVERY
+ * round including the last, so an exercise's rest carries you into the next exercise,
+ * whereas `rest_between_rounds_seconds` fires only BETWEEN a block's rounds.
  */
 export function flattenPlan(plan: Plan, exerciseNames: Map<string, string>): Interval[] {
   const intervals: Interval[] = [];
   const blocks = [...plan.blocks].sort((a, b) => a.position - b.position);
 
   blocks.forEach((block, blockIndex) => {
-    for (let round = 1; round <= Math.max(1, block.rounds); round++) {
+    const blockRounds = Math.max(1, block.rounds);
+
+    for (let blockRound = 1; blockRound <= blockRounds; blockRound++) {
       const steps = [...block.steps].sort((a, b) => a.position - b.position);
 
       for (const step of steps) {
-        intervals.push(toInterval(step, intervals.length, round, blockIndex, block, exerciseNames));
+        for (let stepRound = 1; stepRound <= Math.max(1, step.rounds); stepRound++) {
+          intervals.push(
+            toInterval(step, intervals.length, stepRound, blockRound, blockIndex, block, exerciseNames),
+          );
 
-        if (step.rest_after_seconds && step.rest_after_seconds > 0) {
-          intervals.push(restInterval(intervals.length, step.rest_after_seconds, round, blockIndex, block));
+          if (step.rest_after_seconds && step.rest_after_seconds > 0) {
+            intervals.push(
+              restInterval(intervals.length, step.rest_after_seconds, stepRound, blockRound, blockIndex, block),
+            );
+          }
         }
       }
 
-      const isLastRound = round === Math.max(1, block.rounds);
-      if (!isLastRound && block.rest_between_rounds_seconds && block.rest_between_rounds_seconds > 0) {
-        intervals.push(restInterval(intervals.length, block.rest_between_rounds_seconds, round, blockIndex, block));
+      if (blockRound < blockRounds && block.rest_between_rounds_seconds && block.rest_between_rounds_seconds > 0) {
+        intervals.push(
+          restInterval(intervals.length, block.rest_between_rounds_seconds, blockRound, blockRound, blockIndex, block),
+        );
       }
     }
   });
@@ -146,6 +164,7 @@ function toInterval(
   step: PlanStep,
   index: number,
   roundIndex: number,
+  blockRound: number,
   blockIndex: number,
   block: PlanBlock,
   exerciseNames: Map<string, string>,
@@ -164,6 +183,7 @@ function toInterval(
     reps: isRest ? null : (step.mode === 'reps' ? step.reps : null),
     target_weight_kg: isRest ? null : step.target_weight_kg,
     round_index: roundIndex,
+    block_round: blockRound,
     block_index: blockIndex,
     block_name: block.name,
   };
@@ -173,6 +193,7 @@ function restInterval(
   index: number,
   duration: number,
   roundIndex: number,
+  blockRound: number,
   blockIndex: number,
   block: PlanBlock,
 ): Interval {
@@ -185,6 +206,7 @@ function restInterval(
     reps: null,
     target_weight_kg: null,
     round_index: roundIndex,
+    block_round: blockRound,
     block_index: blockIndex,
     block_name: block.name,
   };

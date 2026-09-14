@@ -6,15 +6,21 @@
 -- Safe to re-run. It deletes and recreates only the plan with this exact name, so
 -- re-running after an edit resets it to the prescription below.
 --
--- How the workout maps onto the model:
---   "4 x 6-8"                  -> a block with rounds = 4 (one set per round)
---   "Rest: 90 sec"             -> that block's rest_between_rounds_seconds
---   "6 x (20s hard, 40s easy)" -> a block with rounds = 6 holding two timed steps
+-- How the workout maps onto the model. Both an exercise and a block can repeat:
+--
+--   "4 x 6-8 bench press, rest 90s"  -> ONE STEP with rounds = 4 and rest_after = 90.
+--                                       The set count belongs to the exercise, so the step
+--                                       repeats on its own — no wrapper block needed.
+--   "Rest: 90 sec"                   -> that step's rest_after, which fires after every
+--                                       round including the last, so bench press carries
+--                                       you into lat pulldown.
+--   "6 x (20s hard, 40s easy)"       -> a BLOCK with rounds = 6 holding two timed steps.
+--                                       Here the *group* repeats, which is what a block is
+--                                       for.
 --
 -- A step holds ONE rep target and ONE load, so where the programme gave ranges those are
 -- pinned to the LOW end — the number you should always be able to hit — and the range
--- itself is kept in the step's notes. Raise the stored value once the top of the range is
--- comfortable on every set.
+-- itself is kept in the step's notes.
 
 -- ---------------------------------------------------------------------------
 -- helpers. Created in pg_temp, so they exist only for this session and leave no
@@ -47,7 +53,7 @@ $fn$;
 
 create or replace function pg_temp.new_exercise_step(
   p_block uuid, p_position int, p_slug text, p_label text,
-  p_mode text, p_duration int, p_reps int,
+  p_rounds int, p_mode text, p_duration int, p_reps int,
   p_weight numeric, p_rest_after int, p_notes text
 ) returns void language plpgsql as $fn$
 declare
@@ -59,11 +65,11 @@ begin
   end if;
 
   insert into public.plan_steps (
-    block_id, position, kind, exercise_id, label, mode,
+    block_id, position, kind, exercise_id, label, rounds, mode,
     duration_seconds, reps, target_weight_kg, rest_after_seconds, notes
   ) values (
     p_block, p_position, 'exercise', v_exercise,
-    nullif(p_label, ''), p_mode,
+    nullif(p_label, ''), coalesce(p_rounds, 1), p_mode,
     p_duration, p_reps, p_weight,
     p_rest_after, nullif(p_notes, '')
   );
@@ -96,9 +102,10 @@ begin
   values (v_user, 'Monday — Upper Body A + HIIT', $notes$
 Target: strength + hypertrophy. Roughly 45–50 min.
 
-How to read this: one block per exercise. A block's "rounds" is your set count, and its
-"rest between rounds" is the rest between sets. The HIIT section is a 6-round block of
-20 sec hard / 40 sec easy.
+How to read this: an exercise's "rounds" is its set count, and "rest between exercise
+rounds" is the rest after each set — including the last, so it carries you into the next
+exercise. A *block's* rounds instead repeats the whole group, which is how the HIIT
+section works (6 rounds of 20 sec hard / 40 sec easy).
 
 Aim for 1–2 reps in reserve on the working sets. Rep and weight ranges from the programme
 are stored as their LOW end; the range itself is in each step's notes. Work up to the top
@@ -112,56 +119,55 @@ follow the intervals as written.
 $notes$)
   returning id into v_plan;
 
-  -- Warm-up -----------------------------------------------------------------
+  -- Warm-up — one pass through, no rest between the movements -----------------
   v_block := pg_temp.new_block(v_plan, 0, 'Warm-up', 1, null);
-  perform pg_temp.new_exercise_step(v_block, 0, 'arm-circles',      null, 'reps', null, 15, null, null, '15 reps in each direction');
-  perform pg_temp.new_exercise_step(v_block, 1, 'scapular-push-up', null, 'reps', null, 10, null, null, null);
-  perform pg_temp.new_exercise_step(v_block, 2, 'inchworm',         null, 'reps', null,  5, null, null, null);
-  perform pg_temp.new_exercise_step(v_block, 3, 'push-up',          null, 'reps', null, 10, null, null, null);
-  perform pg_temp.new_exercise_step(v_block, 4, 'bench-press-dumbbell', 'Light DB Bench Press', 'reps', null, 10, null, null, 'Light weight — this is a warm-up set');
+  perform pg_temp.new_exercise_step(v_block, 0, 'arm-circles',      null, 1, 'reps', null, 15, null, null, '15 reps in each direction');
+  perform pg_temp.new_exercise_step(v_block, 1, 'scapular-push-up', null, 1, 'reps', null, 10, null, null, null);
+  perform pg_temp.new_exercise_step(v_block, 2, 'inchworm',         null, 1, 'reps', null,  5, null, null, null);
+  perform pg_temp.new_exercise_step(v_block, 3, 'push-up',          null, 1, 'reps', null, 10, null, null, null);
+  perform pg_temp.new_exercise_step(v_block, 4, 'bench-press-dumbbell', 'Light DB Bench Press', 1, 'reps', null, 10, null, null, 'Light weight — this is a warm-up set');
 
-  -- Main work: one block per exercise, rounds = sets -------------------------
-  v_block := pg_temp.new_block(v_plan, 1, 'Flat Dumbbell Bench Press', 4, 90);
+  -- Main work — each exercise carries its own set count and rest --------------
+  v_block := pg_temp.new_block(v_plan, 1, 'Main work', 1, null);
+
   perform pg_temp.new_exercise_step(v_block, 0, 'bench-press-dumbbell', 'Flat Dumbbell Bench Press',
-    'reps', null, 6, 20, null, '20 kg per hand · 6–8 reps · aim for 1–2 reps in reserve');
+    4, 'reps', null, 6, 20, 90, '20 kg per hand · 6–8 reps · aim for 1–2 reps in reserve');
 
-  v_block := pg_temp.new_block(v_plan, 2, 'Neutral-Grip Lat Pulldown', 4, 90);
-  perform pg_temp.new_exercise_step(v_block, 0, 'lat-pulldown', 'Neutral-Grip Lat Pulldown',
-    'reps', null, 6, 50, null, 'Start around 50 kg and build to 60 · 6–8 reps');
+  perform pg_temp.new_exercise_step(v_block, 1, 'lat-pulldown', 'Neutral-Grip Lat Pulldown',
+    4, 'reps', null, 6, 50, 90, 'Start around 50 kg and build to 60 · 6–8 reps');
 
-  v_block := pg_temp.new_block(v_plan, 3, 'Seated Dumbbell Shoulder Press', 3, 75);
-  perform pg_temp.new_exercise_step(v_block, 0, 'shoulder-press-dumbbell', 'Seated Dumbbell Shoulder Press',
-    'reps', null, 8, 12.5, null, '12.5–15 kg per hand · 8–10 reps');
+  perform pg_temp.new_exercise_step(v_block, 2, 'shoulder-press-dumbbell', 'Seated Dumbbell Shoulder Press',
+    3, 'reps', null, 8, 12.5, 75, '12.5–15 kg per hand · 8–10 reps');
 
-  v_block := pg_temp.new_block(v_plan, 4, 'One-Arm Dumbbell Row', 3, 60);
-  perform pg_temp.new_exercise_step(v_block, 0, 'row-dumbbell', 'One-Arm Dumbbell Row',
-    'reps', null, 8, 20, null, '20 kg · 8–10 reps, per side');
+  perform pg_temp.new_exercise_step(v_block, 3, 'row-dumbbell', 'One-Arm Dumbbell Row',
+    3, 'reps', null, 8, 20, 60, '20 kg · 8–10 reps, per side');
 
-  v_block := pg_temp.new_block(v_plan, 5, 'Dumbbell Lateral Raise', 3, 45);
-  perform pg_temp.new_exercise_step(v_block, 0, 'lateral-raise-dumbbell', 'Dumbbell Lateral Raise',
-    'reps', null, 12, 6, null, '6–7.5 kg · 12–15 reps');
+  perform pg_temp.new_exercise_step(v_block, 4, 'lateral-raise-dumbbell', 'Dumbbell Lateral Raise',
+    3, 'reps', null, 12, 6, 45, '6–7.5 kg · 12–15 reps');
 
-  v_block := pg_temp.new_block(v_plan, 6, 'Hammer Curl', 2, 45);
-  perform pg_temp.new_exercise_step(v_block, 0, 'curl-hammer', 'Hammer Curl',
-    'reps', null, 10, 12.5, null, '12.5–15 kg · 10–12 reps');
+  perform pg_temp.new_exercise_step(v_block, 5, 'curl-hammer', 'Hammer Curl',
+    2, 'reps', null, 10, 12.5, 45, '12.5–15 kg · 10–12 reps');
 
-  -- HIIT --------------------------------------------------------------------
-  v_block := pg_temp.new_block(v_plan, 7, 'HIIT — warm-up', 1, null);
+  -- HIIT — here a BLOCK repeats, because the group is what recurs ------------
+  v_block := pg_temp.new_block(v_plan, 2, 'HIIT — warm-up', 1, null);
   perform pg_temp.new_exercise_step(v_block, 0, 'treadmill-run', 'Easy — 2 min',
-    'time', 120, null, null, null,
+    1, 'time', 120, null, null, null,
     'Treadmill or bike. No equipment? Swap the whole HIIT section for 20s mountain climbers / 40s walking, ×6.');
 
-  v_block := pg_temp.new_block(v_plan, 8, 'HIIT — 6 rounds', 6, null);
+  v_block := pg_temp.new_block(v_plan, 3, 'HIIT — 6 rounds', 6, null);
   perform pg_temp.new_exercise_step(v_block, 0, 'treadmill-run', 'Hard — 20 sec',
-    'time', 20, null, null, null, 'Around 8–9/10 effort — hard, but not an all-out sprint.');
+    1, 'time', 20, null, null, null, 'Around 8–9/10 effort — hard, but not an all-out sprint.');
   perform pg_temp.new_exercise_step(v_block, 1, 'treadmill-run', 'Easy — 40 sec',
-    'time', 40, null, null, null, null);
+    1, 'time', 40, null, null, null, null);
 
-  v_block := pg_temp.new_block(v_plan, 9, 'HIIT — cool-down', 1, null);
+  v_block := pg_temp.new_block(v_plan, 4, 'HIIT — cool-down', 1, null);
   perform pg_temp.new_exercise_step(v_block, 0, 'treadmill-run', 'Easy — 2 min',
-    'time', 120, null, null, null, null);
+    1, 'time', 120, null, null, null, null);
 
-  raise notice 'Loaded plan % with % blocks.', v_plan,
-    (select count(*) from public.plan_blocks where plan_id = v_plan);
+  raise notice 'Loaded plan % with % blocks and % steps.', v_plan,
+    (select count(*) from public.plan_blocks where plan_id = v_plan),
+    (select count(*) from public.plan_steps s
+       join public.plan_blocks b on b.id = s.block_id
+      where b.plan_id = v_plan);
 end;
 $plan$;

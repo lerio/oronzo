@@ -23,6 +23,7 @@ function stepFromExercise(exercise: Exercise | undefined): PlanStep {
     position: 0,
     kind: 'exercise',
     label: null,
+    rounds: 1,
     mode: exercise?.default_mode ?? 'reps',
     duration_seconds: isTime ? (exercise?.default_duration_seconds ?? 45) : null,
     reps: isTime ? null : (exercise?.default_reps ?? 10),
@@ -38,6 +39,7 @@ function restStep(): PlanStep {
     position: 0,
     kind: 'rest',
     label: null,
+    rounds: 1,
     mode: 'time',
     duration_seconds: 60,
     reps: null,
@@ -358,6 +360,18 @@ export default function PlanEditor() {
                   />
                 )}
 
+                <label className="inline-field" title="How many times this repeats — the set count">
+                  <span>rounds</span>
+                  <input
+                    type="number"
+                    min={1}
+                    value={step.rounds}
+                    onChange={(e) =>
+                      updateStep(blockIndex, stepIndex, { rounds: Math.max(1, Number(e.target.value) || 1) })
+                    }
+                  />
+                </label>
+
                 {step.kind === 'exercise' && (
                   <select
                     value={step.mode}
@@ -412,8 +426,11 @@ export default function PlanEditor() {
                   </label>
                 )}
 
-                <label className="inline-field">
-                  <span>rest after (s)</span>
+                <label
+                  className="inline-field"
+                  title="Rest after each round of this exercise, including the last — so it carries you into the next exercise"
+                >
+                  <span>rest between exercise rounds (s)</span>
                   <input
                     type="number"
                     min={0}
@@ -474,8 +491,8 @@ export default function PlanEditor() {
                     ? `${interval.duration_seconds}s`
                     : repsDisplay(interval)}
                   {weightDisplay(interval) && ` @ ${weightDisplay(interval)}`}
-                  {' · '}
-                  round {interval.round_index}
+                  {interval.round_index > 1 && ` · round ${interval.round_index}`}
+                  {interval.block_round > 1 && ` · block round ${interval.block_round}`}
                 </span>
               </li>
             ))}

@@ -26,19 +26,22 @@ public struct PlanStep: Codable, Equatable, Sendable {
     public var exerciseID: UUID?
     public var kind: StepKind
     public var label: String?
+    /// How many times this exercise repeats — its set count.
+    public var rounds: Int
     public var mode: StepMode
     public var duration: TimeInterval?
     /// The rep target. Nil for a timed step.
     public var reps: Int?
     public var targetWeightKg: Double?
-    /// Rest inserted after this step *within* a round. Fires even on the last step of a
-    /// round — see `PlanFlattener` for why.
+    /// Rest after EACH round of this step, including the final one, so an exercise's rest
+    /// carries you into the next exercise. See `PlanFlattener`.
     public var restAfter: TimeInterval?
 
     public init(
         exerciseID: UUID? = nil,
         kind: StepKind = .exercise,
         label: String? = nil,
+        rounds: Int = 1,
         mode: StepMode = .reps,
         duration: TimeInterval? = nil,
         reps: Int? = nil,
@@ -48,6 +51,7 @@ public struct PlanStep: Codable, Equatable, Sendable {
         self.exerciseID = exerciseID
         self.kind = kind
         self.label = label
+        self.rounds = max(1, rounds)
         self.mode = mode
         self.duration = duration
         self.reps = reps
@@ -107,7 +111,10 @@ public struct Interval: Codable, Equatable, Sendable, Identifiable {
     public let duration: TimeInterval?
     public let reps: Int?
     public let targetWeightKg: Double?
+    /// Which round of the step this is (1-based) — i.e. which set.
     public let roundIndex: Int
+    /// Which round of the enclosing block this is (1-based).
+    public let blockRound: Int
     public let blockIndex: Int
     public let blockName: String?
     public let exerciseID: UUID?
@@ -126,6 +133,7 @@ public struct Interval: Codable, Equatable, Sendable, Identifiable {
         reps: Int?,
         targetWeightKg: Double?,
         roundIndex: Int,
+        blockRound: Int,
         blockIndex: Int,
         blockName: String?,
         exerciseID: UUID?
@@ -138,6 +146,7 @@ public struct Interval: Codable, Equatable, Sendable, Identifiable {
         self.reps = reps
         self.targetWeightKg = targetWeightKg
         self.roundIndex = roundIndex
+        self.blockRound = blockRound
         self.blockIndex = blockIndex
         self.blockName = blockName
         self.exerciseID = exerciseID

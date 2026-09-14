@@ -297,6 +297,7 @@ public struct ExecutionEngine: Sendable {
                 return CompletedStep(
                     position: interval.index,
                     roundIndex: interval.roundIndex,
+                    blockRound: interval.blockRound,
                     blockName: interval.blockName,
                     kind: interval.kind,
                     exerciseID: interval.exerciseID,
@@ -329,7 +330,10 @@ public struct CompletedSession: Equatable, Sendable {
 /// correctly after the plan or the exercise is later renamed or deleted.
 public struct CompletedStep: Equatable, Sendable {
     public let position: Int
+    /// Which round of the *step* this was — i.e. which set of the exercise.
     public let roundIndex: Int
+    /// Which round of the enclosing *block* this was.
+    public let blockRound: Int
     public let blockName: String?
     public let kind: StepKind
     public let exerciseID: UUID?
