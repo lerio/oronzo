@@ -281,7 +281,57 @@ textarea:focus {
 }
 
 .inline-field input {
+  /* Fallback for anything not given an explicit width below. */
   width: 72px;
+}
+
+/* --- Compact numeric fields -------------------------------------------------
+   Each field is sized to the largest value it can hold, so a step row stays
+   readable instead of stretching across the page. `ch` is the width of a digit,
+   which is exactly what these contain; the +20px is the input's own padding and
+   border.
+
+   The number spinners are hidden because on a two-digit field they would occupy
+   more room than the digits do. */
+
+.inline-field input[type='number'] {
+  appearance: textfield;
+  -moz-appearance: textfield;
+  text-align: center;
+}
+
+.inline-field input[type='number']::-webkit-outer-spin-button,
+.inline-field input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* Two digits: rounds, sets, reps. */
+.inline-field .w-digits-2 {
+  width: calc(2ch + 20px);
+}
+
+/* Three digits: seconds and rest. */
+.inline-field .w-digits-3 {
+  width: calc(3ch + 20px);
+}
+
+/* Three digits plus a decimal point — a load reads "12.5 kg", which is four
+   glyphs however you count the numbers. */
+.inline-field .w-weight {
+  width: calc(3.5ch + 20px);
+}
+
+/* "reps" / "time", with room for the dropdown arrow.
+   Scoped to `.step-row` rather than `.inline-field` because this select is a bare child of
+   the row, not wrapped in a label like the numeric fields — and it needs the extra class
+   to outrank `.step-row select`, which lets selects grow to fill the row. Without both,
+   it stretches to ~150px whatever width is set here. The exercise-name select is the one
+   that should take the slack. */
+.step-row .w-mode {
+  width: calc(4ch + 48px);
+  flex: 0 0 auto;
+  min-width: 0;
 }
 
 .search {

@@ -264,6 +264,7 @@ export default function PlanEditor() {
             <label className="inline-field">
               <span>rounds</span>
               <input
+                className="w-digits-2"
                 type="number"
                 min={1}
                 value={block.rounds}
@@ -273,9 +274,10 @@ export default function PlanEditor() {
             <label className="inline-field">
               <span>rest between rounds (s)</span>
               <input
+                className="w-digits-3"
                 type="number"
                 min={0}
-                placeholder="none"
+                placeholder="—"
                 value={block.rest_between_rounds_seconds ?? ''}
                 onChange={(e) =>
                   updateBlock(blockIndex, {
@@ -326,6 +328,7 @@ export default function PlanEditor() {
                 <label className="inline-field" title="How many times this exercise repeats — its set count">
                   <span>sets</span>
                   <input
+                    className="w-digits-2"
                     type="number"
                     min={1}
                     value={step.sets}
@@ -336,6 +339,7 @@ export default function PlanEditor() {
                 </label>
 
                 <select
+                  className="w-mode"
                   value={step.mode}
                   onChange={(e) => changeMode(blockIndex, stepIndex, e.target.value as StepMode, step)}
                 >
@@ -347,6 +351,7 @@ export default function PlanEditor() {
                   <label className="inline-field">
                     <span>sec</span>
                     <input
+                      className="w-digits-3"
                       type="number"
                       min={1}
                       value={step.duration_seconds ?? ''}
@@ -359,6 +364,7 @@ export default function PlanEditor() {
                   <label className="inline-field">
                     <span>reps</span>
                     <input
+                      className="w-digits-2"
                       type="number"
                       min={1}
                       value={step.reps ?? ''}
@@ -372,6 +378,7 @@ export default function PlanEditor() {
                 <label className="inline-field">
                   <span>kg</span>
                   <input
+                    className="w-weight"
                     type="number"
                     min={0}
                     step="0.5"
@@ -391,6 +398,7 @@ export default function PlanEditor() {
                 >
                   <span>rest between sets (s)</span>
                   <input
+                    className="w-digits-3"
                     type="number"
                     min={0}
                     placeholder="—"
