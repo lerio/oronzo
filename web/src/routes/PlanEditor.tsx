@@ -450,8 +450,9 @@ export default function PlanEditor() {
                     ? `${interval.duration_seconds}s`
                     : repsDisplay(interval)}
                   {weightDisplay(interval) && ` @ ${weightDisplay(interval)}`}
-                  {interval.set_index > 1 && ` · set ${interval.set_index}`}
-                  {interval.block_round > 1 && ` · block round ${interval.block_round}`}
+                  {interval.set_count > 1 && ` · set ${interval.set_index} of ${interval.set_count}`}
+                  {interval.block_round_count > 1 &&
+                    ` · round ${interval.block_round} of ${interval.block_round_count}`}
                 </span>
               </li>
             ))}

@@ -115,8 +115,13 @@ public struct Interval: Codable, Equatable, Sendable, Identifiable {
     public let targetWeightKg: Double?
     /// Which set of the exercise this is (1-based).
     public let setIndex: Int
+    /// How many sets that exercise has — so the UI can say "set 2 of 4" rather than "set 2",
+    /// which is the difference between knowing and guessing how much is left.
+    public let setCount: Int
     /// Which round of the enclosing block this is (1-based).
     public let blockRound: Int
+    /// How many rounds that block has.
+    public let blockRoundCount: Int
     public let blockIndex: Int
     public let blockName: String?
     public let exerciseID: UUID?
@@ -135,7 +140,9 @@ public struct Interval: Codable, Equatable, Sendable, Identifiable {
         reps: Int?,
         targetWeightKg: Double?,
         setIndex: Int,
+        setCount: Int,
         blockRound: Int,
+        blockRoundCount: Int,
         blockIndex: Int,
         blockName: String?,
         exerciseID: UUID?
@@ -148,7 +155,9 @@ public struct Interval: Codable, Equatable, Sendable, Identifiable {
         self.reps = reps
         self.targetWeightKg = targetWeightKg
         self.setIndex = setIndex
+        self.setCount = setCount
         self.blockRound = blockRound
+        self.blockRoundCount = blockRoundCount
         self.blockIndex = blockIndex
         self.blockName = blockName
         self.exerciseID = exerciseID

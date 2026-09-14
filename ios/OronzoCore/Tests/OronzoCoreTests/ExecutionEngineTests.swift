@@ -8,7 +8,7 @@ final class ExecutionEngineTests: XCTestCase {
     private func timed(_ index: Int, _ seconds: TimeInterval, name: String = "Work") -> Interval {
         Interval(
             index: index, kind: .exercise, name: name, mode: .time, duration: seconds,
-            reps: nil, targetWeightKg: nil, setIndex: 1, blockRound: 1, blockIndex: 0,
+            reps: nil, targetWeightKg: nil, setIndex: 1, setCount: 1, blockRound: 1, blockRoundCount: 1, blockIndex: 0,
             blockName: nil, exerciseID: nil
         )
     }
@@ -16,7 +16,7 @@ final class ExecutionEngineTests: XCTestCase {
     private func reps(_ index: Int, _ count: Int = 10, weight: Double? = nil, name: String = "Squat") -> Interval {
         Interval(
             index: index, kind: .exercise, name: name, mode: .reps, duration: nil,
-            reps: count, targetWeightKg: weight, setIndex: 1, blockRound: 1, blockIndex: 0,
+            reps: count, targetWeightKg: weight, setIndex: 1, setCount: 1, blockRound: 1, blockRoundCount: 1, blockIndex: 0,
             blockName: nil, exerciseID: nil
         )
     }
@@ -24,7 +24,7 @@ final class ExecutionEngineTests: XCTestCase {
     private func rest(_ index: Int, _ seconds: TimeInterval) -> Interval {
         Interval(
             index: index, kind: .rest, name: "Break", mode: .time, duration: seconds,
-            reps: nil, targetWeightKg: nil, setIndex: 1, blockRound: 1, blockIndex: 0,
+            reps: nil, targetWeightKg: nil, setIndex: 1, setCount: 1, blockRound: 1, blockRoundCount: 1, blockIndex: 0,
             blockName: nil, exerciseID: nil
         )
     }

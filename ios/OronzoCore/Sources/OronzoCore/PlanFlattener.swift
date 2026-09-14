@@ -45,6 +45,7 @@ public enum PlanFlattener {
                                 index: intervals.count,
                                 setIndex: setIndex,
                                 blockRound: blockRound,
+                                blockRoundCount: blockRounds,
                                 blockIndex: blockIndex,
                                 block: block,
                                 exerciseNames: exerciseNames
@@ -57,7 +58,9 @@ public enum PlanFlattener {
                                     index: intervals.count,
                                     duration: rest,
                                     setIndex: setIndex,
+                                    setCount: max(1, step.sets),
                                     blockRound: blockRound,
+                                    blockRoundCount: blockRounds,
                                     blockIndex: blockIndex,
                                     block: block
                                 )
@@ -73,7 +76,9 @@ public enum PlanFlattener {
                             index: intervals.count,
                             duration: between,
                             setIndex: blockRound,
+                            setCount: 1,
                             blockRound: blockRound,
+                            blockRoundCount: blockRounds,
                             blockIndex: blockIndex,
                             block: block
                         )
@@ -90,6 +95,7 @@ public enum PlanFlattener {
         index: Int,
         setIndex: Int,
         blockRound: Int,
+        blockRoundCount: Int,
         blockIndex: Int,
         block: PlanBlock,
         exerciseNames: [UUID: String]
@@ -114,7 +120,9 @@ public enum PlanFlattener {
             reps: step.mode == .reps ? step.reps : nil,
             targetWeightKg: step.targetWeightKg,
             setIndex: setIndex,
+            setCount: max(1, step.sets),
             blockRound: blockRound,
+            blockRoundCount: blockRoundCount,
             blockIndex: blockIndex,
             blockName: block.name,
             exerciseID: step.exerciseID
@@ -126,7 +134,9 @@ public enum PlanFlattener {
         index: Int,
         duration: TimeInterval,
         setIndex: Int,
+        setCount: Int,
         blockRound: Int,
+        blockRoundCount: Int,
         blockIndex: Int,
         block: PlanBlock
     ) -> Interval {
@@ -139,7 +149,9 @@ public enum PlanFlattener {
             reps: nil,
             targetWeightKg: nil,
             setIndex: setIndex,
+            setCount: setCount,
             blockRound: blockRound,
+            blockRoundCount: blockRoundCount,
             blockIndex: blockIndex,
             blockName: block.name,
             exerciseID: nil

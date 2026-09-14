@@ -4,12 +4,28 @@ import SwiftUI
 struct PlanDetailView: View {
     @Environment(PlanStore.self) private var store
 
+    @State private var isRunning = false
+
     let plan: Plan
 
     private var intervals: [Interval] { store.intervals(for: plan) }
 
     var body: some View {
         List {
+            Section {
+                Button {
+                    isRunning = true
+                } label: {
+                    Label("Start workout", systemImage: "play.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .disabled(intervals.isEmpty)
+                .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
+                .listRowBackground(Color.clear)
+            }
+
             if !plan.blocks.isEmpty {
                 Section("Blocks") {
                     ForEach(Array(plan.blocks.enumerated()), id: \.offset) { index, block in
@@ -32,6 +48,9 @@ struct PlanDetailView: View {
         }
         .navigationTitle(plan.name)
         .navigationBarTitleDisplayMode(.inline)
+        .fullScreenCover(isPresented: $isRunning) {
+            SessionRunner(plan: plan, exerciseNames: store.exerciseNames)
+        }
     }
 }
 

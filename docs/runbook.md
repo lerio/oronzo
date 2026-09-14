@@ -73,6 +73,22 @@ occasionally.
 disabled and the single user account is created by hand in the dashboard rather than
 through a sign-up flow.
 
+## Seeing the session runner without a backend
+
+Debug builds accept two launch arguments that skip sign-in entirely:
+
+```bash
+xcrun simctl launch booted com.lerio.oronzo -demoSession   # a realistic plan
+xcrun simctl launch booted com.lerio.oronzo -demoFinish    # 6 seconds, reaches the summary
+```
+
+Useful for working on the runner UI without an account or a network. Release builds have
+no such entry point — see `ios/Oronzo/Session/DemoPlan.swift`, which is wrapped in
+`#if DEBUG`.
+
+Note that the demo cannot save: with no signed-in session, finishing reports "Auth session
+missing" and offers a retry. That is the failure path working, not a bug.
+
 ## Troubleshooting
 
 | Symptom | Cause |

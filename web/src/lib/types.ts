@@ -78,8 +78,12 @@ export interface Interval {
   target_weight_kg: number | null;
   /** Which set of the exercise this is (1-based). */
   set_index: number;
-  /** Which round of the enclosing block this is. */
+  /** How many sets that exercise has — so the UI can say "set 2 of 4". */
+  set_count: number;
+  /** Which round of the enclosing block this is (1-based). */
   block_round: number;
+  /** How many rounds that block has. */
+  block_round_count: number;
   block_index: number;
   block_name: string | null;
 }
@@ -145,12 +149,15 @@ export function flattenPlan(plan: Plan, exerciseNames: Map<string, string>): Int
       for (const step of steps) {
         for (let setIndex = 1; setIndex <= Math.max(1, step.sets); setIndex++) {
           intervals.push(
-            toInterval(step, intervals.length, setIndex, blockRound, blockIndex, block, exerciseNames),
+            toInterval(step, intervals.length, setIndex, blockRound, blockRounds, blockIndex, block, exerciseNames),
           );
 
           if (step.rest_after_seconds && step.rest_after_seconds > 0) {
             intervals.push(
-              restInterval(intervals.length, step.rest_after_seconds, setIndex, blockRound, blockIndex, block),
+              restInterval(
+                intervals.length, step.rest_after_seconds, setIndex, Math.max(1, step.sets),
+                blockRound, blockRounds, blockIndex, block,
+              ),
             );
           }
         }
@@ -158,7 +165,10 @@ export function flattenPlan(plan: Plan, exerciseNames: Map<string, string>): Int
 
       if (blockRound < blockRounds && block.rest_between_rounds_seconds && block.rest_between_rounds_seconds > 0) {
         intervals.push(
-          restInterval(intervals.length, block.rest_between_rounds_seconds, blockRound, blockRound, blockIndex, block),
+          restInterval(
+            intervals.length, block.rest_between_rounds_seconds, blockRound, 1,
+            blockRound, blockRounds, blockIndex, block,
+          ),
         );
       }
     }
@@ -172,6 +182,7 @@ function toInterval(
   index: number,
   setIndex: number,
   blockRound: number,
+  blockRoundCount: number,
   blockIndex: number,
   block: PlanBlock,
   exerciseNames: Map<string, string>,
@@ -187,7 +198,9 @@ function toInterval(
     reps: step.mode === 'reps' ? step.reps : null,
     target_weight_kg: step.target_weight_kg,
     set_index: setIndex,
+    set_count: Math.max(1, step.sets),
     block_round: blockRound,
+    block_round_count: blockRoundCount,
     block_index: blockIndex,
     block_name: block.name,
   };
@@ -197,7 +210,9 @@ function restInterval(
   index: number,
   duration: number,
   setIndex: number,
+  setCount: number,
   blockRound: number,
+  blockRoundCount: number,
   blockIndex: number,
   block: PlanBlock,
 ): Interval {
@@ -210,7 +225,9 @@ function restInterval(
     reps: null,
     target_weight_kg: null,
     set_index: setIndex,
+    set_count: setCount,
     block_round: blockRound,
+    block_round_count: blockRoundCount,
     block_index: blockIndex,
     block_name: block.name,
   };

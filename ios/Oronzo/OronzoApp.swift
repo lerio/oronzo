@@ -19,19 +19,34 @@ private struct RootView: View {
 
     var body: some View {
         Group {
-            if !Backend.isConfigured {
-                ConfigurationView()
+            #if DEBUG
+            // `-demoSession` goes straight to the runner, so it can be looked at without an
+            // account or a backend. See DemoPlan.
+            if let demo = DemoPlan.launchArgumentPlan {
+                SessionRunner(plan: demo, exerciseNames: [:])
             } else {
-                switch auth.state {
-                case .loading:
-                    ProgressView()
-                case .signedOut:
-                    SignInView()
-                case .signedIn:
-                    PlanListView()
-                }
+                content
             }
+            #else
+            content
+            #endif
         }
         .task { await auth.restore() }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if !Backend.isConfigured {
+            ConfigurationView()
+        } else {
+            switch auth.state {
+            case .loading:
+                ProgressView()
+            case .signedOut:
+                SignInView()
+            case .signedIn:
+                PlanListView()
+            }
+        }
     }
 }

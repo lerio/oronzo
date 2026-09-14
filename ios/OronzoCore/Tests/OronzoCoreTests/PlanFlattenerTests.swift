@@ -134,6 +134,31 @@ final class PlanFlattenerTests: XCTestCase {
         XCTAssertEqual(intervals.count { $0.duration == 30 }, 1, "exactly one between-rounds rest")
     }
 
+    /// "Set 2 of 4" needs the total, which lives in the plan rather than the interval — so
+    /// intervals carry it through.
+    func testIntervalsCarryTheTotalsForContextLabels() {
+        let plan = Plan(name: "P", blocks: [
+            PlanBlock(rounds: 2, steps: [
+                PlanStep(label: "Squat", sets: 3, mode: .reps, reps: 8, restAfter: 60),
+            ]),
+        ])
+
+        let intervals = PlanFlattener.flatten(plan)
+
+        XCTAssertEqual(intervals.count, 12, "3 sets + 3 rests, twice")
+        XCTAssertEqual(intervals[0].setIndex, 1)
+        XCTAssertEqual(intervals[0].setCount, 3)
+        XCTAssertEqual(intervals[0].blockRound, 1)
+        XCTAssertEqual(intervals[0].blockRoundCount, 2)
+
+        XCTAssertEqual(intervals[1].kind, .rest)
+        XCTAssertEqual(intervals[1].setIndex, 1, "the rest belongs to the set it follows")
+
+        XCTAssertEqual(intervals[5].setIndex, 3)
+        XCTAssertEqual(intervals[5].setCount, 3, "even the rest after the final set knows the total")
+        XCTAssertEqual(intervals[6].blockRound, 2)
+    }
+
     // MARK: - Rests are emitted, not authored
 
     /// A rest is no longer something you put in a plan — it is emitted between sets, and
