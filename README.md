@@ -6,7 +6,7 @@ Apple Watch.
 | Piece | Stack | Lives in |
 |---|---|---|
 | Backend | Supabase (Postgres + Auth + PostgREST + RLS) | `supabase/` |
-| Web app | Vite + React + TypeScript → Cloudflare Pages | `web/` |
+| Web app | Vite + React + TypeScript → Cloudflare (static assets) | `web/` |
 | iOS app | SwiftUI (iOS 26) | `ios/Oronzo/` |
 | Watch app | SwiftUI (watchOS 26) | `ios/OronzoWatch/` |
 | Shared Swift | Interval model + flattening engine | `ios/Shared/` |

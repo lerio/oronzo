@@ -51,12 +51,32 @@ the app reports that it is unconfigured.
 cd web && npm run dev
 ```
 
-## Deploying the web app (Cloudflare Pages)
+## Deploying the web app
 
-Build command `npm run build`, output directory `web/dist`, root directory `web`. Set
-`VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` as build environment variables in
-the Pages project — they are compiled into the bundle, so they must be present at build
-time, not runtime.
+The plan builder is a static SPA: build locally, push with wrangler.
+
+```bash
+cd web
+npm run build
+npx wrangler deploy
+```
+
+Live at https://oronzo.valerio-donati.workers.dev
+
+`web/wrangler.jsonc` is the deployment config. Two settings there matter:
+
+- `assets.directory` — without it wrangler publishes the whole source folder rather than
+  the build output, which "succeeds" while serving entirely the wrong thing.
+- `not_found_handling: single-page-application` — without it a hard refresh on
+  `/plans/<id>` returns 404, because the router is client-side.
+
+The Supabase URL and publishable key are compiled into the bundle at build time from
+`web/.env.local`, so whoever builds needs that file. That is safe: the publishable key
+grants nothing on its own and row-level security protects every table.
+
+**Cloudflare now serves Pages projects through Workers**, so `wrangler pages deploy` will
+not create a project — use `wrangler deploy`. There is no git integration set up, so
+deploys are manual; a push to `main` does not publish.
 
 ## Supabase
 
