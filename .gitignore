@@ -44,3 +44,9 @@ supabase/.branches/
 # Cloudflare Workers local state and secrets
 ops/**/.wrangler/
 ops/**/.dev.vars
+
+# --- Claude Code ---
+# Personal, uncommitted overrides (in-session "don't ask again" approvals land here).
+# Claude Code adds this to your *global* git excludes when it creates the file itself, which
+# is not enough for a public repo — so the rule is stated here too.
+.claude/settings.local.json
