@@ -4,6 +4,8 @@ import SwiftUI
 /// What the watch is for: which exercise or break you are on, and how long is left.
 struct WatchSessionView: View {
 
+    @Environment(\.scenePhase) private var scenePhase
+
     @State private var link = WatchLink()
     @State private var runtime = WatchRuntime()
 
@@ -22,6 +24,12 @@ struct WatchSessionView: View {
             }
             #endif
             link.activate()
+        }
+        // Coming back from a wrist-drop suspension is a *resume*, not a re-activation, so
+        // nothing else would tell the watch the phone had started something. See
+        // `refreshFromContext`.
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { link.refreshFromContext() }
         }
         // Only keep the app alive when there is something to keep it alive for.
         .onChange(of: link.intervals.isEmpty) { _, isEmpty in

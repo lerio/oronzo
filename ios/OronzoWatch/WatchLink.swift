@@ -53,6 +53,23 @@ final class WatchLink: NSObject {
         intervals.indices.contains(index) ? intervals[index] : nil
     }
 
+    /// Re-reads whatever the phone last sent.
+    ///
+    /// This is the fix for the obvious failure: with the wrist down the watch app is
+    /// suspended, and a suspended app is not woken by WatchConnectivity. Raising the wrist
+    /// *resumes* it rather than re-activating the session, so `activationDidComplete` does
+    /// not fire again and nothing would ever tell it the phone had started a workout. The
+    /// stored application context is still there — this just goes and looks.
+    func refreshFromContext() {
+        guard let session, session.activationState == .activated else { return }
+        guard let data = session.receivedApplicationContext["message"] as? Data else {
+            print("[Oronzo watch] refresh: nothing stored yet")
+            return
+        }
+        print("[Oronzo watch] refresh: applying stored context")
+        apply(data)
+    }
+
     func send(_ control: WatchControl) {
         guard let session else { return }
         let payload: [String: Any] = ["control": control.rawValue]
@@ -180,27 +197,25 @@ extension WatchLink: WCSessionDelegate {
     }
 
     private func apply(_ data: Data) {
-        guard let message = try? WireCodec.decode(WatchMessage.self, from: data) else { return }
+        guard let message = try? WireCodec.decode(WatchMessage.self, from: data) else {
+            print("[Oronzo watch] could not decode an incoming message")
+            return
+        }
 
         switch message {
-        case .sessionStarted(let session):
-            planName = session.planName
-            intervals = session.intervals
-            state = SessionState(
-                currentIndex: 0,
-                isPaused: false,
-                isFinished: false,
-                intervalEnd: nil,
-                remainingWhenPaused: nil
-            )
+        case .session(let snapshot):
+            // Concise on purpose: printing the message itself dumps every interval.
+            print("[Oronzo watch] session: \(snapshot.intervals.count) intervals, at \(snapshot.state.currentIndex)")
+            // Always complete, so it does not matter whether this is the first message the
+            // watch has seen or the hundredth.
+            planName = snapshot.planName
+            intervals = snapshot.intervals
+            state = snapshot.state
             lastAnnouncedIndex = nil
             startHaptics()
 
-        case .stateChanged(let newState):
-            state = newState
-            if !intervals.isEmpty { startHaptics() }
-
         case .sessionEnded:
+            print("[Oronzo watch] session ended")
             stopHaptics()
             intervals = []
             state = nil

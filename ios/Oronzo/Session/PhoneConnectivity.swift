@@ -28,20 +28,41 @@ final class PhoneConnectivity: NSObject {
     }
 
     func activate() {
-        guard WCSession.isSupported(), session == nil else { return }
+        guard WCSession.isSupported() else {
+            print("[Oronzo link] WCSession is NOT supported on this device")
+            return
+        }
+        guard session == nil else { return }
         let session = WCSession.default
         session.delegate = self
         session.activate()
         self.session = session
+        print("[Oronzo link] activating…")
     }
 
     func send(_ message: WatchMessage) {
-        guard let session, let data = try? WireCodec.encode(message) else { return }
+        guard let session else {
+            print("[Oronzo link] send skipped: session never created")
+            return
+        }
+        guard let data = try? WireCodec.encode(message) else {
+            print("[Oronzo link] send skipped: encode failed")
+            return
+        }
 
-        try? session.updateApplicationContext(["message": data])
+        do {
+            try session.updateApplicationContext(["message": data])
+            print("[Oronzo link] context updated")
+        } catch {
+            // Silently swallowing this is how a link "works" and delivers nothing.
+            print("[Oronzo link] updateApplicationContext FAILED: \(error)")
+        }
 
         if session.isReachable {
             session.sendMessage(["message": data], replyHandler: nil, errorHandler: nil)
+            print("[Oronzo link] sent directly")
+        } else {
+            print("[Oronzo link] watch not reachable — relying on the context")
         }
     }
 }
@@ -54,6 +75,13 @@ extension PhoneConnectivity: WCSessionDelegate {
         error: (any Error)?
     ) {
         let reachable = session.isReachable
+        // The three properties that decide whether any of this can work at all.
+        print(
+            "[Oronzo link] activation: state=\(activationState.rawValue) "
+            + "reachable=\(session.isReachable) paired=\(session.isPaired) "
+            + "watchAppInstalled=\(session.isWatchAppInstalled) "
+            + "error=\(error.map { String(describing: $0) } ?? "none")"
+        )
         Task { @MainActor in self.isReachable = reachable }
     }
 

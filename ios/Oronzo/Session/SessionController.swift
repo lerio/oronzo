@@ -66,17 +66,8 @@ final class SessionController {
         refreshClocks()
         startTicking()
 
-        // The watch gets the whole plan up front, so it can keep counting and buzzing even
-        // if this phone goes quiet.
-        link.send(
-            .sessionStarted(
-                SessionPayload(
-                    planName: planName,
-                    intervals: engine.intervals,
-                    startedAt: engine.startedAt ?? .now
-                )
-            )
-        )
+        // The watch gets the whole plan, so it can keep counting and buzzing even if this
+        // phone goes quiet. Sent as part of every update — see SessionSnapshot for why.
         pushState(force: true)
     }
 
@@ -164,7 +155,16 @@ final class SessionController {
         )
         guard force || state != lastPushedState else { return }
         lastPushedState = state
-        link.send(.stateChanged(state))
+        link.send(
+            .session(
+                SessionSnapshot(
+                    planName: planName,
+                    intervals: engine.intervals,
+                    startedAt: engine.startedAt ?? .now,
+                    state: state
+                )
+            )
+        )
     }
 
     private func handle(_ control: WatchControl) {

@@ -2,26 +2,33 @@ import Foundation
 
 // MARK: - What the phone tells the watch
 
-/// The vocabulary between the two apps. Small on purpose: the watch is a display and a
+/// The vocabulary between the two apps. Deliberately tiny: the watch is a display and a
 /// remote, and the phone remains the single source of truth for what you actually did.
 public enum WatchMessage: Codable, Sendable {
-    /// Everything the watch needs to run the session by itself for a while: the plan name,
-    /// the whole interval list, and when it started.
-    case sessionStarted(SessionPayload)
-    /// A position update — which interval, and when it ends.
-    case stateChanged(SessionState)
+    /// Everything the watch needs, always complete.
+    case session(SessionSnapshot)
     case sessionEnded
 }
 
-public struct SessionPayload: Codable, Sendable {
+/// The whole picture: the plan, and where the session is within it.
+///
+/// This is ONE message rather than a "start" followed by "updates", and that is not a style
+/// choice. The application context is a single slot — whatever you write last is all that
+/// survives — so sending a start and then an update back to back leaves only the update. A
+/// watch app that was asleep at that moment would wake to a position with no plan in it,
+/// and sit there showing "no workout" while the phone thought it had been told everything.
+/// Sending the plan every time costs a few kilobytes and removes that entire class of bug.
+public struct SessionSnapshot: Codable, Sendable {
     public let planName: String
     public let intervals: [Interval]
     public let startedAt: Date
+    public let state: SessionState
 
-    public init(planName: String, intervals: [Interval], startedAt: Date) {
+    public init(planName: String, intervals: [Interval], startedAt: Date, state: SessionState) {
         self.planName = planName
         self.intervals = intervals
         self.startedAt = startedAt
+        self.state = state
     }
 }
 
