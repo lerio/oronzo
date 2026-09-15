@@ -20,9 +20,11 @@ final class SessionController {
     private(set) var completed: CompletedSession?
 
     private let audio: WorkoutAudio
+    private let link = PhoneConnectivity.shared
     private var engine: ExecutionEngine
     private var ticker: Task<Void, Never>?
     private var lastCountdownSecond: Int?
+    private var lastPushedState: SessionState?
 
     init(plan: Plan, exerciseNames: [UUID: String], audio: WorkoutAudio = WorkoutAudio()) {
         self.planID = plan.id
@@ -31,6 +33,10 @@ final class SessionController {
         self.engine = ExecutionEngine(
             intervals: PlanFlattener.flatten(plan, exerciseNames: exerciseNames)
         )
+
+        link.onControl = { [weak self] control in
+            self?.handle(control)
+        }
     }
 
     // MARK: - What the view reads
@@ -59,6 +65,19 @@ final class SessionController {
         _ = engine.start(at: .now)
         refreshClocks()
         startTicking()
+
+        // The watch gets the whole plan up front, so it can keep counting and buzzing even
+        // if this phone goes quiet.
+        link.send(
+            .sessionStarted(
+                SessionPayload(
+                    planName: planName,
+                    intervals: engine.intervals,
+                    startedAt: engine.startedAt ?? .now
+                )
+            )
+        )
+        pushState(force: true)
     }
 
     /// Called when the view goes away. Safe to call at any point.
@@ -71,12 +90,14 @@ final class SessionController {
         guard isRunning else { return }
         _ = engine.pause(at: .now)
         refreshClocks()
+        pushState()
     }
 
     func resume() {
         guard isPaused else { return }
         _ = engine.resume(at: .now)
         refreshClocks()
+        pushState()
     }
 
     /// Completes the current interval now — "done" on a rep set, "skip" on a timed one.
@@ -84,12 +105,14 @@ final class SessionController {
         guard !isFinished else { return }
         handle(engine.advance(at: .now, skipped: skipped))
         refreshClocks()
+        pushState()
     }
 
     func goBack() {
         guard !isFinished else { return }
         _ = engine.goBack(at: .now)
         refreshClocks()
+        pushState()
     }
 
     /// Ends the session early. Everything not reached is recorded as such.
@@ -98,6 +121,7 @@ final class SessionController {
         completed = engine.abandon(at: .now)
         stopTicking()
         audio.stop()
+        link.send(.sessionEnded)
     }
 
     // MARK: - Ticking
@@ -124,6 +148,32 @@ final class SessionController {
         handle(engine.tick(now: .now))
         refreshClocks()
         fireCountdownCue()
+        // Only sends when something actually changed, so this is not 10 messages a second.
+        pushState()
+    }
+
+    /// Tells the watch where the session is. Skipped when nothing has moved, since the tick
+    /// runs ten times a second and the watch needs none of those.
+    private func pushState(force: Bool = false) {
+        let state = SessionState(
+            currentIndex: engine.currentIndex,
+            isPaused: isPaused,
+            isFinished: isFinished,
+            intervalEnd: engine.intervalEnd,
+            remainingWhenPaused: engine.remainingWhenPaused
+        )
+        guard force || state != lastPushedState else { return }
+        lastPushedState = state
+        link.send(.stateChanged(state))
+    }
+
+    private func handle(_ control: WatchControl) {
+        switch control {
+        case .next: advance()
+        case .previous: goBack()
+        case .togglePause: isPaused ? resume() : pause()
+        case .finish: finishEarly()
+        }
     }
 
     private func refreshClocks() {
@@ -159,6 +209,7 @@ final class SessionController {
                 completed = engine.snapshot(status: .completed)
                 stopTicking()
                 audio.stop()
+                link.send(.sessionEnded)
             }
         }
     }

@@ -10,6 +10,9 @@ struct OronzoApp: App {
             RootView()
                 .environment(auth)
                 .environment(plans)
+                // Activated once, early, and left alone: there is exactly one WCSession and
+                // it has to be running before a workout starts, not when one does.
+                .task { PhoneConnectivity.shared.activate() }
         }
     }
 }

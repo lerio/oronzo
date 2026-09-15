@@ -86,6 +86,13 @@ Useful for working on the runner UI without an account or a network. Release bui
 no such entry point — see `ios/Oronzo/Session/DemoPlan.swift`, which is wrapped in
 `#if DEBUG`.
 
+The watch app has the same escape hatch, seeding a session already in progress so its
+screen can be looked at without a paired phone:
+
+```bash
+xcrun simctl launch booted com.lerio.oronzo.watchkitapp -demoSession
+```
+
 Note that the demo cannot save: with no signed-in session, finishing reports "Auth session
 missing" and offers a retry. That is the failure path working, not a bug.
 
