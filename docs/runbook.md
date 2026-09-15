@@ -27,8 +27,19 @@ cd ios && xcodegen generate
 ```
 
 Never edit `Oronzo.xcodeproj` directly: it is gitignored and regenerated, so those changes
-are lost. Add files under `ios/Oronzo/`, `ios/OronzoWatch/` or `ios/Shared/` and they are
+are lost. Add files under `ios/Oronzo/`, `ios/OronzoWatch/` or `ios/OronzoCore/` and they are
 picked up by folder, no project edit needed.
+
+## Running the tests
+
+```bash
+cd ios/OronzoCore && swift test
+```
+
+`OronzoCore` is a plain SwiftPM package, so this runs on macOS in a second — no simulator, no
+signing, no device. It covers the flattener (the contract all three platforms share), the
+session state machine, and the watch projection. Reach for it before blaming the app: if a
+workout advances wrongly, the bug is usually provable here first.
 
 ## First-time setup after cloning
 
