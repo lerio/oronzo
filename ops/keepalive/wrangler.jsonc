@@ -1,0 +1,30 @@
+{
+  // Touches the Supabase project on a schedule so its free tier does not pause.
+  //
+  // Supabase pauses a free project after a week with no activity, and a paused project is
+  // completely unavailable until it is restored by hand from the dashboard. For something
+  // you reach for on the way out of the door, that is the worst possible failure: normal use
+  // keeps the project awake on its own, and this only covers the stretches when you are away.
+  "name": "oronzo-keepalive",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-11",
+
+  "vars": {
+    // The project ref is not a secret — it is in the JavaScript that every browser running
+    // the plan builder downloads. The key is, and is set separately:
+    //   npx wrangler secret put SUPABASE_PUBLISHABLE_KEY
+    "SUPABASE_PROJECT_REF": "qcgbowcngyysnlcoxcvv"
+  },
+
+  "triggers": {
+    // Daily, a few minutes past the hour so it is not queueing behind everyone else's cron.
+    // Daily rather than every few days: the invocation cost is nothing and it leaves a wide
+    // margin under the seven-day limit if one run is missed.
+    "crons": ["17 6 * * *"]
+  },
+
+  // No public surface. This Worker has no fetch handler — it only ever runs on a schedule —
+  // so a URL would do nothing but return an error. Better that it does not exist.
+  "workers_dev": false,
+  "preview_urls": false
+}

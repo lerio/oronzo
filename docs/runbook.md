@@ -84,10 +84,31 @@ deploys are manual; a push to `main` does not publish.
 Editor, in filename order. They are idempotent — `0002` upserts on `slug`, so re-running it
 corrects the seed rather than duplicating it.
 
-**The free project pauses after 7 days of low inactivity.** A paused project is entirely
-unavailable until restored from the dashboard, and the first request afterwards takes
-10–30 s. Normal app usage keeps it awake; if you're away, open the dashboard or hit the API
-occasionally.
+**The free project pauses after 7 days of low inactivity**, and a paused project is
+entirely unavailable until you restore it by hand from the dashboard. Normal use keeps it
+awake on its own; `ops/keepalive/` covers the stretches when you are away.
+
+It is a small Cloudflare Worker on a daily cron (`17 6 * * *`) that runs one query against
+the REST API. A query rather than a ping, because Supabase counts *database* activity —
+row-level security means an anonymous caller gets no rows back, but the query still
+executes. It has no `fetch` handler and no public URL, so nothing else can make it run.
+
+```bash
+cd ops/keepalive
+npx wrangler deploy                       # deploy or update
+npx wrangler secret put SUPABASE_PUBLISHABLE_KEY   # first time, or to rotate
+npx wrangler tail                          # watch it run
+```
+
+To test it without waiting for the cron:
+
+```bash
+npx wrangler dev --test-scheduled
+curl "http://localhost:8787/__scheduled?cron=17+6+*+*+*"
+```
+
+It needs a local `.dev.vars` holding `SUPABASE_PUBLISHABLE_KEY` (gitignored); in production
+the value lives as an encrypted Worker secret, so it is never in this repository.
 
 **Auth emails are capped at 2/hour** on the free tier, which is why email confirmation is
 disabled and the single user account is created by hand in the dashboard rather than

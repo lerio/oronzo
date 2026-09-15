@@ -40,3 +40,7 @@ build/
 # --- Supabase local dev ---
 supabase/.temp/
 supabase/.branches/
+
+# Cloudflare Workers local state and secrets
+ops/**/.wrangler/
+ops/**/.dev.vars
