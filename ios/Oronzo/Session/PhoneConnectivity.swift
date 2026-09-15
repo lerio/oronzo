@@ -21,6 +21,10 @@ final class PhoneConnectivity: NSObject {
     var onControl: (@MainActor (WatchControl) -> Void)?
 
     private(set) var isReachable = false
+
+    /// Whether this phone believes a workout is in progress.
+    var hasActiveSession = false
+
     private var session: WCSession?
 
     private override init() {
@@ -38,6 +42,16 @@ final class PhoneConnectivity: NSObject {
         session.activate()
         self.session = session
         print("[Oronzo link] activating…")
+    }
+
+    /// Called when the app comes forward. If nothing is running, say so.
+    ///
+    /// Without this the watch keeps whatever it was last told, and the application context
+    /// has no expiry — so a phone that was force-quit or crashed mid-workout leaves the
+    /// watch happily showing a session that no longer exists. Cheap to send, and idempotent.
+    func clearIfIdle() {
+        guard !hasActiveSession else { return }
+        send(.sessionEnded)
     }
 
     func send(_ message: WatchMessage) {

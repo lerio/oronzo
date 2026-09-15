@@ -59,6 +59,7 @@ final class SessionController {
 
     func start() {
         guard engine.phase == .idle, !isEmpty else { return }
+        link.hasActiveSession = true
         audio.start()
         // Deliberately ignoring the returned event: a beep the instant you press Start
         // would be noise, not information.
@@ -75,6 +76,11 @@ final class SessionController {
     func teardown() {
         stopTicking()
         audio.stop()
+
+        // Leaving the runner by swiping it away ends the session as far as the watch is
+        // concerned, even though nothing was "finished". Harmless if it already ended.
+        link.hasActiveSession = false
+        link.send(.sessionEnded)
     }
 
     func pause() {

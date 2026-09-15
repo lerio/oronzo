@@ -19,6 +19,7 @@ struct OronzoApp: App {
 
 private struct RootView: View {
     @Environment(AuthStore.self) private var auth
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         Group {
@@ -35,6 +36,11 @@ private struct RootView: View {
             #endif
         }
         .task { await auth.restore() }
+        // Coming forward with nothing running tells the watch so. This is what clears a
+        // phantom session left behind by a force-quit or a crash mid-workout.
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { PhoneConnectivity.shared.clearIfIdle() }
+        }
     }
 
     @ViewBuilder
