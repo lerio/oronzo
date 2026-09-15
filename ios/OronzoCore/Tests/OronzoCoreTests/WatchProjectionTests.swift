@@ -9,7 +9,7 @@ final class WatchProjectionTests: XCTestCase {
         Interval(
             index: index, kind: .exercise, name: name, mode: .time, duration: seconds,
             reps: nil, targetWeightKg: nil, setIndex: 1, setCount: 1,
-            blockRound: 1, blockRoundCount: 1, blockIndex: 0, blockName: nil, exerciseID: nil
+            blockRound: 1, blockRoundCount: 1, blockName: nil, exerciseID: nil
         )
     }
 
@@ -17,7 +17,7 @@ final class WatchProjectionTests: XCTestCase {
         Interval(
             index: index, kind: .exercise, name: name, mode: .reps, duration: nil,
             reps: count, targetWeightKg: nil, setIndex: 1, setCount: 1,
-            blockRound: 1, blockRoundCount: 1, blockIndex: 0, blockName: nil, exerciseID: nil
+            blockRound: 1, blockRoundCount: 1, blockName: nil, exerciseID: nil
         )
     }
 

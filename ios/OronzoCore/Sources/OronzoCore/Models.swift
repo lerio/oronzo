@@ -12,16 +12,6 @@ public enum StepMode: String, Codable, Sendable {
     case reps
 }
 
-public struct Exercise: Equatable, Sendable, Identifiable {
-    public let id: UUID
-    public var name: String
-
-    public init(id: UUID, name: String) {
-        self.id = id
-        self.name = name
-    }
-}
-
 /// A step is an **exercise**, always. Rest is not a kind of step: it comes from
 /// `restAfter` below, or from a block's `restBetweenRounds`. (`StepKind` still exists and is
 /// used by `Interval` — the execution stream really does contain rests, emitted between
@@ -122,7 +112,6 @@ public struct Interval: Codable, Equatable, Sendable, Identifiable {
     public let blockRound: Int
     /// How many rounds that block has.
     public let blockRoundCount: Int
-    public let blockIndex: Int
     public let blockName: String?
     public let exerciseID: UUID?
 
@@ -143,7 +132,6 @@ public struct Interval: Codable, Equatable, Sendable, Identifiable {
         setCount: Int,
         blockRound: Int,
         blockRoundCount: Int,
-        blockIndex: Int,
         blockName: String?,
         exerciseID: UUID?
     ) {
@@ -158,7 +146,6 @@ public struct Interval: Codable, Equatable, Sendable, Identifiable {
         self.setCount = setCount
         self.blockRound = blockRound
         self.blockRoundCount = blockRoundCount
-        self.blockIndex = blockIndex
         self.blockName = blockName
         self.exerciseID = exerciseID
     }
@@ -171,10 +158,16 @@ public struct Interval: Codable, Equatable, Sendable, Identifiable {
     /// "20 kg", or nil when nothing is prescribed.
     public var weightDisplay: String? { MeasurementFormat.weight(targetWeightKg) }
 
-    /// The value the Watch should lead with, if any.
-    public var primaryTarget: String? {
-        if let duration { return "\(Int(duration))s" }
-        return repsDisplay
+    /// The line above the exercise: how much of the block is left, or failing that the
+    /// block's name. Nil when there is nothing to say.
+    public var contextLabel: String? {
+        if setCount > 1 {
+            return "Set \(setIndex) of \(setCount)"
+        }
+        if blockRoundCount > 1 {
+            return "Round \(blockRound) of \(blockRoundCount)"
+        }
+        return blockName
     }
 }
 
@@ -183,8 +176,15 @@ public struct Interval: Codable, Equatable, Sendable, Identifiable {
 public enum MeasurementFormat {
 
     /// Whole numbers lose their trailing ".0"; halves keep theirs.
-    public static func number(_ value: Double) -> String {
+    private static func number(_ value: Double) -> String {
         value == value.rounded() ? String(Int(value)) : String(format: "%.1f", value)
+    }
+
+    /// "1:05". Rounded **up**, so the clock only reaches 0:00 when the interval is really
+    /// over — reading 0:00 while a second still remains looks like a stalled timer.
+    public static func clock(remaining: TimeInterval) -> String {
+        let total = max(0, Int(remaining.rounded(.up)))
+        return String(format: "%d:%02d", total / 60, total % 60)
     }
 
     public static func reps(_ value: Int?) -> String? {

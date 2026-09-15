@@ -1,9 +1,9 @@
 /**
  * Oronzo domain model.
  *
- * This mirrors the Postgres schema in `supabase/migrations/0001_init.sql` and the Swift
- * engine in `ios/Shared/`. The flattening rule below is the contract all three share —
- * if you change it here, change it there too.
+ * This mirrors the Postgres schema in `supabase/migrations/` and the Swift engine in
+ * `ios/OronzoCore/`. The flattening rule below is the contract all three share — if you
+ * change it here, change it there too.
  */
 
 export type StepKind = 'exercise' | 'rest';
@@ -44,8 +44,6 @@ export interface PlanStep {
   reps: number | null;
   target_weight_kg: number | null;
   rest_after_seconds: number | null;
-  /** Free-form guidance: "per side", "1–2 reps in reserve". */
-  notes: string | null;
 }
 
 export interface PlanBlock {
@@ -60,7 +58,6 @@ export interface PlanBlock {
 export interface Plan {
   id: string;
   name: string;
-  notes: string | null;
   updated_at?: string;
   blocks: PlanBlock[];
 }
@@ -84,7 +81,6 @@ export interface Interval {
   block_round: number;
   /** How many rounds that block has. */
   block_round_count: number;
-  block_index: number;
   block_name: string | null;
 }
 
@@ -129,7 +125,7 @@ const REST_LABEL = 'Break';
  *       if blockRound < block.rounds and block.rest_between_rounds_seconds: emit rest
  *
  * Both an exercise and a block can repeat, and the two words mean different things: a step's
- * `sets` is its set count ("4 x 6-8 bench press"), while a block's `rounds` repeats a whole
+ * `sets` is its set count ("4 x 8 bench press"), while a block's `rounds` repeats a whole
  * group ("6 x (20s hard, 40s easy)").
  *
  * The two rest mechanisms differ deliberately: `rest_after_seconds` fires after EVERY set
@@ -140,7 +136,7 @@ export function flattenPlan(plan: Plan, exerciseNames: Map<string, string>): Int
   const intervals: Interval[] = [];
   const blocks = [...plan.blocks].sort((a, b) => a.position - b.position);
 
-  blocks.forEach((block, blockIndex) => {
+  blocks.forEach((block) => {
     const blockRounds = Math.max(1, block.rounds);
 
     for (let blockRound = 1; blockRound <= blockRounds; blockRound++) {
@@ -149,14 +145,14 @@ export function flattenPlan(plan: Plan, exerciseNames: Map<string, string>): Int
       for (const step of steps) {
         for (let setIndex = 1; setIndex <= Math.max(1, step.sets); setIndex++) {
           intervals.push(
-            toInterval(step, intervals.length, setIndex, blockRound, blockRounds, blockIndex, block, exerciseNames),
+            toInterval(step, intervals.length, setIndex, blockRound, blockRounds, block, exerciseNames),
           );
 
           if (step.rest_after_seconds && step.rest_after_seconds > 0) {
             intervals.push(
               restInterval(
                 intervals.length, step.rest_after_seconds, setIndex, Math.max(1, step.sets),
-                blockRound, blockRounds, blockIndex, block,
+                blockRound, blockRounds, block,
               ),
             );
           }
@@ -167,7 +163,7 @@ export function flattenPlan(plan: Plan, exerciseNames: Map<string, string>): Int
         intervals.push(
           restInterval(
             intervals.length, block.rest_between_rounds_seconds, blockRound, 1,
-            blockRound, blockRounds, blockIndex, block,
+            blockRound, blockRounds, block,
           ),
         );
       }
@@ -183,7 +179,6 @@ function toInterval(
   setIndex: number,
   blockRound: number,
   blockRoundCount: number,
-  blockIndex: number,
   block: PlanBlock,
   exerciseNames: Map<string, string>,
 ): Interval {
@@ -201,7 +196,6 @@ function toInterval(
     set_count: Math.max(1, step.sets),
     block_round: blockRound,
     block_round_count: blockRoundCount,
-    block_index: blockIndex,
     block_name: block.name,
   };
 }
@@ -213,7 +207,6 @@ function restInterval(
   setCount: number,
   blockRound: number,
   blockRoundCount: number,
-  blockIndex: number,
   block: PlanBlock,
 ): Interval {
   return {
@@ -228,7 +221,6 @@ function restInterval(
     set_count: setCount,
     block_round: blockRound,
     block_round_count: blockRoundCount,
-    block_index: blockIndex,
     block_name: block.name,
   };
 }

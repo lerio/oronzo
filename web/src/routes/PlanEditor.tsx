@@ -15,7 +15,7 @@ import {
   type StepMode,
 } from '../lib/types';
 
-const blankPlan = (): Plan => ({ id: '', name: '', notes: null, blocks: [] });
+const blankPlan = (): Plan => ({ id: '', name: '', blocks: [] });
 
 function stepFromExercise(exercise: Exercise | undefined): PlanStep {
   const isTime = exercise?.default_mode === 'time';
@@ -29,7 +29,6 @@ function stepFromExercise(exercise: Exercise | undefined): PlanStep {
     reps: isTime ? null : (exercise?.default_reps ?? 10),
     target_weight_kg: null,
     rest_after_seconds: null,
-    notes: null,
   };
 }
 

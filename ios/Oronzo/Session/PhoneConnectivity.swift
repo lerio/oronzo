@@ -20,10 +20,8 @@ final class PhoneConnectivity: NSObject {
     /// Called when the watch asks for something. Set by `SessionController`.
     var onControl: (@MainActor (WatchControl) -> Void)?
 
-    private(set) var isReachable = false
-
-    /// Whether this phone believes a workout is in progress.
-    var hasActiveSession = false
+    /// Whether this phone believes a workout is in progress. Read only by `clearIfIdle`.
+    private(set) var hasActiveSession = false
 
     private var session: WCSession?
 
@@ -33,7 +31,7 @@ final class PhoneConnectivity: NSObject {
 
     func activate() {
         guard WCSession.isSupported() else {
-            print("[Oronzo link] WCSession is NOT supported on this device")
+            Log.debug("WCSession is not supported on this device")
             return
         }
         guard session == nil else { return }
@@ -41,7 +39,10 @@ final class PhoneConnectivity: NSObject {
         session.delegate = self
         session.activate()
         self.session = session
-        print("[Oronzo link] activating…")
+    }
+
+    func setSessionActive(_ active: Bool) {
+        hasActiveSession = active
     }
 
     /// Called when the app comes forward. If nothing is running, say so.
@@ -56,27 +57,25 @@ final class PhoneConnectivity: NSObject {
 
     func send(_ message: WatchMessage) {
         guard let session else {
-            print("[Oronzo link] send skipped: session never created")
+            Log.debug("send skipped: no session")
             return
         }
         guard let data = try? WireCodec.encode(message) else {
-            print("[Oronzo link] send skipped: encode failed")
+            Log.debug("send skipped: encode failed")
             return
         }
 
         do {
             try session.updateApplicationContext(["message": data])
-            print("[Oronzo link] context updated")
         } catch {
             // Silently swallowing this is how a link "works" and delivers nothing.
-            print("[Oronzo link] updateApplicationContext FAILED: \(error)")
+            Log.debug("updateApplicationContext failed: \(error)")
         }
 
+        // No error handler either way: the context above is the reliable path, and this is
+        // only here to make a reachable watch update instantly rather than on next wake.
         if session.isReachable {
             session.sendMessage(["message": data], replyHandler: nil, errorHandler: nil)
-            print("[Oronzo link] sent directly")
-        } else {
-            print("[Oronzo link] watch not reachable — relying on the context")
         }
     }
 }
@@ -88,15 +87,14 @@ extension PhoneConnectivity: WCSessionDelegate {
         activationDidCompleteWith activationState: WCSessionActivationState,
         error: (any Error)?
     ) {
-        let reachable = session.isReachable
-        // The three properties that decide whether any of this can work at all.
-        print(
-            "[Oronzo link] activation: state=\(activationState.rawValue) "
+        // The three properties that decide whether any of this can work at all, so that a
+        // workout that never reaches the watch can be told apart from one never started.
+        Log.debug(
+            "activation: state=\(activationState.rawValue) "
             + "reachable=\(session.isReachable) paired=\(session.isPaired) "
             + "watchAppInstalled=\(session.isWatchAppInstalled) "
             + "error=\(error.map { String(describing: $0) } ?? "none")"
         )
-        Task { @MainActor in self.isReachable = reachable }
     }
 
     // Required on iOS: the session goes inactive while the watch is switched, and has to be
@@ -105,11 +103,6 @@ extension PhoneConnectivity: WCSessionDelegate {
 
     nonisolated func sessionDidDeactivate(_ session: WCSession) {
         session.activate()
-    }
-
-    nonisolated func sessionReachabilityDidChange(_ session: WCSession) {
-        let reachable = session.isReachable
-        Task { @MainActor in self.isReachable = reachable }
     }
 
     nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {

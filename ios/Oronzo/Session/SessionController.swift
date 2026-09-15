@@ -14,7 +14,6 @@ final class SessionController {
     let planName: String
 
     private(set) var remaining: TimeInterval?
-    private(set) var elapsed: TimeInterval = 0
 
     /// Set once the session ends — whether it ran its course or was stopped early.
     private(set) var completed: CompletedSession?
@@ -59,7 +58,7 @@ final class SessionController {
 
     func start() {
         guard engine.phase == .idle, !isEmpty else { return }
-        link.hasActiveSession = true
+        link.setSessionActive(true)
         audio.start()
         // Deliberately ignoring the returned event: a beep the instant you press Start
         // would be noise, not information.
@@ -79,7 +78,10 @@ final class SessionController {
 
         // Leaving the runner by swiping it away ends the session as far as the watch is
         // concerned, even though nothing was "finished". Harmless if it already ended.
-        link.hasActiveSession = false
+        link.setSessionActive(false)
+        // Unbind, or the next controller to install its own handler silently leaves this
+        // dead one still receiving the watch's controls.
+        link.onControl = nil
         link.send(.sessionEnded)
     }
 
@@ -184,7 +186,6 @@ final class SessionController {
 
     private func refreshClocks() {
         remaining = engine.remaining(at: .now)
-        elapsed = engine.elapsed(at: .now)
     }
 
     /// Beeps on each of the last three seconds of a timed interval. A rep interval has no

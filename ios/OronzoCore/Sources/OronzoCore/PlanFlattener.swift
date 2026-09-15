@@ -16,7 +16,7 @@ import Foundation
 ///
 /// **Sets and rounds are different things**, deliberately:
 ///
-/// * `step.sets` — an exercise repeating: `"4 x 6-8 bench press"`. The set count belongs to
+/// * `step.sets` — an exercise repeating: `"4 x 8 bench press"`. The set count belongs to
 ///   the exercise, so it does not need a block wrapped around one thing.
 /// * `block.rounds` — a *group* repeating: `"6 x (20s hard, 40s easy)"`.
 ///
@@ -33,7 +33,7 @@ public enum PlanFlattener {
     public static func flatten(_ plan: Plan, exerciseNames: [UUID: String] = [:]) -> [Interval] {
         var intervals: [Interval] = []
 
-        for (blockIndex, block) in plan.blocks.enumerated() {
+        for block in plan.blocks {
             let blockRounds = max(1, block.rounds)
 
             for blockRound in 1...blockRounds {
@@ -46,7 +46,6 @@ public enum PlanFlattener {
                                 setIndex: setIndex,
                                 blockRound: blockRound,
                                 blockRoundCount: blockRounds,
-                                blockIndex: blockIndex,
                                 block: block,
                                 exerciseNames: exerciseNames
                             )
@@ -61,7 +60,6 @@ public enum PlanFlattener {
                                     setCount: max(1, step.sets),
                                     blockRound: blockRound,
                                     blockRoundCount: blockRounds,
-                                    blockIndex: blockIndex,
                                     block: block
                                 )
                             )
@@ -79,7 +77,6 @@ public enum PlanFlattener {
                             setCount: 1,
                             blockRound: blockRound,
                             blockRoundCount: blockRounds,
-                            blockIndex: blockIndex,
                             block: block
                         )
                     )
@@ -96,7 +93,6 @@ public enum PlanFlattener {
         setIndex: Int,
         blockRound: Int,
         blockRoundCount: Int,
-        blockIndex: Int,
         block: PlanBlock,
         exerciseNames: [UUID: String]
     ) -> Interval {
@@ -123,7 +119,6 @@ public enum PlanFlattener {
             setCount: max(1, step.sets),
             blockRound: blockRound,
             blockRoundCount: blockRoundCount,
-            blockIndex: blockIndex,
             blockName: block.name,
             exerciseID: step.exerciseID
         )
@@ -137,7 +132,6 @@ public enum PlanFlattener {
         setCount: Int,
         blockRound: Int,
         blockRoundCount: Int,
-        blockIndex: Int,
         block: PlanBlock
     ) -> Interval {
         Interval(
@@ -152,7 +146,6 @@ public enum PlanFlattener {
             setCount: setCount,
             blockRound: blockRound,
             blockRoundCount: blockRoundCount,
-            blockIndex: blockIndex,
             blockName: block.name,
             exerciseID: nil
         )

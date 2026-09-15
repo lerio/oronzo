@@ -47,8 +47,6 @@ struct SessionLogger {
         let planned_reps: Int?
         let planned_weight_kg: Double?
         let actual_duration_seconds: Int?
-        let actual_reps: Int?
-        let actual_weight_kg: Double?
         let status: String
     }
 
@@ -92,8 +90,6 @@ struct SessionLogger {
                 planned_reps: step.plannedReps,
                 planned_weight_kg: step.plannedWeightKg,
                 actual_duration_seconds: step.actualDuration.map { Int($0.rounded()) },
-                actual_reps: step.actualReps,
-                actual_weight_kg: step.actualWeightKg,
                 status: step.status.rawValue
             )
         }

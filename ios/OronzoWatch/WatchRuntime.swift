@@ -14,11 +14,15 @@ import WatchKit
 @Observable
 final class WatchRuntime: NSObject {
 
-    private(set) var isRunning = false
-    private(set) var expiresAt: Date?
+    /// Why the session stopped, when watchOS ended it rather than us. Shown on the watch:
+    /// an extended runtime session that dies silently leaves a workout frozen on screen
+    /// with nothing to explain why, and the user has no way to tell that from a bug.
     private(set) var note: String?
 
     private var session: WKExtendedRuntimeSession?
+    /// Set while `stop()` tears the session down on purpose, so that the invalidation which
+    /// follows it can be told apart from watchOS killing the session underneath us.
+    private var isStopping = false
 
     func start() {
         guard session == nil else { return }
@@ -26,32 +30,25 @@ final class WatchRuntime: NSObject {
         let session = WKExtendedRuntimeSession()
         session.delegate = self
         self.session = session
+        isStopping = false
+        note = nil
         // Must be called while the app is active, or it is refused.
         session.start()
-        note = "Starting…"
     }
 
     func stop() {
+        isStopping = true
         session?.invalidate()
         session = nil
-        isRunning = false
-        expiresAt = nil
         note = nil
     }
 }
 
 extension WatchRuntime: WKExtendedRuntimeSessionDelegate {
 
-    nonisolated func extendedRuntimeSessionDidStart(_ extendedRuntimeSession: WKExtendedRuntimeSession) {
-        // Read on this side: the session object is not Sendable, so it cannot be captured
-        // by the hop back to the main actor.
-        let expiry = extendedRuntimeSession.expirationDate
-        Task { @MainActor in
-            self.isRunning = true
-            self.expiresAt = expiry
-            self.note = nil
-        }
-    }
+    /// Required by the protocol, and deliberately empty: `start()` has already cleared the
+    /// note, and nothing downstream needs the session object it hands over.
+    nonisolated func extendedRuntimeSessionDidStart(_ extendedRuntimeSession: WKExtendedRuntimeSession) {}
 
     nonisolated func extendedRuntimeSessionWillExpire(_ extendedRuntimeSession: WKExtendedRuntimeSession) {
         Task { @MainActor in
@@ -66,8 +63,13 @@ extension WatchRuntime: WKExtendedRuntimeSessionDelegate {
     ) {
         let message = Self.describe(reason)
         Task { @MainActor in
-            self.isRunning = false
             self.session = nil
+            // A deliberate `stop()` also lands here, a moment later. Reporting it would
+            // resurrect a message about a session that is already over.
+            guard !self.isStopping else {
+                self.isStopping = false
+                return
+            }
             self.note = message
         }
     }

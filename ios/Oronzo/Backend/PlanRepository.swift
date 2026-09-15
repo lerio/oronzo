@@ -11,7 +11,6 @@ import Supabase
 private struct PlanRow: Decodable {
     let id: UUID
     let name: String
-    let notes: String?
     let plan_blocks: [BlockRow]?
 }
 
@@ -35,7 +34,6 @@ private struct StepRow: Decodable {
     let reps: Int?
     let target_weight_kg: Double?
     let rest_after_seconds: Int?
-    let notes: String?
 }
 
 private struct ExerciseRow: Decodable {
@@ -84,9 +82,9 @@ struct PlanRepository: Sendable {
     /// One line on purpose: PostgREST parses this as a query string, so embedded newlines
     /// or stray whitespace break it.
     private static let planSelect =
-        "id,name,notes,plan_blocks(id,position,name,rounds,rest_between_rounds_seconds,"
+        "id,name,plan_blocks(id,position,name,rounds,rest_between_rounds_seconds,"
         + "plan_steps(id,position,exercise_id,label,sets,mode,duration_seconds,reps,"
-        + "target_weight_kg,rest_after_seconds,notes))"
+        + "target_weight_kg,rest_after_seconds))"
 
     func fetchPlans() async throws -> [Plan] {
         let rows: [PlanRow] = try await Backend.client

@@ -41,9 +41,9 @@ struct PlanDetailView: View {
                     IntervalRow(interval: interval)
                 }
             } header: {
-                Text("Runs as \(intervals.count) step\(intervals.count == 1 ? "" : "s")")
+                Text("Runs as \(intervals.count) interval\(intervals.count == 1 ? "" : "s")")
             } footer: {
-                Text("Rounds are expanded, and rests are shown as their own steps.")
+                Text("Every set and round is expanded, and rests are shown as their own intervals.")
             }
         }
         .navigationTitle(plan.name)

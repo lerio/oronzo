@@ -55,10 +55,10 @@ export default function ExercisePicker({ exercises, value, onChange }: ExerciseP
     return () => document.removeEventListener('pointerdown', onPointerDown);
   }, [open]);
 
-  // Filtering can shorten the list out from under the highlight.
-  useEffect(() => {
-    setHighlight((current) => Math.min(current, Math.max(0, matches.length - 1)));
-  }, [matches.length]);
+  // Narrowing the query can shorten the list out from under the highlight. Clamped on read
+  // rather than corrected in an effect: storing the fix would cost a second render and go
+  // stale again the moment the list changes.
+  const activeIndex = Math.min(highlight, Math.max(0, matches.length - 1));
 
   function choose(exercise: Exercise) {
     onChange(exercise.id);
@@ -67,17 +67,19 @@ export default function ExercisePicker({ exercises, value, onChange }: ExerciseP
 
   function onKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     switch (event.key) {
+      // Both move from `activeIndex`, not from the raw state, so arrowing continues from
+      // the row the user can actually see highlighted.
       case 'ArrowDown':
         event.preventDefault();
-        setHighlight((current) => Math.min(current + 1, matches.length - 1));
+        setHighlight(Math.min(activeIndex + 1, matches.length - 1));
         break;
       case 'ArrowUp':
         event.preventDefault();
-        setHighlight((current) => Math.max(current - 1, 0));
+        setHighlight(Math.max(activeIndex - 1, 0));
         break;
       case 'Enter': {
         event.preventDefault();
-        const match = matches[highlight];
+        const match = matches[activeIndex];
         if (match) choose(match);
         break;
       }
@@ -125,8 +127,8 @@ export default function ExercisePicker({ exercises, value, onChange }: ExerciseP
                 <button
                   type="button"
                   role="option"
-                  aria-selected={index === highlight}
-                  className={index === highlight ? 'picker-option active' : 'picker-option'}
+                  aria-selected={index === activeIndex}
+                  className={index === activeIndex ? 'picker-option active' : 'picker-option'}
                   onMouseEnter={() => setHighlight(index)}
                   onClick={() => choose(exercise)}
                 >

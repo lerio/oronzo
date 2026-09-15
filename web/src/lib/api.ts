@@ -3,14 +3,13 @@ import type { Exercise, Plan, PlanBlock, PlanStep, StepMode } from './types';
 
 /** Kept on one line: PostgREST parses this as a query string, and embedded newlines break it. */
 const PLAN_SELECT =
-  'id,name,notes,updated_at,plan_blocks(id,position,name,rounds,rest_between_rounds_seconds,' +
+  'id,name,updated_at,plan_blocks(id,position,name,rounds,rest_between_rounds_seconds,' +
   'plan_steps(id,position,exercise_id,label,sets,mode,duration_seconds,reps,' +
-  'target_weight_kg,rest_after_seconds,notes))';
+  'target_weight_kg,rest_after_seconds))';
 
 type PlanRow = {
   id: string;
   name: string;
-  notes: string | null;
   updated_at: string;
   plan_blocks: (Omit<PlanBlock, 'steps'> & { plan_steps: PlanStep[] })[];
 };
@@ -19,7 +18,6 @@ function toPlan(row: PlanRow): Plan {
   return {
     id: row.id,
     name: row.name,
-    notes: row.notes,
     updated_at: row.updated_at,
     blocks: [...(row.plan_blocks ?? [])]
       .sort((a, b) => a.position - b.position)
@@ -50,7 +48,6 @@ export async function savePlan(plan: Plan): Promise<string> {
   const payload = {
     id: plan.id || null,
     name: plan.name,
-    notes: plan.notes,
     blocks: plan.blocks.map((block, blockIndex) => ({
       name: block.name,
       rounds: block.rounds,
@@ -64,7 +61,6 @@ export async function savePlan(plan: Plan): Promise<string> {
         reps: step.reps,
         target_weight_kg: step.target_weight_kg,
         rest_after_seconds: step.rest_after_seconds,
-        notes: step.notes,
         position: stepIndex,
       })),
       position: blockIndex,

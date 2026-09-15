@@ -97,7 +97,7 @@ struct SessionRunner: View {
 
     @ViewBuilder
     private var context: some View {
-        if let interval = controller.current, let text = contextText(interval) {
+        if let interval = controller.current, let text = interval.contextLabel {
             Text(text)
                 .font(.caption.weight(.semibold))
                 .textCase(.uppercase)
@@ -130,7 +130,7 @@ struct SessionRunner: View {
     @ViewBuilder
     private var clock: some View {
         if let remaining = controller.remaining {
-            Text(clockText(remaining))
+            Text(MeasurementFormat.clock(remaining: remaining))
                 .font(.system(size: 84, weight: .semibold, design: .rounded).monospacedDigit())
                 .contentTransition(.numericText(countsDown: true))
                 .padding(.vertical, 8)
@@ -206,21 +206,6 @@ struct SessionRunner: View {
         .frame(maxWidth: .infinity)
     }
 
-    private func contextText(_ interval: Interval) -> String? {
-        if interval.setCount > 1 {
-            return "Set \(interval.setIndex) of \(interval.setCount)"
-        }
-        if interval.blockRoundCount > 1 {
-            return "Round \(interval.blockRound) of \(interval.blockRoundCount)"
-        }
-        return interval.blockName
-    }
-
-    private func clockText(_ seconds: TimeInterval) -> String {
-        let total = max(0, Int(seconds.rounded(.up)))
-        return String(format: "%d:%02d", total / 60, total % 60)
-    }
-
     // MARK: - Summary
 
     private func summary(_ session: CompletedSession) -> some View {
@@ -243,7 +228,7 @@ struct SessionRunner: View {
             }
 
             HStack(alignment: .top, spacing: 26) {
-                stat(clockText(session.totalDuration), "time")
+                stat(MeasurementFormat.clock(remaining: session.totalDuration), "time")
                 stat("\(done)", "done")
                 if skipped > 0 { stat("\(skipped)", "skipped") }
                 if notReached > 0 { stat("\(notReached)", "not reached") }

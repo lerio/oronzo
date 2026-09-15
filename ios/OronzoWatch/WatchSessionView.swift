@@ -68,7 +68,7 @@ struct WatchSessionView: View {
             let interval = link.interval(at: index)
 
             VStack(spacing: 2) {
-                if let label = contextLabel(interval, index: index) {
+                if let label = interval?.contextLabel {
                     Text(label)
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(.secondary)
@@ -85,6 +85,17 @@ struct WatchSessionView: View {
                 clock(interval: interval, end: end, now: context.date)
 
                 controls
+
+                // Only ever set when watchOS ended the runtime session itself. Without this
+                // the workout just stops advancing and nothing says why.
+                if let note = runtime.note {
+                    Text(note)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.orange)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.8)
+                }
             }
             .padding(.horizontal, 2)
         }
@@ -94,7 +105,7 @@ struct WatchSessionView: View {
     private func clock(interval: Interval?, end: Date?, now: Date) -> some View {
         if let end {
             let remaining = max(0, end.timeIntervalSince(now))
-            Text(clockText(remaining))
+            Text(MeasurementFormat.clock(remaining: remaining))
                 .font(.system(size: 42, weight: .semibold, design: .rounded).monospacedDigit())
                 .foregroundStyle(interval?.kind == .rest ? .secondary : .primary)
         } else if let reps = interval?.reps {
@@ -149,18 +160,6 @@ struct WatchSessionView: View {
     }
 
     private var isPaused: Bool { link.state?.isPaused ?? false }
-
-    private func contextLabel(_ interval: Interval?, index: Int) -> String? {
-        guard let interval else { return nil }
-        if interval.setCount > 1 { return "Set \(interval.setIndex) of \(interval.setCount)" }
-        if interval.blockRoundCount > 1 { return "Round \(interval.blockRound) of \(interval.blockRoundCount)" }
-        return interval.blockName
-    }
-
-    private func clockText(_ seconds: TimeInterval) -> String {
-        let total = max(0, Int(seconds.rounded(.up)))
-        return String(format: "%d:%02d", total / 60, total % 60)
-    }
 }
 
 #Preview {

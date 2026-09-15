@@ -5,18 +5,18 @@ import WatchKit
 
 /// The watch's half of the link to the phone.
 ///
-/// The phone sends the whole plan once, at the start, and then only position updates. That
-/// is what lets the countdown and the haptics keep working while the phone is out of range
-/// or asleep: `WatchProjection` walks the interval list forward from the last thing the
-/// phone said, and the next message re-anchors it.
+/// The phone re-sends the **whole** session — plan and position together — on every change,
+/// never a "start" followed by separate updates, because the application context is a single
+/// slot and the last write is all that survives. That is what lets the countdown and the
+/// haptics keep working while the phone is out of range or asleep: `WatchProjection` walks
+/// the interval list forward from the last thing the phone said, and the next message
+/// re-anchors it.
 @MainActor
 @Observable
 final class WatchLink: NSObject {
 
-    private(set) var planName: String?
     private(set) var intervals: [Interval] = []
     private(set) var state: SessionState?
-    private(set) var isReachable = false
 
     private var session: WCSession?
     private var haptics: Task<Void, Never>?
@@ -63,10 +63,9 @@ final class WatchLink: NSObject {
     func refreshFromContext() {
         guard let session, session.activationState == .activated else { return }
         guard let data = session.receivedApplicationContext["message"] as? Data else {
-            print("[Oronzo watch] refresh: nothing stored yet")
+            Log.debug("refresh: no stored context yet")
             return
         }
-        print("[Oronzo watch] refresh: applying stored context")
         apply(data)
     }
 
@@ -148,7 +147,6 @@ extension WatchLink {
             ]
         )
 
-        planName = plan.name
         intervals = PlanFlattener.flatten(plan)
         state = SessionState(
             currentIndex: 0,
@@ -171,19 +169,12 @@ extension WatchLink: WCSessionDelegate {
     ) {
         // `[String: Any]` is not Sendable, so the message is pulled out as Data — which is —
         // before hopping to the main actor. Same reason every other callback here does it.
-        let reachable = session.isReachable
         let data = session.receivedApplicationContext["message"] as? Data
 
         Task { @MainActor in
-            self.isReachable = reachable
             // Whatever the phone last said, even if it said it while this app was closed.
             if let data { self.apply(data) }
         }
-    }
-
-    nonisolated func sessionReachabilityDidChange(_ session: WCSession) {
-        let reachable = session.isReachable
-        Task { @MainActor in self.isReachable = reachable }
     }
 
     nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
@@ -198,28 +189,23 @@ extension WatchLink: WCSessionDelegate {
 
     private func apply(_ data: Data) {
         guard let message = try? WireCodec.decode(WatchMessage.self, from: data) else {
-            print("[Oronzo watch] could not decode an incoming message")
+            Log.debug("could not decode an incoming message")
             return
         }
 
         switch message {
         case .session(let snapshot):
-            // Concise on purpose: printing the message itself dumps every interval.
-            print("[Oronzo watch] session: \(snapshot.intervals.count) intervals, at \(snapshot.state.currentIndex)")
             // Always complete, so it does not matter whether this is the first message the
             // watch has seen or the hundredth.
-            planName = snapshot.planName
             intervals = snapshot.intervals
             state = snapshot.state
             lastAnnouncedIndex = nil
             startHaptics()
 
         case .sessionEnded:
-            print("[Oronzo watch] session ended")
             stopHaptics()
             intervals = []
             state = nil
-            planName = nil
             lastAnnouncedIndex = nil
         }
     }

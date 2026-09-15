@@ -8,7 +8,7 @@ final class ExecutionEngineTests: XCTestCase {
     private func timed(_ index: Int, _ seconds: TimeInterval, name: String = "Work") -> Interval {
         Interval(
             index: index, kind: .exercise, name: name, mode: .time, duration: seconds,
-            reps: nil, targetWeightKg: nil, setIndex: 1, setCount: 1, blockRound: 1, blockRoundCount: 1, blockIndex: 0,
+            reps: nil, targetWeightKg: nil, setIndex: 1, setCount: 1, blockRound: 1, blockRoundCount: 1,
             blockName: nil, exerciseID: nil
         )
     }
@@ -16,7 +16,7 @@ final class ExecutionEngineTests: XCTestCase {
     private func reps(_ index: Int, _ count: Int = 10, weight: Double? = nil, name: String = "Squat") -> Interval {
         Interval(
             index: index, kind: .exercise, name: name, mode: .reps, duration: nil,
-            reps: count, targetWeightKg: weight, setIndex: 1, setCount: 1, blockRound: 1, blockRoundCount: 1, blockIndex: 0,
+            reps: count, targetWeightKg: weight, setIndex: 1, setCount: 1, blockRound: 1, blockRoundCount: 1,
             blockName: nil, exerciseID: nil
         )
     }
@@ -24,7 +24,7 @@ final class ExecutionEngineTests: XCTestCase {
     private func rest(_ index: Int, _ seconds: TimeInterval) -> Interval {
         Interval(
             index: index, kind: .rest, name: "Break", mode: .time, duration: seconds,
-            reps: nil, targetWeightKg: nil, setIndex: 1, setCount: 1, blockRound: 1, blockRoundCount: 1, blockIndex: 0,
+            reps: nil, targetWeightKg: nil, setIndex: 1, setCount: 1, blockRound: 1, blockRoundCount: 1,
             blockName: nil, exerciseID: nil
         )
     }
@@ -248,30 +248,12 @@ final class ExecutionEngineTests: XCTestCase {
         XCTAssertEqual(engine.currentIndex, 0)
     }
 
-    // MARK: - Recording actuals
-
-    func testRecordedRepsAndWeightReachTheSnapshot() {
-        var engine = ExecutionEngine(intervals: [reps(0, 10, weight: 60)])
-        _ = engine.start(at: t0)
-        engine.record(reps: 8, weightKg: 62.5)
-        _ = engine.advance(at: t0.addingTimeInterval(50))
-
-        let session = engine.snapshot(status: .completed)
-
-        XCTAssertEqual(session.steps[0].actualReps, 8)
-        XCTAssertEqual(session.steps[0].actualWeightKg, 62.5)
-        XCTAssertEqual(session.steps[0].plannedReps, 10)
-        XCTAssertEqual(session.steps[0].plannedWeightKg, 60)
-        XCTAssertEqual(session.steps[0].status, .completed)
-    }
-
     // MARK: - Snapshots
 
     func testFinishMarksUnreachedIntervalsSoHistoryIsHonest() {
         var engine = ExecutionEngine(intervals: [timed(0, 60), reps(1, 10), reps(2, 10)])
         _ = engine.start(at: t0)
         _ = engine.tick(now: t0.addingTimeInterval(60))
-        engine.record(reps: 12, weightKg: nil)
         _ = engine.advance(at: t0.addingTimeInterval(90))
 
         let session = engine.finish(at: t0.addingTimeInterval(120))
@@ -325,7 +307,6 @@ final class ExecutionEngineTests: XCTestCase {
         // set → rest → set → rest → set → rest
         var clock = t0
         for _ in 0..<6 {
-            engine.record(reps: 12, weightKg: 60)
             clock = clock.addingTimeInterval(45)
             _ = engine.advance(at: clock)
         }

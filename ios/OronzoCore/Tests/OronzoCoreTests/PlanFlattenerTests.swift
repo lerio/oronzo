@@ -225,7 +225,6 @@ final class PlanFlattenerTests: XCTestCase {
 
         XCTAssertEqual(intervals.map(\.name), ["Jumping Jack", "Squat", "Squat"])
         XCTAssertEqual(intervals.map(\.blockName), ["Warm-up", "Main", "Main"])
-        XCTAssertEqual(intervals.map(\.blockIndex), [0, 1, 1])
         XCTAssertEqual(intervals.map(\.index), [0, 1, 2], "indices are contiguous across blocks")
     }
 
@@ -260,7 +259,6 @@ final class PlanFlattenerTests: XCTestCase {
         XCTAssertEqual(intervals.count, 8, "4 sets + 4 rests")
         XCTAssertEqual(intervals[0].repsDisplay, "8 reps")
         XCTAssertEqual(intervals[0].weightDisplay, "20 kg")
-        XCTAssertEqual(intervals[0].primaryTarget, "8 reps")
     }
 
     func testFractionalWeightReadsCleanly() {
@@ -288,7 +286,33 @@ final class PlanFlattenerTests: XCTestCase {
 
         XCTAssertNil(intervals[0].repsDisplay, "a timed step has no rep target")
         XCTAssertNil(intervals[1].repsDisplay, "nor does the rest it emits")
-        XCTAssertEqual(intervals[0].primaryTarget, "45s")
+    }
+
+    func testContextLabelPrefersTheSetCountThenTheRoundThenTheBlockName() {
+        let plan = Plan(name: "P", blocks: [
+            PlanBlock(name: "Main", rounds: 2, steps: [
+                PlanStep(label: "Squat", sets: 3, mode: .reps, reps: 10),
+            ]),
+        ])
+
+        let intervals = PlanFlattener.flatten(plan)
+
+        // 3 sets of one exercise in a 2-round block: the more specific count wins.
+        XCTAssertEqual(intervals[0].contextLabel, "Set 1 of 3")
+        XCTAssertEqual(intervals[2].contextLabel, "Set 3 of 3")
+
+        // A lone exercise with no repeats falls back to the block's name.
+        let plain = PlanFlattener.flatten(Plan(name: "P", blocks: [
+            PlanBlock(name: "Finisher", steps: [PlanStep(label: "Plank", mode: .time, duration: 60)]),
+        ]))
+        XCTAssertEqual(plain[0].contextLabel, "Finisher")
+    }
+
+    func testClockRoundsUpSoItNeverReadsZeroWhileTimeRemains() {
+        XCTAssertEqual(MeasurementFormat.clock(remaining: 65), "1:05")
+        XCTAssertEqual(MeasurementFormat.clock(remaining: 0.4), "0:01")
+        XCTAssertEqual(MeasurementFormat.clock(remaining: 0), "0:00")
+        XCTAssertEqual(MeasurementFormat.clock(remaining: -5), "0:00", "a late tick never shows a negative clock")
     }
 
     func testStepWithNoLoadHasNoWeightDisplay() {

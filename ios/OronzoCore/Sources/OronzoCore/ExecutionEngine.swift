@@ -14,17 +14,16 @@ public enum OutcomeStatus: String, Codable, Sendable {
     case notReached = "not_reached"
 }
 
+/// What happened on one interval. Only the *duration* is recorded — the engine measures it
+/// itself. How many reps you actually did, and at what load, is not tracked: the runner has
+/// no way to enter it, so those columns would only ever be null.
 public struct IntervalOutcome: Equatable, Sendable {
     public var status: OutcomeStatus
     public var duration: TimeInterval?
-    public var reps: Int?
-    public var weightKg: Double?
 
-    public init(status: OutcomeStatus = .pending, duration: TimeInterval? = nil, reps: Int? = nil, weightKg: Double? = nil) {
+    public init(status: OutcomeStatus = .pending, duration: TimeInterval? = nil) {
         self.status = status
         self.duration = duration
-        self.reps = reps
-        self.weightKg = weightKg
     }
 }
 
@@ -81,8 +80,6 @@ public struct ExecutionEngine: Sendable {
         intervals.indices.contains(currentIndex) ? intervals[currentIndex] : nil
     }
 
-    public var isFinished: Bool { phase == .finished }
-
     /// Remaining time on the current interval, or `nil` for a rep interval (which has no
     /// end) — the UI shows a count-up or just the rep target in that case.
     public func remaining(at now: Date) -> TimeInterval? {
@@ -128,12 +125,7 @@ public struct ExecutionEngine: Sendable {
             // Nothing left after the current interval — the session is over.
             guard index + 1 < intervals.count else {
                 closeAutomatic(from: from, to: index)
-                outcomes[index] = IntervalOutcome(
-                    status: .completed,
-                    duration: intervals[index].duration,
-                    reps: nil,
-                    weightKg: outcomes[index]?.weightKg
-                )
+                outcomes[index] = IntervalOutcome(status: .completed, duration: intervals[index].duration)
                 finishedAt = now
                 phase = .finished
                 intervalEnd = nil
@@ -165,23 +157,8 @@ public struct ExecutionEngine: Sendable {
     private mutating func closeAutomatic(from: Int, to: Int) {
         guard from < to else { return }
         for i in from..<to where outcomes[i]?.status == .pending {
-            outcomes[i] = IntervalOutcome(
-                status: .completed,
-                duration: intervals[i].duration,
-                reps: nil,
-                weightKg: outcomes[i]?.weightKg
-            )
+            outcomes[i] = IntervalOutcome(status: .completed, duration: intervals[i].duration)
         }
-    }
-
-    /// Records what actually happened on the current interval — actual reps and load.
-    /// Called when a rep-based set is finished, before `advance`.
-    public mutating func record(reps: Int?, weightKg: Double?) {
-        guard let current else { return }
-        var outcome = outcomes[current.index] ?? IntervalOutcome()
-        if let reps { outcome.reps = reps }
-        if let weightKg { outcome.weightKg = weightKg }
-        outcomes[current.index] = outcome
     }
 
     @discardableResult
@@ -262,24 +239,27 @@ public struct ExecutionEngine: Sendable {
     /// Ends the session early, marking everything not yet reached.
     @discardableResult
     public mutating func abandon(at now: Date) -> CompletedSession {
-        for interval in intervals where outcomes[interval.index]?.status == .pending {
-            outcomes[interval.index] = IntervalOutcome(status: .notReached)
-        }
-        finishedAt = now
-        phase = .finished
-        intervalEnd = nil
-        return snapshot(status: .abandoned)
+        close(.abandoned, at: now)
     }
 
-    /// Ends the session normally, marking anything not reached.
+    /// Ends the session normally, marking anything not reached. Production reaches
+    /// `.finished` through `tick`/`advance` instead; this exists for tests, which need to
+    /// end a session mid-way and still get a `completed` snapshot.
+    @discardableResult
     public mutating func finish(at now: Date) -> CompletedSession {
+        close(.completed, at: now)
+    }
+
+    /// Shared tail of the two: everything unreached becomes `.notReached`, and the session
+    /// is frozen. Only the status they hand to `snapshot` differs.
+    private mutating func close(_ status: SessionStatus, at now: Date) -> CompletedSession {
         for interval in intervals where outcomes[interval.index]?.status == .pending {
             outcomes[interval.index] = IntervalOutcome(status: .notReached)
         }
         finishedAt = now
         phase = .finished
         intervalEnd = nil
-        return snapshot(status: .completed)
+        return snapshot(status: status)
     }
 
     /// The rows to write to `sessions` + `session_steps`.
@@ -307,8 +287,6 @@ public struct ExecutionEngine: Sendable {
                     plannedReps: interval.reps,
                     plannedWeightKg: interval.targetWeightKg,
                     actualDuration: outcome.duration,
-                    actualReps: outcome.reps,
-                    actualWeightKg: outcome.weightKg,
                     status: outcome.status
                 )
             }
@@ -343,7 +321,5 @@ public struct CompletedStep: Equatable, Sendable {
     public let plannedReps: Int?
     public let plannedWeightKg: Double?
     public let actualDuration: TimeInterval?
-    public let actualReps: Int?
-    public let actualWeightKg: Double?
     public let status: OutcomeStatus
 }

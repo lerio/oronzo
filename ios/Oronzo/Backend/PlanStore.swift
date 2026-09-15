@@ -12,7 +12,6 @@ final class PlanStore {
     private(set) var exerciseNames: [UUID: String] = [:]
     private(set) var isLoading = false
     private(set) var error: String?
-    private(set) var updatedAt: Date?
 
     private let repository = PlanRepository()
     private let cache = PlanCache()
@@ -22,7 +21,6 @@ final class PlanStore {
         if plans.isEmpty, let cached = cache.load() {
             plans = cached.plans
             exerciseNames = cached.exerciseNames
-            updatedAt = cached.savedAt
         }
         await refresh()
     }
@@ -42,7 +40,6 @@ final class PlanStore {
 
             self.plans = loadedPlans
             self.exerciseNames = loadedNames
-            self.updatedAt = Date()
             cache.save(plans: loadedPlans, exerciseNames: loadedNames)
         } catch {
             // Keep whatever the cache gave us; a stale plan list beats an empty screen.
@@ -60,7 +57,6 @@ final class PlanStore {
 /// A JSON file in Application Support. Deliberately dumb: the whole point is that the last
 /// successful fetch survives, so the app is usable offline.
 private struct CachedPlanList: Codable {
-    let savedAt: Date
     let plans: [Plan]
     let exerciseNames: [UUID: String]
 }
@@ -80,7 +76,7 @@ private struct PlanCache {
 
     func save(plans: [Plan], exerciseNames: [UUID: String]) {
         guard let url else { return }
-        let payload = CachedPlanList(savedAt: Date(), plans: plans, exerciseNames: exerciseNames)
+        let payload = CachedPlanList(plans: plans, exerciseNames: exerciseNames)
         guard let data = try? JSONEncoder().encode(payload) else { return }
         try? data.write(to: url, options: .atomic)
     }
