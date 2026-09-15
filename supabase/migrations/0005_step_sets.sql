@@ -1,11 +1,11 @@
 -- Exercises get their own set count.
 --
--- Until now only a *block* could repeat, so "4 x 6-8 bench press" had to be modelled as a
+-- Until now only a *block* could repeat, so "4 x 8 bench press" had to be modelled as a
 -- block wrapping a single step. That worked but read backwards: the set count belongs to
 -- the exercise, not to a group containing one thing. Now both can repeat, and the two
 -- words mean different things:
 --
---   plan_steps.sets    repeat one exercise -> "4 x 6-8 bench press"      (sets)
+--   plan_steps.sets    repeat one exercise -> "4 x 8 bench press"      (sets)
 --   plan_blocks.rounds repeat the whole group -> "6 x (20s hard, 40s easy)" (rounds)
 --
 -- `rest_after_seconds` keeps its behaviour: it fires after EACH set of the step, including
