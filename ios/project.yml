@@ -54,6 +54,14 @@ targets:
         copy:
           destination: wrapper
           subpath: Watch
+      # Spike only — S1. A Live Activity is rendered by a widget extension and by nothing else,
+      # so answering whether one works at all needs a real second target. `plugins` is where an
+      # app extension belongs; the watch app above goes to `wrapper` instead, and the difference
+      # is not cosmetic. See docs/plan/0001-ui-polish.md.
+      - target: OronzoWidgets
+        embed: true
+        copy:
+          destination: plugins
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.lerio.oronzo
@@ -62,6 +70,23 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         SUPPORTS_MACCATALYST: NO
         SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+
+  # Spike only — S1. Exists to answer one question and is expected to be replaced wholesale by
+  # S7; the target plumbing is worth keeping, the view code is not.
+  OronzoWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: OronzoWidgets
+    dependencies:
+      - package: OronzoCore
+        product: OronzoCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.lerio.oronzo.widgets
+        PRODUCT_NAME: OronzoWidgets
+        INFOPLIST_FILE: OronzoWidgets/Info.plist
+        TARGETED_DEVICE_FAMILY: "1"
 
   OronzoWatch:
     type: application

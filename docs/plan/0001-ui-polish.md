@@ -269,3 +269,24 @@ limit. Same principle, opposite conclusion, and both are deliberate.
 | **S2's tokens cannot stay plain Swift** | The vocabulary moves to a small separate target or a per-app file, and metric 3 loses its structural guarantee — becoming discipline again. This is the plan's quietest risk and S2 tests it immediately. |
 | **S3 fails metric 1** | Direction A is wrong for the Watch. That is worth knowing before S5 and S7 are built on the same vocabulary. |
 | **A 7-day profile expiry lands mid-slice** | Re-sign and resume; `/resign` covers it. Budget for it rather than being surprised. |
+
+---
+
+## Discovery from S1 — for S2 and S7
+
+Recorded here rather than in the PR, because a PR description scrolls away and S7 will need this.
+
+**ActivityKit types may live in `OronzoCore`, but they must be guarded on `os(iOS)` — *not* on
+`canImport(ActivityKit)`.** The module imports fine on macOS; it is `ActivityAttributes` itself
+that is marked unavailable there. So `canImport` compiles the guard and then fails on the symbol,
+which is a confusing error in a package that is otherwise plain Swift.
+
+`#if os(iOS)` is correct and sufficient: it keeps the type out of the macOS build (`swift test`
+still runs, verified — 56 passing) and out of the Watch target, which has no use for it.
+
+This matters for **S2**: design tokens expressible as plain values remain unaffected, but the same
+guard discipline is the rule for anything that is platform-framework-shaped. `OronzoCore` can host
+such things; it must simply fence them.
+
+It matters for **S7**: the real `ActivityAttributes` will live alongside `SpikeActivity.swift` and
+needs the identical guard.
