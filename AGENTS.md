@@ -176,4 +176,5 @@ registered, the scan is manual. See `docs/known-issues.md`.
 | `docs/decisions.md` | Why the system is shaped this way (ADRs, including the forced constraints) |
 | `docs/runbook.md` | Operational chores, above all the weekly re-sign |
 | `docs/friction-log.md` | Gaps hit while running the skills, and how each was resolved — check before re-litigating |
+| `docs/prd/` | Product requirements, with the approved direction and its non-goals. Read the relevant PRD before changing anything user-facing |
 | `README.md` | Human-facing overview and first-time setup |
