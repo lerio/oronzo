@@ -97,3 +97,42 @@ colliding with work in flight.
 
 **What would resolve it.** `friction-log/SKILL.md` should name the path explicitly, the way the
 other skills name their outputs.
+
+---
+
+## 2026-09-16 — `prd-writer`'s "withhold codebase access" is unenforceable in this harness
+
+**Run against:** `oronzo-app`, PRD 0001 (UI/UX polish, iPhone + Watch).
+
+**The gap.** `prd-writer` makes a structural argument: don't give the PRD step codebase access,
+because an agent that has read the code will judge it inadequate and quietly shrink the product
+ask — and the fix is *structural, not a reminder to "be careful"*.
+
+That works when the PRD step is a separate agent run over a clean context. It does not work here.
+The skill is invoked as a slash command inside a general-purpose coding agent that already has the
+repository loaded, and in this instance the same session had just read most of the codebase to
+write the onboarding docs. There is no mechanism that removes that context, and "explicitly
+withhold" is addressed to *the agent doing the reading* — which is the party that already read it.
+
+So the skill's central safeguard degraded into exactly the thing it warns against: a reminder to
+be careful.
+
+**What was chosen.** Honoured the *intent* by separating the outputs rather than the context. The
+PRD was written as pure product framing — no file names, no technical tradeoffs, no mention of
+what the current code does or does not make easy — and every technical observation was pushed into
+the "for `spec-writer` to assess" section as an open question instead of being used to bound the
+design. Specifically, things noticed during onboarding that would have quietly capped the ask
+(no accent-colour asset on the Watch, the free-tier background-mode ceiling) were *not* allowed to
+shape the proposed directions; they appear only as feasibility questions.
+
+Confidence that this worked: **moderate, not high.** Nothing verified it. A reader cannot tell
+from the PRD whether the ask would have been larger had the context been clean — which is the
+whole point of the original safeguard.
+
+**What would resolve it.** The skill needs a mechanism, not an instruction, for a harness where
+the agent has repo access. Realistic options: run `prd-writer` as a *subagent with no repository
+context* (a fork with a scrubbed prompt would not do it — the context travels), or have it emit
+the PRD to a file and require a separate, fresh session to review it against the code. The skill
+should also say plainly that in a coding-agent harness the safeguard is best-effort, so the
+reviewer knows to check for shrinkage rather than assuming the discipline held.
+
