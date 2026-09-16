@@ -70,6 +70,10 @@ Supabase project and the signing team ID stay local.
 See `docs/decisions.md` for the architecture and why it is shaped this way, and
 `docs/runbook.md` for the operational chores — the weekly re-sign above all.
 
+**If you are an agent picking this repository up:** start at [`AGENTS.md`](AGENTS.md). It is the
+entry point, and it points to the topic docs — patterns, integration contracts, testing strategy,
+and the code that looks unintended.
+
 ## Constraints we build around
 
 This project targets a **free Apple personal team**, which rules out HealthKit, App Groups, and
