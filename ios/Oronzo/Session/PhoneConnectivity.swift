@@ -67,6 +67,12 @@ final class PhoneConnectivity: NSObject {
 
         do {
             try session.updateApplicationContext(["message": data])
+            // Logged on success as well as failure. Without this, "the phone wrote the context"
+            // and "the phone never called send" are indistinguishable in the log — which is
+            // the exact ambiguity that made a silent watch link so hard to diagnose.
+            //
+            // The case name only: interpolating `message` would dump the entire interval list.
+            Log.debug("sent \(Self.kind(of: message)) (\(data.count) bytes); reachable=\(session.isReachable)")
         } catch {
             // Silently swallowing this is how a link "works" and delivers nothing.
             Log.debug("updateApplicationContext failed: \(error)")
@@ -76,6 +82,14 @@ final class PhoneConnectivity: NSObject {
         // only here to make a reachable watch update instantly rather than on next wake.
         if session.isReachable {
             session.sendMessage(["message": data], replyHandler: nil, errorHandler: nil)
+        }
+    }
+
+    /// The message's case name, for logging. Deliberately not the payload.
+    private static func kind(of message: WatchMessage) -> String {
+        switch message {
+        case .session: "session"
+        case .sessionEnded: "sessionEnded"
         }
     }
 }
