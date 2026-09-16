@@ -28,9 +28,8 @@ since the last deploy, and in which direction?"* before shipping.
 
 **There is no `.claude/settings.json`**, so none of the permission rules are in force and the
 secret-scan hook never runs. Writing it was blocked the first time — correctly, since it would
-have meant Claude choosing its own permission grants — and the block that activates it was
-recorded in `.claude/README.md`, which is currently deleted in the working tree. See
-`docs/known-issues.md` §5.
+have meant Claude choosing its own permission grants. The block that activates it is written out
+in full in `.claude/README.md`. See `docs/known-issues.md` §5.
 
 Until it is registered, **the pre-push secret scan is manual**: scan the working tree for the four
 known values listed in `AGENTS.md` and confirm none appear.
