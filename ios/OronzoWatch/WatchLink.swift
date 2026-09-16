@@ -24,11 +24,15 @@ final class WatchLink: NSObject {
     private var lastCountdownSecond: Int?
 
     func activate() {
-        guard WCSession.isSupported() else { return }
+        guard WCSession.isSupported() else {
+            Log.debug("watch: WCSession is not supported on this device")
+            return
+        }
         let session = WCSession.default
         session.delegate = self
         session.activate()
         self.session = session
+        Log.debug("watch: activate() called")
     }
 
     /// Where the session should be now — the phone's position, projected forward through
@@ -61,7 +65,12 @@ final class WatchLink: NSObject {
     /// not fire again and nothing would ever tell it the phone had started a workout. The
     /// stored application context is still there — this just goes and looks.
     func refreshFromContext() {
-        guard let session, session.activationState == .activated else { return }
+        guard let session, session.activationState == .activated else {
+            // Named separately rather than one silent `return`: "never activated" and "no
+            // context stored yet" look identical from the wrist and have different causes.
+            Log.debug("refresh: skipped (\(session == nil ? "no session" : "not activated"))")
+            return
+        }
         guard let data = session.receivedApplicationContext["message"] as? Data else {
             Log.debug("refresh: no stored context yet")
             return
@@ -167,11 +176,25 @@ extension WatchLink: WCSessionDelegate {
         activationDidCompleteWith activationState: WCSessionActivationState,
         error: (any Error)?
     ) {
+        // The watch's half of the phone's activation line. Without it, a watch whose session
+        // never activated is indistinguishable from one that simply has nothing to show.
+        //
+        // No `isPaired` here: it is unavailable on watchOS (the build rejects it), which is
+        // fine — from the watch the useful facts are whether the session came up at all and
+        // whether a context is already sitting there.
+        let hasStoredContext = session.receivedApplicationContext["message"] != nil
+        Log.debug(
+            "watch activation: state=\(activationState.rawValue) "
+            + "storedContext=\(hasStoredContext) "
+            + "error=\(error.map { String(describing: $0) } ?? "none")"
+        )
+
         // `[String: Any]` is not Sendable, so the message is pulled out as Data — which is —
         // before hopping to the main actor. Same reason every other callback here does it.
         let data = session.receivedApplicationContext["message"] as? Data
 
         Task { @MainActor in
+            Log.debug("watch activation: stored context present = \(data != nil)")
             // Whatever the phone last said, even if it said it while this app was closed.
             if let data { self.apply(data) }
         }
@@ -195,6 +218,9 @@ extension WatchLink: WCSessionDelegate {
 
         switch message {
         case .session(let snapshot):
+            // Logged on success, not just failure: "the phone sent and the watch applied it"
+            // is the single most useful fact when the wrist shows the wrong thing.
+            Log.debug("applied session: \(snapshot.intervals.count) intervals, index=\(snapshot.state.currentIndex), finished=\(snapshot.state.isFinished)")
             // Always complete, so it does not matter whether this is the first message the
             // watch has seen or the hundredth.
             intervals = snapshot.intervals
@@ -203,6 +229,7 @@ extension WatchLink: WCSessionDelegate {
             startHaptics()
 
         case .sessionEnded:
+            Log.debug("applied sessionEnded: clearing")
             stopHaptics()
             intervals = []
             state = nil
