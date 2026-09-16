@@ -136,3 +136,41 @@ the PRD to a file and require a separate, fresh session to review it against the
 should also say plainly that in a coding-agent harness the safeguard is best-effort, so the
 reviewer knows to check for shrinkage rather than assuming the discipline held.
 
+
+---
+
+## 2026-09-16 — `implement` has no path for a slice whose verification is not automatable
+
+**Run against:** `oronzo-app`, slice S1 (Live Activity feasibility spike).
+
+**The gap.** `implement` says "test-first by default" and treats tests-passing as the signal that a
+slice is complete. It has no guidance for a slice whose entire purpose is an *answer that only a
+physical device can give*.
+
+S1 is exactly that. Its artifact is a widget extension target and some throwaway view code, but its
+**done-condition is "does a Live Activity provision on a free personal team?"** — and that cannot be
+answered in a simulator, because provisioning is the thing under test. So the honest end state is:
+the code is complete, the build is green, `swift test` passes, and **the slice is not done**.
+
+The skill's step 6 covers "never silently guess on ambiguity" and step 7 covers logging, but there is
+no stated expectation for *how far an agent should go* when verification is out of its reach — and no
+warning that "tests pass" can be a misleading completion signal in that situation.
+
+**What was chosen.** Implemented the slice fully, verified everything reachable (both schemes build;
+the built bundle inspected rather than the YAML trusted — the extension at `PlugIns/…appex` with the
+right extension point and `NSSupportsLiveActivities` in both plists), and then **stated plainly in
+the commit message and the PR title-adjacent body that S1 is not done**, with the exact device steps
+handed over. Deliberately did not shade "it builds" into "it works".
+
+**Why it matters beyond this slice.** Four of the seven slices in this plan have device-only
+verification (S3, S4, S6, S7 — S6 literally cannot be checked anywhere but a wrist). If the pattern
+is "agent reports success when the build is green", this plan produces four false completions in a
+row, and the failures would surface as *silent* — a Live Activity that never appears looks exactly
+like one that was never started, which is the same failure shape
+`docs/integration-contracts.md` already warns about for WatchConnectivity.
+
+**What would resolve it.** `implement` should distinguish *implemented* from *verified*, and say that
+when verification needs a device it must (a) never be implied as done, (b) hand over exact
+reproduction steps, and (c) name what the *negative* answer would mean for the plan — so a "no" is
+recognised as a result rather than reported as a failure. The plan already writes done-conditions
+this way ("either (a) … or (b) it is not, and the failing step is named"); `implement` should match it.
