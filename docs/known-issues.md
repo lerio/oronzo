@@ -83,10 +83,9 @@ remaining protection is a manual scan before each push.
 *"as long as no sensitive data is pushed."* The hook is the thing that makes the condition hold
 without discipline.
 
-**Also lost:** the `settings.json` that activates it — including the permission allow/ask/deny
-lists — was written out in full inside `.claude/README.md`, which is currently **deleted in the
-working tree**. If that deletion is committed, the content goes with it. (It is still recoverable
-from `HEAD` right now.)
+**Where the fix lives.** The `settings.json` that activates it — including the permission
+allow/ask/deny lists — is written out in full inside **`.claude/README.md`**, which is committed
+and now restored. Nothing is at risk of being lost; the block simply has not been applied.
 
 **Question.** Wire it up, and restore or relocate that `settings.json` block? Note that creating
 permission grants is the user's call, not an agent's — which is why `.claude/README.md` records
