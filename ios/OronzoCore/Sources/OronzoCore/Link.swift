@@ -41,19 +41,41 @@ public struct SessionState: Codable, Equatable, Sendable {
     /// anything every second, and it stays correct across a suspension.
     public let intervalEnd: Date?
     public let remainingWhenPaused: TimeInterval?
+    /// When the session actually ended, so the `DONE` screen can show a *total* rather than a
+    /// number that grows every time the watch redraws. Nil while a session is running.
+    public let finishedAt: Date?
 
     public init(
         currentIndex: Int,
         isPaused: Bool,
         isFinished: Bool,
         intervalEnd: Date?,
-        remainingWhenPaused: TimeInterval?
+        remainingWhenPaused: TimeInterval?,
+        finishedAt: Date? = nil
     ) {
         self.currentIndex = currentIndex
         self.isPaused = isPaused
         self.isFinished = isFinished
         self.intervalEnd = intervalEnd
         self.remainingWhenPaused = remainingWhenPaused
+        self.finishedAt = finishedAt
+    }
+
+    /// Decoding is written out by hand to be **tolerant of a missing `finishedAt`**.
+    ///
+    /// The application context persists across launches, so a snapshot encoded by an earlier
+    /// build can still be sitting there when a newer one starts. A synthesised decoder rejects
+    /// it for the absent key and the watch shows nothing at all — which is precisely the trap
+    /// `docs/known-issues.md` records for `Interval`, and which was observed happening on a real
+    /// device during this slice. New optional fields must default rather than fail.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        currentIndex = try container.decode(Int.self, forKey: .currentIndex)
+        isPaused = try container.decode(Bool.self, forKey: .isPaused)
+        isFinished = try container.decode(Bool.self, forKey: .isFinished)
+        intervalEnd = try container.decodeIfPresent(Date.self, forKey: .intervalEnd)
+        remainingWhenPaused = try container.decodeIfPresent(TimeInterval.self, forKey: .remainingWhenPaused)
+        finishedAt = try container.decodeIfPresent(Date.self, forKey: .finishedAt)
     }
 }
 

@@ -97,6 +97,7 @@ struct WatchSessionView: View {
             isFinished: link.state?.isFinished ?? false,
             planName: link.planName,
             startedAt: link.startedAt,
+            finishedAt: link.finishedAt,
             now: now
         )
     }
