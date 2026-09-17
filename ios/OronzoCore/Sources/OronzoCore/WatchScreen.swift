@@ -54,6 +54,7 @@ public enum WatchPresentation {
         isFinished: Bool,
         planName: String?,
         startedAt: Date?,
+        finishedAt: Date? = nil,
         now: Date
     ) -> WatchScreen? {
         guard intervals.indices.contains(index) else { return nil }
@@ -106,7 +107,15 @@ public enum WatchPresentation {
 
         let primary: WatchScreen.Primary?
         if isFinished {
-            primary = .elapsed(max(0, now.timeIntervalSince(startedAt ?? now)))
+            // **Frozen at the moment the session ended, not at the current time.** Computing
+            // this from `now` made the number grow on every tick — a six-second demo read 0:24
+            // by the time anyone glanced at it, and it would have gone on climbing all evening.
+            // Found by looking at the screen rather than by reasoning about it.
+            //
+            // The fallback matters: an older build's snapshot has no finish time, and a total
+            // that is wrong beats no screen at all.
+            let ended = finishedAt ?? now
+            primary = .elapsed(max(0, ended.timeIntervalSince(startedAt ?? ended)))
         } else if let end {
             // Paused arrives here too: `WatchLink.position` returns `now + remainingWhenPaused`,
             // so a paused session simply reads a frozen remainder rather than a running clock.
