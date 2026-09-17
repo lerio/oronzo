@@ -224,14 +224,14 @@ final class SessionScreenTests: XCTestCase {
 
 // MARK: - S4: the elapsed time must be frozen, not counting up
 
-extension WatchScreenTests {
+extension SessionScreenTests {
 
     /// Found by looking: the DONE screen read `0:24` for a six-second session, because the
     /// elapsed time was computed from the live clock and simply kept growing. The watch needs
     /// the moment the session actually ended, or "total elapsed" is not a total at all.
     func testTheElapsedTimeIsFrozenAtTheFinishNotTheCurrentTime() {
         let finishedAt = t0.addingTimeInterval(47 * 60)
-        let screen = WatchPresentation.screen(
+        let screen = SessionPresentation.screen(
             intervals: mixedIntervals(), index: 2,
             end: nil, isPaused: false, isFinished: true,
             planName: "P", startedAt: t0, finishedAt: finishedAt,
@@ -245,7 +245,7 @@ extension WatchScreenTests {
     /// And when the finish time is missing — an older build's snapshot — it must degrade to the
     /// current time rather than showing nothing at all.
     func testTheElapsedFallsBackToNowWhenTheFinishTimeIsUnknown() {
-        let screen = WatchPresentation.screen(
+        let screen = SessionPresentation.screen(
             intervals: mixedIntervals(), index: 2,
             end: nil, isPaused: false, isFinished: true,
             planName: "P", startedAt: t0, finishedAt: nil,
@@ -258,7 +258,7 @@ extension WatchScreenTests {
 
 // MARK: - S4: the wire format must stay readable by an older snapshot
 
-extension WatchScreenTests {
+extension SessionScreenTests {
 
     /// The reason `SessionState` decodes by hand. The application context persists across
     /// launches, so a snapshot encoded by a build that predates `finishedAt` can still be
