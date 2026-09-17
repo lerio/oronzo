@@ -22,6 +22,9 @@ final class WatchLink: NSObject {
     private(set) var planName: String?
     /// Likewise retained for `DONE`, which reports how long the session ran.
     private(set) var startedAt: Date?
+    /// When the session ended, so `DONE` shows a frozen total rather than one that grows every
+    /// time the screen redraws.
+    private(set) var finishedAt: Date?
 
     private var session: WCSession?
     private var haptics: Task<Void, Never>?
@@ -232,6 +235,7 @@ extension WatchLink: WCSessionDelegate {
             state = snapshot.state
             planName = snapshot.planName
             startedAt = snapshot.startedAt
+            finishedAt = snapshot.state.finishedAt
             lastAnnouncedIndex = nil
             startHaptics()
 
@@ -242,6 +246,7 @@ extension WatchLink: WCSessionDelegate {
             state = nil
             planName = nil
             startedAt = nil
+            finishedAt = nil
             lastAnnouncedIndex = nil
         }
     }

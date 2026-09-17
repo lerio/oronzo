@@ -142,7 +142,15 @@ final class SessionController {
         completed = engine.abandon(at: .now)
         stopTicking()
         audio.stop()
-        link.send(.sessionEnded)
+        // The final snapshot **replaces** `.sessionEnded` rather than preceding it. The
+        // application context is a single slot — whatever is written last is all that survives
+        // — so sending both would leave only the `.sessionEnded` and the watch would never show
+        // DONE at all. `abandon` has already moved the engine to `.finished`, so this carries
+        // `isFinished: true`, which is what the watch draws its DONE screen from.
+        //
+        // The screen is still cleared, just not here: `teardown` sends `.sessionEnded` when the
+        // runner goes away, which is what keeps DONE brief rather than a stale screen.
+        pushState(force: true)
     }
 
     // MARK: - Ticking
@@ -181,7 +189,10 @@ final class SessionController {
             isPaused: isPaused,
             isFinished: isFinished,
             intervalEnd: engine.intervalEnd,
-            remainingWhenPaused: engine.remainingWhenPaused
+            remainingWhenPaused: engine.remainingWhenPaused,
+            // Without this the watch computes the DONE total from its own clock and the number
+            // climbs forever. Sent so the watch can freeze it at the real finish.
+            finishedAt: engine.finishedAt
         )
         guard force || state != lastPushedState else { return }
         lastPushedState = state
@@ -238,7 +249,9 @@ final class SessionController {
                 completed = engine.snapshot(status: .completed)
                 stopTicking()
                 audio.stop()
-                link.send(.sessionEnded)
+                // See `finishEarly`: this final snapshot is the terminal state, and sending
+                // `.sessionEnded` after it would erase the only thing the watch has to draw.
+                pushState(force: true)
             }
         }
     }

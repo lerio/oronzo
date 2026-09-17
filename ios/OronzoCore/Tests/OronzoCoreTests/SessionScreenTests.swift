@@ -221,3 +221,72 @@ final class SessionScreenTests: XCTestCase {
         )
     }
 }
+
+// MARK: - S4: the elapsed time must be frozen, not counting up
+
+extension WatchScreenTests {
+
+    /// Found by looking: the DONE screen read `0:24` for a six-second session, because the
+    /// elapsed time was computed from the live clock and simply kept growing. The watch needs
+    /// the moment the session actually ended, or "total elapsed" is not a total at all.
+    func testTheElapsedTimeIsFrozenAtTheFinishNotTheCurrentTime() {
+        let finishedAt = t0.addingTimeInterval(47 * 60)
+        let screen = WatchPresentation.screen(
+            intervals: mixedIntervals(), index: 2,
+            end: nil, isPaused: false, isFinished: true,
+            planName: "P", startedAt: t0, finishedAt: finishedAt,
+            // Ten minutes after it ended — a phone in a pocket, a watch raised later.
+            now: finishedAt.addingTimeInterval(600)
+        )
+
+        XCTAssertEqual(screen?.primary, .elapsed(47 * 60), "elapsed must not grow after the finish")
+    }
+
+    /// And when the finish time is missing — an older build's snapshot — it must degrade to the
+    /// current time rather than showing nothing at all.
+    func testTheElapsedFallsBackToNowWhenTheFinishTimeIsUnknown() {
+        let screen = WatchPresentation.screen(
+            intervals: mixedIntervals(), index: 2,
+            end: nil, isPaused: false, isFinished: true,
+            planName: "P", startedAt: t0, finishedAt: nil,
+            now: t0.addingTimeInterval(120)
+        )
+
+        XCTAssertEqual(screen?.primary, .elapsed(120))
+    }
+}
+
+// MARK: - S4: the wire format must stay readable by an older snapshot
+
+extension WatchScreenTests {
+
+    /// The reason `SessionState` decodes by hand. The application context persists across
+    /// launches, so a snapshot encoded by a build that predates `finishedAt` can still be
+    /// sitting there — and a synthesised decoder would reject it for the missing key, leaving
+    /// the watch blank. This is the trap `docs/known-issues.md` records for `Interval`, and it
+    /// was observed happening on a real device during this slice.
+    func testASnapshotPredatingFinishedAtStillDecodes() throws {
+        let older = """
+        {"currentIndex":2,"isPaused":false,"isFinished":false,
+         "intervalEnd":null,"remainingWhenPaused":null}
+        """
+
+        let state = try JSONDecoder().decode(SessionState.self, from: Data(older.utf8))
+
+        XCTAssertEqual(state.currentIndex, 2)
+        XCTAssertNil(state.finishedAt, "a missing key must default, not throw")
+    }
+
+    func testTheCurrentSessionStateShapeRoundTrips() throws {
+        let original = SessionState(
+            currentIndex: 3, isPaused: true, isFinished: true,
+            intervalEnd: t0, remainingWhenPaused: 12, finishedAt: t0.addingTimeInterval(60)
+        )
+
+        let decoded = try JSONDecoder().decode(
+            SessionState.self, from: JSONEncoder().encode(original)
+        )
+
+        XCTAssertEqual(decoded, original)
+    }
+}
