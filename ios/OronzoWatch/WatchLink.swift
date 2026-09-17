@@ -28,7 +28,7 @@ final class WatchLink: NSObject {
 
     private var session: WCSession?
     private var haptics: Task<Void, Never>?
-    private var lastAnnouncedIndex: Int?
+    private var lastMoment: SessionMoment?
     private var lastCountdownSecond: Int?
 
     func activate() {
@@ -117,20 +117,31 @@ final class WatchLink: NSObject {
     func stopHaptics() {
         haptics?.cancel()
         haptics = nil
-        lastAnnouncedIndex = nil
+        lastMoment = nil
         lastCountdownSecond = nil
     }
 
     private func announce(now: Date) {
-        guard let state, !state.isPaused, !state.isFinished, !intervals.isEmpty else { return }
+        guard let state, !intervals.isEmpty else { return }
 
         let (index, end) = position(at: now)
+        let kind = intervals.indices.contains(index) ? intervals[index].kind : .exercise
+        let moment = SessionMoment(index: index, kind: kind, isFinished: state.isFinished)
 
-        if let previous = lastAnnouncedIndex, previous != index {
-            WKInterfaceDevice.current().play(.notification)
+        // The decision is `HapticLanguage`'s, not this file's — see there for why each
+        // transition earned what it did. This only plays what it is handed.
+        if let cue = HapticLanguage.cue(from: lastMoment, to: moment) {
+            // Logged because a haptic is invisible to every tool we have: without this, "the
+            // vocabulary never fired" and "it fired but you did not feel it" are the same
+            // observation on a device. Same reasoning as the watch-link logging.
+            Log.debug("cue: \(cue.rawValue) — \(kind) at index \(index)")
+            play(cue)
             lastCountdownSecond = nil
         }
-        lastAnnouncedIndex = index
+        lastMoment = moment
+
+        // A paused session holds its clock, so there is no countdown to click through.
+        guard !state.isPaused else { return }
 
         // Three clicks on the way into a transition, as on the phone.
         guard let end else { return }
@@ -143,6 +154,30 @@ final class WatchLink: NSObject {
         guard second != lastCountdownSecond else { return }
         lastCountdownSecond = second
         WKInterfaceDevice.current().play(.click)
+    }
+
+    /// Turns a cue into a feel.
+    ///
+    /// The whole vocabulary rests on *count* rather than on different textures: `stop` and `start`
+    /// are the same tap, played once or twice. That is deliberate — a tap you have felt a thousand
+    /// times is recognisable immediately, and a second distinct texture would have to be learned.
+    private func play(_ cue: HapticCue) {
+        switch cue {
+        case .stop:
+            WKInterfaceDevice.current().play(.notification)
+
+        case .start:
+            WKInterfaceDevice.current().play(.notification)
+            Task { @MainActor in
+                // Long enough to read as two taps, short enough to feel like one idea.
+                try? await Task.sleep(for: .milliseconds(180))
+                WKInterfaceDevice.current().play(.notification)
+            }
+
+        case .finished:
+            // `.success` is the rising pattern — the payoff, and the one moment worth noticing.
+            WKInterfaceDevice.current().play(.success)
+        }
     }
 }
 
@@ -173,6 +208,11 @@ extension WatchLink {
             intervalEnd: Date().addingTimeInterval(42),
             remainingWhenPaused: nil
         )
+        // Started here too, or the demo would be silent: `apply` is what normally starts the
+        // haptic loop, and a seeded session never goes through it. That made "the vocabulary
+        // never fires" and "the demo has no haptics" the same observation — exactly the kind of
+        // silent difference this project keeps having to dig out.
+        startHaptics()
     }
 }
 #endif
@@ -234,9 +274,18 @@ extension WatchLink: WCSessionDelegate {
             intervals = snapshot.intervals
             state = snapshot.state
             planName = snapshot.planName
-            startedAt = snapshot.startedAt
             finishedAt = snapshot.state.finishedAt
-            lastAnnouncedIndex = nil
+            // Only a *new session* clears the memory of where we were.
+            //
+            // This used to clear on every snapshot, and that quietly disabled the transition cue
+            // on the path that matters most: when the phone drives an interval change it pushes a
+            // snapshot first, the memory was wiped, and the next observation looked like a first
+            // sighting rather than a transition. So "rest is over, start working" only ever
+            // buzzed when the phone was *silent* — the opposite of the common case.
+            //
+            // `startedAt` identifies the session, so a genuine restart still starts clean.
+            if startedAt != snapshot.startedAt { lastMoment = nil }
+            startedAt = snapshot.startedAt
             startHaptics()
 
         case .sessionEnded:
@@ -247,7 +296,7 @@ extension WatchLink: WCSessionDelegate {
             planName = nil
             startedAt = nil
             finishedAt = nil
-            lastAnnouncedIndex = nil
+            lastMoment = nil
         }
     }
 }
