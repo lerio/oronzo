@@ -1,14 +1,20 @@
 import OronzoCore
 import SwiftUI
-import UIKit
 
-/// The workout runner: a live countdown, the controls, and a summary at the end.
+/// The session runner: what you are doing now, how long is left, and what is coming.
 ///
-/// The logic lives in `SessionController` and, below that, in `OronzoCore`'s engine — this
-/// file only decides what that looks like.
+/// Direction B — *quiet coach* — with the distance requirement from
+/// `docs/ui-design/0001-ui-polish.md` §4: the phone sits on a surface and is read from 1–2
+/// metres, so `primary` is sized by **that** rather than by how much room is left over. Where
+/// calm and the requirement conflict, the requirement wins: generous whitespace around a very
+/// large figure, not a uniformly small screen.
+///
+/// What is shown comes from `SessionPresentation` in `OronzoCore`, the same model the watch
+/// draws from, so the two cannot disagree about the state word, what rest promotes, or `LAST`.
 struct SessionRunner: View {
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
 
     @State private var controller: SessionController
     @State private var saving: SaveState = .idle
@@ -20,6 +26,14 @@ struct SessionRunner: View {
         case saved
         case failed(String)
     }
+
+    // Text scales with Dynamic Type; the distance-critical figure deliberately does not, for the
+    // same reason the watch caps its clock. Capping a fixed-purpose instrument is defensible
+    // where capping body text would not be.
+    @ScaledMetric(relativeTo: .title2) private var titleSize = TypeScale.size(.title, on: .phone)
+    @ScaledMetric(relativeTo: .body) private var labelSize = TypeScale.size(.label, on: .phone)
+    @ScaledMetric(relativeTo: .caption) private var captionSize = TypeScale.size(.caption, on: .phone)
+    private let primarySize = TypeScale.size(.primary, on: .phone)
 
     @MainActor
     init(plan: Plan, exerciseNames: [UUID: String]) {
@@ -34,20 +48,8 @@ struct SessionRunner: View {
                 runner
             }
         }
-        .onAppear {
-            controller.start()
-            // A workout is not the moment for the screen to lock.
-            UIApplication.shared.isIdleTimerDisabled = true
-        }
-        .onDisappear {
-            controller.teardown()
-            UIApplication.shared.isIdleTimerDisabled = false
-        }
-        // Runs again when the session ends, which is when there is something to save.
-        .task(id: controller.completed?.startedAt) {
-            guard case .idle = saving, let session = controller.completed else { return }
-            await persist(session)
-        }
+        .onAppear { controller.start() }
+        .onDisappear { controller.teardown() }
     }
 
     // MARK: - Running
@@ -55,17 +57,14 @@ struct SessionRunner: View {
     private var runner: some View {
         VStack(spacing: 0) {
             topBar
-            Spacer(minLength: 16)
-            context
-            intervalName
-            clock
-            Spacer(minLength: 16)
-            nextUp
+            Spacer(minLength: SpacingStep.roomy.points)
+            live
+            Spacer(minLength: SpacingStep.roomy.points)
             controls
         }
-        .padding(.horizontal, 24)
-        .padding(.top, 16)
-        .padding(.bottom, 28)
+        .padding(.horizontal, SpacingStep.edge.points)
+        .padding(.top, SpacingStep.roomy.points)
+        .padding(.bottom, SpacingStep.edge.points)
         .confirmationDialog(
             "End this workout early?",
             isPresented: $confirmingFinish,
@@ -78,92 +77,137 @@ struct SessionRunner: View {
         }
     }
 
+    @ViewBuilder
+    private var live: some View {
+        if let screen = controller.screen(at: .now) {
+            stateWordBadge(screen)
+            intervalName(screen)
+            primary(screen)
+
+            if let label = screen.context {
+                Text(label)
+                    .font(.system(size: labelSize, weight: .semibold))
+                    .textCase(.uppercase)
+                    .tracking(0.8)
+                    .foregroundStyle(ColorRole.muted.color(colorScheme))
+                    .padding(.top, SpacingStep.snug.points)
+            }
+
+            if let next = screen.next {
+                Text(label(for: next))
+                    // `label`, not `caption`. The type-role table names the next-up line as
+                    // caption-sized, but §4's distance rule is the stricter constraint and it
+                    // says nothing essential may sit below `label` — and §2 lists the next-up
+                    // line as essential. At 15pt this was illegible at 1–2 metres, which is the
+                    // one thing this screen exists to survive.
+                    .font(.system(size: labelSize, weight: .medium))
+                    // Essential, so `text` rather than a dimmed tone — subordination here is
+                    // carried by size. A mid-tone is what dies across a room.
+                    .foregroundStyle(ColorRole.text.color(colorScheme))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .padding(.top, SpacingStep.roomy.points)
+            }
+        }
+    }
+
+    /// The state word carries the meaning; the colour only reinforces it.
+    ///
+    /// This element did not exist before: rest used to be signalled by *dimming the clock*, which
+    /// is colour-only signalling and gives nothing to a colour-blind user or a dimmed screen. The
+    /// word is drawn in `text` at maximum contrast, and the state colour goes on the stroke.
+    private func stateWordBadge(_ screen: SessionScreen) -> some View {
+        Text(screen.stateWord.rawValue)
+            .font(.system(size: labelSize, weight: .bold))
+            .foregroundStyle(ColorRole.text.color(colorScheme))
+            .padding(.horizontal, SpacingStep.snug.points)
+            .padding(.vertical, 2)
+            .overlay(
+                Capsule().stroke(
+                    ColorRole.reinforcement(for: screen.stateWord).color(colorScheme),
+                    lineWidth: 2
+                )
+            )
+            .padding(.bottom, SpacingStep.snug.points)
+    }
+
+    private func intervalName(_ screen: SessionScreen) -> some View {
+        VStack(spacing: SpacingStep.tight.points) {
+            Text(screen.name)
+                .font(.system(size: titleSize, weight: .semibold, design: .rounded))
+                .foregroundStyle(ColorRole.text.color(colorScheme))
+                .multilineTextAlignment(.center)
+                .minimumScaleFactor(0.6)
+                .lineLimit(2)
+
+            // Phone-only detail: the watch has no room for it, and the shared model carries
+            // only what the two surfaces must agree on.
+            if let weight = controller.current?.weightDisplay, controller.current?.kind == .exercise {
+                Text(weight)
+                    .font(.system(size: captionSize))
+                    .foregroundStyle(ColorRole.muted.color(colorScheme))
+            }
+        }
+    }
+
+    /// A timed interval counts down; a rep interval has no end, so it shows the target and waits.
+    @ViewBuilder
+    private func primary(_ screen: SessionScreen) -> some View {
+        switch screen.primary {
+        case .clock(let remaining):
+            Text(MeasurementFormat.clock(remaining: remaining))
+                .font(.system(size: primarySize, weight: .semibold, design: .rounded).monospacedDigit())
+                .foregroundStyle(ColorRole.text.color(colorScheme))
+                .contentTransition(.numericText(countsDown: true))
+                .padding(.vertical, SpacingStep.snug.points)
+
+        case .reps(let reps):
+            VStack(spacing: 0) {
+                Text("\(reps)")
+                    .font(.system(size: primarySize, weight: .semibold, design: .rounded).monospacedDigit())
+                    .foregroundStyle(ColorRole.text.color(colorScheme))
+                Text("reps")
+                    .font(.system(size: labelSize))
+                    .foregroundStyle(ColorRole.muted.color(colorScheme))
+            }
+            .padding(.vertical, SpacingStep.snug.points)
+
+        case .elapsed(let elapsed):
+            Text(MeasurementFormat.clock(remaining: elapsed))
+                .font(.system(size: primarySize, weight: .semibold, design: .rounded).monospacedDigit())
+                .foregroundStyle(ColorRole.text.color(colorScheme))
+                .padding(.vertical, SpacingStep.snug.points)
+
+        case nil:
+            Text("—")
+                .font(.system(size: primarySize, weight: .semibold, design: .rounded))
+                .foregroundStyle(ColorRole.text.color(colorScheme))
+                .padding(.vertical, SpacingStep.snug.points)
+        }
+    }
+
+    private func label(for next: SessionScreen.Next) -> String {
+        switch next {
+        case .exercise(let name): "NEXT · \(name)"
+        case .last: "LAST"
+        }
+    }
+
     private var topBar: some View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(controller.planName)
-                    .font(.subheadline.weight(.semibold))
+                    .font(.system(size: captionSize, weight: .semibold))
+                    .foregroundStyle(ColorRole.text.color(colorScheme))
                     .lineLimit(1)
                 Text("\(controller.position) of \(controller.totalCount)")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: captionSize).monospacedDigit())
+                    .foregroundStyle(ColorRole.muted.color(colorScheme))
             }
             Spacer()
             Button("End") { confirmingFinish = true }
-                .font(.subheadline)
+                .font(.system(size: captionSize))
                 .buttonStyle(.bordered)
-        }
-    }
-
-    @ViewBuilder
-    private var context: some View {
-        if let interval = controller.current, let text = interval.contextLabel {
-            Text(text)
-                .font(.caption.weight(.semibold))
-                .textCase(.uppercase)
-                .tracking(0.8)
-                // AnyShapeStyle because the two branches are different style types.
-                .foregroundStyle(interval.kind == .rest ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint))
-        }
-    }
-
-    @ViewBuilder
-    private var intervalName: some View {
-        if let interval = controller.current {
-            Text(interval.name)
-                .font(.system(size: 30, weight: .semibold, design: .rounded))
-                .multilineTextAlignment(.center)
-                .minimumScaleFactor(0.6)
-                .lineLimit(2)
-                .padding(.top, 4)
-
-            if let weight = interval.weightDisplay, interval.kind == .exercise {
-                Text(weight)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    /// A timed interval counts down; a rep interval has no end, so it shows the target and
-    /// waits for a tap.
-    @ViewBuilder
-    private var clock: some View {
-        if let remaining = controller.remaining {
-            Text(MeasurementFormat.clock(remaining: remaining))
-                .font(.system(size: 84, weight: .semibold, design: .rounded).monospacedDigit())
-                .contentTransition(.numericText(countsDown: true))
-                .padding(.vertical, 8)
-        } else if let reps = controller.current?.reps {
-            VStack(spacing: 0) {
-                Text("\(reps)")
-                    .font(.system(size: 84, weight: .semibold, design: .rounded).monospacedDigit())
-                Text("reps")
-                    .font(.title3)
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.vertical, 8)
-        } else {
-            Text("—")
-                .font(.system(size: 84, weight: .semibold, design: .rounded))
-                .padding(.vertical, 8)
-        }
-    }
-
-    @ViewBuilder
-    private var nextUp: some View {
-        if let next = controller.next {
-            HStack(spacing: 6) {
-                Text("Next")
-                    .foregroundStyle(.tertiary)
-                Text(next.name)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            .font(.footnote)
-            .padding(.bottom, 20)
-        } else {
-            Spacer().frame(height: 20)
         }
     }
 
@@ -174,11 +218,12 @@ struct SessionRunner: View {
             } label: {
                 Image(systemName: "backward.fill")
                     .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(ColorRole.muted.color(colorScheme))
                     .frame(width: 60, height: 60)
                     .background(.quaternary, in: .circle)
             }
             .disabled(controller.position <= 1)
+            .accessibilityLabel("Previous")
 
             Button {
                 controller.isPaused ? controller.resume() : controller.pause()
@@ -187,8 +232,9 @@ struct SessionRunner: View {
                     .font(.system(size: 32))
                     .foregroundStyle(.white)
                     .frame(width: 84, height: 84)
-                    .background(.tint, in: .circle)
+                    .background(ColorRole.accent.color(colorScheme), in: .circle)
             }
+            .accessibilityLabel(controller.isPaused ? "Resume" : "Pause")
 
             Button {
                 controller.advance()
@@ -197,16 +243,22 @@ struct SessionRunner: View {
                 Image(systemName: controller.current?.advancesAutomatically == true
                       ? "forward.fill" : "checkmark")
                     .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(.tint)
+                    .foregroundStyle(ColorRole.accent.color(colorScheme))
                     .frame(width: 60, height: 60)
-                    .background(.tint.opacity(0.14), in: .circle)
+                    .background(ColorRole.accent.color(colorScheme).opacity(0.14), in: .circle)
             }
+            .accessibilityLabel(
+                controller.current?.advancesAutomatically == true ? "Skip ahead" : "Done with this set"
+            )
         }
         .buttonStyle(.plain)
         .frame(maxWidth: .infinity)
     }
 
     // MARK: - Summary
+    //
+    // Deferred: the design scoped the live runner and left the seconds-long screens to a
+    // follow-up, so this keeps the system styles and the existing copy.
 
     private func summary(_ session: CompletedSession) -> some View {
         let done = session.steps.count { $0.status == .completed }

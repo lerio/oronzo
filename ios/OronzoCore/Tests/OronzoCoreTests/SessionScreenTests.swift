@@ -11,7 +11,7 @@ import XCTest
 ///
 /// What these tests cannot cover: whether it is *readable*. Metrics 1 and 4 are judged by a
 /// person looking at a watch, and no test substitutes for that.
-final class WatchScreenTests: XCTestCase {
+final class SessionScreenTests: XCTestCase {
 
     private let t0 = Date(timeIntervalSince1970: 1_700_000_000)
 
@@ -30,7 +30,7 @@ final class WatchScreenTests: XCTestCase {
 
     func testTimedWorkShowsTheWorkStateWordAndAClock() {
         let intervals = mixedIntervals()
-        let screen = WatchPresentation.screen(
+        let screen = SessionPresentation.screen(
             intervals: intervals, index: 0,
             end: t0.addingTimeInterval(42), isPaused: false, isFinished: false,
             planName: "P", startedAt: t0, now: t0
@@ -46,7 +46,7 @@ final class WatchScreenTests: XCTestCase {
 
     func testRestShowsTheRestStateWord() {
         let intervals = mixedIntervals()   // index 1 is the synthetic rest
-        let screen = WatchPresentation.screen(
+        let screen = SessionPresentation.screen(
             intervals: intervals, index: 1,
             end: t0.addingTimeInterval(30), isPaused: false, isFinished: false,
             planName: "P", startedAt: t0, now: t0
@@ -63,7 +63,7 @@ final class WatchScreenTests: XCTestCase {
     /// frozen remainder. The design's "frozen remaining" is that, and nothing more.
     func testPausedOverridesTheUnderlyingKindAndFreezesTheClock() {
         for index in [0, 1] {
-            let screen = WatchPresentation.screen(
+            let screen = SessionPresentation.screen(
                 intervals: mixedIntervals(), index: index,
                 end: t0.addingTimeInterval(20), isPaused: true, isFinished: false,
                 planName: "P", startedAt: t0, now: t0
@@ -74,7 +74,7 @@ final class WatchScreenTests: XCTestCase {
     }
 
     func testFinishedShowsDoneWithTotalElapsedAndThePlanName() {
-        let screen = WatchPresentation.screen(
+        let screen = SessionPresentation.screen(
             intervals: mixedIntervals(), index: 2,
             end: nil, isPaused: false, isFinished: true,
             planName: "Monday — Upper Body A", startedAt: t0,
@@ -88,7 +88,7 @@ final class WatchScreenTests: XCTestCase {
     }
 
     func testNothingIsShownWhenThereIsNoSession() {
-        XCTAssertNil(WatchPresentation.screen(
+        XCTAssertNil(SessionPresentation.screen(
             intervals: [], index: 0,
             end: nil, isPaused: false, isFinished: false,
             planName: nil, startedAt: nil, now: t0
@@ -101,7 +101,7 @@ final class WatchScreenTests: XCTestCase {
     /// already know and what you actually want mid-rest is what you are resting *toward*.
     func testRestPromotesTheNextExerciseIntoTheNameSlot() {
         let intervals = mixedIntervals()
-        let screen = WatchPresentation.screen(
+        let screen = SessionPresentation.screen(
             intervals: intervals, index: 1,          // the rest after "Row"
             end: t0.addingTimeInterval(30), isPaused: false, isFinished: false,
             planName: "P", startedAt: t0, now: t0
@@ -113,7 +113,7 @@ final class WatchScreenTests: XCTestCase {
     /// And because the name slot now carries it, the next line is suppressed rather than
     /// repeating the same word twice.
     func testRestSuppressesTheNextLineBecauseTheNameSlotCarriesIt() {
-        let screen = WatchPresentation.screen(
+        let screen = SessionPresentation.screen(
             intervals: mixedIntervals(), index: 1,
             end: t0.addingTimeInterval(30), isPaused: false, isFinished: false,
             planName: "P", startedAt: t0, now: t0
@@ -125,7 +125,7 @@ final class WatchScreenTests: XCTestCase {
     // MARK: - The next line
 
     func testTheNextLineNamesTheFollowingExercise() {
-        let screen = WatchPresentation.screen(
+        let screen = SessionPresentation.screen(
             intervals: mixedIntervals(), index: 0,
             end: t0.addingTimeInterval(10), isPaused: false, isFinished: false,
             planName: "P", startedAt: t0, now: t0
@@ -139,7 +139,7 @@ final class WatchScreenTests: XCTestCase {
     /// rather than a blank.
     func testTheFinalIntervalShowsLastInsteadOfANextName() {
         let intervals = mixedIntervals()
-        let screen = WatchPresentation.screen(
+        let screen = SessionPresentation.screen(
             intervals: intervals, index: intervals.count - 1,
             end: nil, isPaused: false, isFinished: false,
             planName: "P", startedAt: t0, now: t0
@@ -156,7 +156,7 @@ final class WatchScreenTests: XCTestCase {
             PlanBlock(steps: [PlanStep(label: "Row", mode: .time, duration: 60, restAfter: 30)]),
         ])
         let intervals = PlanFlattener.flatten(plan)   // [Row, Break]
-        let screen = WatchPresentation.screen(
+        let screen = SessionPresentation.screen(
             intervals: intervals, index: 1,
             end: t0.addingTimeInterval(30), isPaused: false, isFinished: false,
             planName: "P", startedAt: t0, now: t0
@@ -171,7 +171,7 @@ final class WatchScreenTests: XCTestCase {
 
     func testARepIntervalShowsRepsAndNeverAClock() {
         let intervals = mixedIntervals()
-        let screen = WatchPresentation.screen(
+        let screen = SessionPresentation.screen(
             intervals: intervals, index: 2,          // the rep step
             end: nil, isPaused: false, isFinished: false,
             planName: "P", startedAt: t0, now: t0
@@ -190,7 +190,7 @@ final class WatchScreenTests: XCTestCase {
     /// The design calls this out explicitly: a rep interval must **omit** the time rather than
     /// announce a stale or zero one, which would be a lie.
     func testTheAnnouncementOmitsTimeForARepInterval() {
-        let screen = WatchPresentation.screen(
+        let screen = SessionPresentation.screen(
             intervals: mixedIntervals(), index: 2,
             end: nil, isPaused: false, isFinished: false,
             planName: "P", startedAt: t0, now: t0
@@ -209,7 +209,7 @@ final class WatchScreenTests: XCTestCase {
             ]),
         ])
         let intervals = PlanFlattener.flatten(plan)   // set 1, rest, set 2, ...
-        let screen = WatchPresentation.screen(
+        let screen = SessionPresentation.screen(
             intervals: intervals, index: 0,
             end: t0.addingTimeInterval(42), isPaused: false, isFinished: false,
             planName: "P", startedAt: t0, now: t0
