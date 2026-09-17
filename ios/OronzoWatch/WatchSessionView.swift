@@ -142,7 +142,7 @@ struct WatchSessionView: View {
             }
 
             if let next = screen.next {
-                Text(label(for: next))
+                Text(next.label)
                     .font(.system(size: captionSize, weight: .medium))
                     .foregroundStyle(ColorRole.text.color(colorScheme))
                     .lineLimit(1)
@@ -210,13 +210,6 @@ struct WatchSessionView: View {
             Text("—")
                 .font(.system(size: primarySize, weight: .semibold, design: .rounded))
                 .foregroundStyle(ColorRole.text.color(colorScheme))
-        }
-    }
-
-    private func label(for next: SessionScreen.Next) -> String {
-        switch next {
-        case .exercise(let name): "NEXT · \(name)"
-        case .last: "LAST"
         }
     }
 

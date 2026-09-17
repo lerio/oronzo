@@ -20,6 +20,8 @@ final class SessionController {
 
     private let audio: WorkoutAudio
     private let link = PhoneConnectivity.shared
+    /// The Lock Screen surface, when the system allows one.
+    private let activity = LiveSessionActivity()
     private var engine: ExecutionEngine
     private var ticker: Task<Void, Never>?
     private var lastCountdownSecond: Int?
@@ -88,9 +90,30 @@ final class SessionController {
         refreshClocks()
         startTicking()
 
+        // The Lock Screen surface. Started *before* the first push, so there is an Activity for
+        // that push to update rather than one created empty a moment later.
+        if let content = activityContent() {
+            activity.start(content)
+        }
+
         // The watch gets the whole plan, so it can keep counting and buzzing even if this
         // phone goes quiet. Sent as part of every update — see SessionSnapshot for why.
         pushState(force: true)
+    }
+
+    /// What the Lock Screen needs: the shared model, plus the two facts that make the countdown
+    /// *live* — an absolute end date, or a frozen remainder while paused.
+    ///
+    /// Deliberately current-plus-next only. The interval list belongs to the watch, whose
+    /// transport is a single slot with no size ceiling; this one has a 4 KB limit and would throw.
+    private func activityContent() -> SessionActivityContent? {
+        screen(at: .now).map {
+            SessionActivityContent(
+                screen: $0,
+                intervalEnd: engine.intervalEnd,
+                remainingWhenPaused: engine.remainingWhenPaused
+            )
+        }
     }
 
     /// Called when the view goes away. Safe to call at any point.
@@ -104,6 +127,7 @@ final class SessionController {
         // Unbind, or the next controller to install its own handler silently leaves this
         // dead one still receiving the watch's controls.
         link.onControl = nil
+        activity.end()
         link.send(.sessionEnded)
     }
 
@@ -142,6 +166,9 @@ final class SessionController {
         completed = engine.abandon(at: .now)
         stopTicking()
         audio.stop()
+        // The Lock Screen surface ends here rather than showing `DONE`, which is the watch's —
+        // a Lock Screen is for what is happening now, and a finished workout is not happening.
+        activity.end()
         // The final snapshot **replaces** `.sessionEnded` rather than preceding it. The
         // application context is a single slot — whatever is written last is all that survives
         // — so sending both would leave only the `.sessionEnded` and the watch would never show
@@ -206,6 +233,12 @@ final class SessionController {
                 )
             )
         )
+
+        // The Lock Screen tracks the same state through the same model, so the two cannot say
+        // different things. It only speaks when something moved, which is the dedupe above.
+        if let content = activityContent() {
+            activity.update(content)
+        }
     }
 
     private func handle(_ control: WatchControl) {
@@ -249,6 +282,7 @@ final class SessionController {
                 completed = engine.snapshot(status: .completed)
                 stopTicking()
                 audio.stop()
+                activity.end()
                 // See `finishEarly`: this final snapshot is the terminal state, and sending
                 // `.sessionEnded` after it would erase the only thing the watch has to draw.
                 pushState(force: true)
