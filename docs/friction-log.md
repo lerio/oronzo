@@ -174,3 +174,32 @@ when verification needs a device it must (a) never be implied as done, (b) hand 
 reproduction steps, and (c) name what the *negative* answer would mean for the plan — so a "no" is
 recognised as a result rather than reported as a failure. The plan already writes done-conditions
 this way ("either (a) … or (b) it is not, and the failing step is named"); `implement` should match it.
+
+---
+
+## 2026-09-17 — the pack has no guidance for slices that depend on an unmerged slice
+
+**Run against:** `oronzo-app`, slices S4 and S5.
+
+**The gap.** `implementation-planner` and `implement` both insist on one slice per PR, and the plan
+it produces declares dependencies explicitly — S4 depends on S3, S5 depends on S2. What neither skill
+addresses is what to do when **slice N+1's *code* needs files that only exist on slice N's unmerged
+branch.**
+
+That is not a hypothetical here. S4 could not be written at all without `SessionScreen`, which S3
+introduced; S5 needs the same type. So the honest choices were (a) stack the PRs, (b) branch from
+`main` and duplicate, or (c) merge the earlier slice first. The pack says nothing about any of them,
+so the call was made on the fly — and (c) was chosen only after asking, because it was the user's
+merge decision rather than mine.
+
+**What was chosen, and the cost.** S4 was stacked on S3 with the PR based against the S3 branch.
+Then merging S3 with `--delete-branch` caused GitHub to **close** S4's PR rather than retarget it to
+`main` — a stacked PR whose base branch is deleted is closed, not reparented. S4's work was never
+lost (the branch survived, the commit was cherry-picked onto the new `main` as #11), but it cost a
+round of confusion and a duplicate PR.
+
+**What would resolve it.** `implementation-planner` should say explicitly what to do about a slice
+whose code depends on an earlier unmerged slice — most simply: *merge the dependency before starting
+the dependent slice*, and note that in the plan's dependency column as "must be merged first" rather
+than merely "depends on". Failing that, `implement` should warn that stacking is fragile here,
+because deleting a stacked PR's base branch closes the child instead of reparenting it.

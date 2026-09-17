@@ -54,6 +54,28 @@ final class SessionController {
     var position: Int { engine.currentIndex + 1 }
     var totalCount: Int { engine.intervals.count }
 
+    /// The shared presentation model.
+    ///
+    /// The phone and the watch both draw from `SessionPresentation`, so they cannot disagree
+    /// about what the state word is, when rest promotes what's next, or when `LAST` appears.
+    /// Those rules are tested once, in `OronzoCore`, rather than implemented twice and left to
+    /// drift — which is the whole reason the model lives there.
+    ///
+    /// Note the index: `position` above is 1-based because it is read by a person ("2 of 12"),
+    /// while the model wants the engine's 0-based index.
+    func screen(at now: Date) -> SessionScreen? {
+        SessionPresentation.screen(
+            intervals: engine.intervals,
+            index: engine.currentIndex,
+            end: engine.intervalEnd,
+            isPaused: isPaused,
+            isFinished: isFinished,
+            planName: planName,
+            startedAt: engine.startedAt,
+            now: now
+        )
+    }
+
     // MARK: - Lifecycle
 
     func start() {
