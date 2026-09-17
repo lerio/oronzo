@@ -17,6 +17,11 @@ final class WatchLink: NSObject {
 
     private(set) var intervals: [Interval] = []
     private(set) var state: SessionState?
+    /// Retained for the `DONE` screen, which names the session that just finished. The snapshot
+    /// has always carried it; the watch simply used to drop it on the floor.
+    private(set) var planName: String?
+    /// Likewise retained for `DONE`, which reports how long the session ran.
+    private(set) var startedAt: Date?
 
     private var session: WCSession?
     private var haptics: Task<Void, Never>?
@@ -225,6 +230,8 @@ extension WatchLink: WCSessionDelegate {
             // watch has seen or the hundredth.
             intervals = snapshot.intervals
             state = snapshot.state
+            planName = snapshot.planName
+            startedAt = snapshot.startedAt
             lastAnnouncedIndex = nil
             startHaptics()
 
@@ -233,6 +240,8 @@ extension WatchLink: WCSessionDelegate {
             stopHaptics()
             intervals = []
             state = nil
+            planName = nil
+            startedAt = nil
             lastAnnouncedIndex = nil
         }
     }
