@@ -94,7 +94,7 @@ struct SessionRunner: View {
             }
 
             if let next = screen.next {
-                Text(label(for: next))
+                Text(next.label)
                     // `label`, not `caption`. The type-role table names the next-up line as
                     // caption-sized, but §4's distance rule is the stricter constraint and it
                     // says nothing essential may sit below `label` — and §2 lists the next-up
@@ -183,13 +183,6 @@ struct SessionRunner: View {
                 .font(.system(size: primarySize, weight: .semibold, design: .rounded))
                 .foregroundStyle(ColorRole.text.color(colorScheme))
                 .padding(.vertical, SpacingStep.snug.points)
-        }
-    }
-
-    private func label(for next: SessionScreen.Next) -> String {
-        switch next {
-        case .exercise(let name): "NEXT · \(name)"
-        case .last: "LAST"
         }
     }
 

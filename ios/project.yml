@@ -42,6 +42,9 @@ targets:
     platform: iOS
     sources:
       - path: Oronzo
+      # One copy of the SwiftUI token mapping, compiled into every surface — see the file's
+      # header. It cannot live in OronzoCore, which has no SwiftUI dependency on purpose.
+      - path: Shared
     dependencies:
       - package: OronzoCore
         product: OronzoCore
@@ -78,6 +81,7 @@ targets:
     platform: iOS
     sources:
       - path: OronzoWidgets
+      - path: Shared
     dependencies:
       - package: OronzoCore
         product: OronzoCore
@@ -93,6 +97,7 @@ targets:
     platform: watchOS
     sources:
       - path: OronzoWatch
+      - path: Shared
     dependencies:
       - package: OronzoCore
         product: OronzoCore

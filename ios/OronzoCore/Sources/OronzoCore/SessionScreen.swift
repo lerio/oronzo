@@ -25,6 +25,27 @@ public struct SessionScreen: Equatable, Sendable {
     public enum Next: Equatable, Sendable {
         case exercise(String)
         case last
+
+        /// The wording of the next-up line.
+        ///
+        /// Defined once because it is now read by three surfaces. It was already written out
+        /// separately in the watch view and the phone runner; the Lock Screen would have made
+        /// three hand-written copies of the same two strings, which is the duplication this
+        /// whole vocabulary exists to prevent.
+        public var label: String {
+            switch self {
+            case .exercise(let name): "NEXT · \(name)"
+            case .last: "LAST"
+            }
+        }
+
+        /// The exercise name, when there is one. `LAST` is a statement, not a name.
+        public var exerciseName: String? {
+            switch self {
+            case .exercise(let name): name
+            case .last: nil
+            }
+        }
     }
 
     public let stateWord: StateWord
