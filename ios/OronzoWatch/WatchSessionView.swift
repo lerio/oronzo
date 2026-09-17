@@ -4,7 +4,7 @@ import SwiftUI
 /// What the watch is for: which exercise or break you are on, and how long is left.
 ///
 /// Every *decision* — what rest promotes, when `LAST` appears, that a rep interval never shows
-/// a time — lives in `OronzoCore.WatchPresentation`, where it is tested on macOS. This file only
+/// a time — lives in `OronzoCore.SessionPresentation`, where it is tested on macOS. This file only
 /// draws the result. That split is what stops the layout quietly disagreeing with the rules,
 /// which is the failure mode a screen this small invites.
 struct WatchSessionView: View {
@@ -87,9 +87,9 @@ struct WatchSessionView: View {
         }
     }
 
-    private func screen(at now: Date) -> WatchScreen? {
+    private func screen(at now: Date) -> SessionScreen? {
         let (index, end) = link.position(at: now)
-        return WatchPresentation.screen(
+        return SessionPresentation.screen(
             intervals: link.intervals,
             index: index,
             end: end,
@@ -101,7 +101,7 @@ struct WatchSessionView: View {
         )
     }
 
-    private func content(_ screen: WatchScreen) -> some View {
+    private func content(_ screen: SessionScreen) -> some View {
         VStack(spacing: SpacingStep.tight.points) {
             info(screen)
             controls
@@ -126,7 +126,7 @@ struct WatchSessionView: View {
     /// context in sequence with no relationship between them. The composed label states the same
     /// thing in the order a person would say it — and, for a rep interval, omits the time rather
     /// than announcing a stale one.
-    private func info(_ screen: WatchScreen) -> some View {
+    private func info(_ screen: SessionScreen) -> some View {
         VStack(spacing: SpacingStep.tight.points) {
             stateWordBadge(screen)
             name(screen)
@@ -159,7 +159,7 @@ struct WatchSessionView: View {
     /// that dies in a bright gym. The state colour goes on the capsule instead, where it costs
     /// no legibility. `accent` and `rest` are required by test to differ in *luminance*, so the
     /// reinforcement still reads as two states when dimmed or in greyscale.
-    private func stateWordBadge(_ screen: WatchScreen) -> some View {
+    private func stateWordBadge(_ screen: SessionScreen) -> some View {
         Text(screen.stateWord.rawValue)
             .font(.system(size: labelSize, weight: .bold))
             .foregroundStyle(ColorRole.text.color(colorScheme))
@@ -172,7 +172,7 @@ struct WatchSessionView: View {
             )
     }
 
-    private func name(_ screen: WatchScreen) -> some View {
+    private func name(_ screen: SessionScreen) -> some View {
         Text(screen.name)
             .font(.system(size: titleSize, weight: .semibold, design: .rounded))
             .foregroundStyle(ColorRole.text.color(colorScheme))
@@ -182,7 +182,7 @@ struct WatchSessionView: View {
     }
 
     @ViewBuilder
-    private func primary(_ screen: WatchScreen) -> some View {
+    private func primary(_ screen: SessionScreen) -> some View {
         switch screen.primary {
         case .clock(let remaining):
             Text(MeasurementFormat.clock(remaining: remaining))
@@ -212,7 +212,7 @@ struct WatchSessionView: View {
         }
     }
 
-    private func label(for next: WatchScreen.Next) -> String {
+    private func label(for next: SessionScreen.Next) -> String {
         switch next {
         case .exercise(let name): "NEXT · \(name)"
         case .last: "LAST"

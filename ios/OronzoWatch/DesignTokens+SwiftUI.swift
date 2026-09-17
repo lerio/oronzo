@@ -30,7 +30,7 @@ extension ColorRole {
     /// "resting", and it is always drawn in `text` so it survives a bright gym. Colour here is
     /// the redundant second signal, which is why `accent` and `rest` are required to differ in
     /// luminance — see `DesignTokenTests`.
-    static func reinforcement(for stateWord: WatchScreen.StateWord) -> ColorRole {
+    static func reinforcement(for stateWord: SessionScreen.StateWord) -> ColorRole {
         switch stateWord {
         case .work, .paused: .accent
         case .rest: .rest

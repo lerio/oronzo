@@ -6,7 +6,7 @@ import Foundation
 /// as a parameter: **extract the decision, inject the effect.** The rules most likely to be got
 /// wrong — what rest promotes, when `LAST` appears, that a rep interval never shows a time —
 /// are then proved on macOS instead of being eyeballed on a wrist.
-public struct WatchScreen: Equatable, Sendable {
+public struct SessionScreen: Equatable, Sendable {
 
     /// The colour-independent signal that both the glance metrics depend on. Never omitted.
     public enum StateWord: String, Sendable {
@@ -40,7 +40,7 @@ public struct WatchScreen: Equatable, Sendable {
     public let accessibilityAnnouncement: String
 }
 
-public enum WatchPresentation {
+public enum SessionPresentation {
 
     /// The whole screen, from the state the phone last sent.
     ///
@@ -55,7 +55,7 @@ public enum WatchPresentation {
         planName: String?,
         startedAt: Date?,
         now: Date
-    ) -> WatchScreen? {
+    ) -> SessionScreen? {
         guard intervals.indices.contains(index) else { return nil }
         let interval = intervals[index]
         let upcoming = intervals.indices.contains(index + 1) ? intervals[index + 1] : nil
@@ -64,7 +64,7 @@ public enum WatchPresentation {
 
         // Finished and paused outrank the underlying kind: the question the word exists to
         // answer is "am I working or resting", and paused is neither.
-        let stateWord: WatchScreen.StateWord
+        let stateWord: SessionScreen.StateWord
         if isFinished {
             stateWord = .done
         } else if isPaused {
@@ -96,7 +96,7 @@ public enum WatchPresentation {
             interval.name
         }
 
-        let nextLine: WatchScreen.Next? = if isFinished || promotesNext {
+        let nextLine: SessionScreen.Next? = if isFinished || promotesNext {
             nil
         } else {
             upcoming.map { .exercise($0.name) } ?? .last
@@ -104,7 +104,7 @@ public enum WatchPresentation {
 
         // MARK: Primary
 
-        let primary: WatchScreen.Primary?
+        let primary: SessionScreen.Primary?
         if isFinished {
             primary = .elapsed(max(0, now.timeIntervalSince(startedAt ?? now)))
         } else if let end {
@@ -118,7 +118,7 @@ public enum WatchPresentation {
             primary = nil
         }
 
-        return WatchScreen(
+        return SessionScreen(
             stateWord: stateWord,
             name: name,
             primary: primary,
@@ -148,11 +148,11 @@ public enum WatchPresentation {
     }
 
     private static func announcement(
-        stateWord: WatchScreen.StateWord,
+        stateWord: SessionScreen.StateWord,
         name: String,
-        primary: WatchScreen.Primary?,
+        primary: SessionScreen.Primary?,
         progress: String?,
-        next: WatchScreen.Next?
+        next: SessionScreen.Next?
     ) -> String {
         var parts = [spoken(stateWord), name]
         if let primary { parts.append(spoken(primary)) }
@@ -161,7 +161,7 @@ public enum WatchPresentation {
         return parts.joined(separator: ". ") + "."
     }
 
-    private static func spoken(_ stateWord: WatchScreen.StateWord) -> String {
+    private static func spoken(_ stateWord: SessionScreen.StateWord) -> String {
         switch stateWord {
         case .work: "Working"
         case .rest: "Resting"
@@ -170,7 +170,7 @@ public enum WatchPresentation {
         }
     }
 
-    private static func spoken(_ primary: WatchScreen.Primary) -> String {
+    private static func spoken(_ primary: SessionScreen.Primary) -> String {
         switch primary {
         case .clock(let remaining): "\(spokenDuration(remaining)) remaining"
         case .reps(let reps): "\(reps) reps"
@@ -178,7 +178,7 @@ public enum WatchPresentation {
         }
     }
 
-    private static func spoken(_ next: WatchScreen.Next) -> String {
+    private static func spoken(_ next: SessionScreen.Next) -> String {
         switch next {
         case .exercise(let name): "Next: \(name)"
         case .last: "Next: Last interval"
