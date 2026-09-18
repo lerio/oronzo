@@ -161,17 +161,24 @@ final class WatchLink: NSObject {
     /// The whole vocabulary rests on *count* rather than on different textures: `stop` and `start`
     /// are the same tap, played once or twice. That is deliberate — a tap you have felt a thousand
     /// times is recognisable immediately, and a second distinct texture would have to be learned.
+    ///
+    /// The texture is `.directionUp` rather than `.notification`, and that was calibrated on a
+    /// wrist rather than chosen: `.notification` is Apple's *assertive* tap, and on a real workout
+    /// it read as an alarm. A cue that tells you you may rest should feel like a nudge. The gap
+    /// between the two taps went to 220ms for the same reason — at 180ms they blurred into one
+    /// longer buzz, which loses the entire distinction the vocabulary is built on.
     private func play(_ cue: HapticCue) {
         switch cue {
         case .stop:
-            WKInterfaceDevice.current().play(.notification)
+            WKInterfaceDevice.current().play(.directionUp)
 
         case .start:
-            WKInterfaceDevice.current().play(.notification)
+            WKInterfaceDevice.current().play(.directionUp)
             Task { @MainActor in
-                // Long enough to read as two taps, short enough to feel like one idea.
-                try? await Task.sleep(for: .milliseconds(180))
-                WKInterfaceDevice.current().play(.notification)
+                // Long enough to read as two taps, short enough to feel like one idea. Tuned
+                // against a wrist: at 180ms they blurred together.
+                try? await Task.sleep(for: .milliseconds(220))
+                WKInterfaceDevice.current().play(.directionUp)
             }
 
         case .finished:
