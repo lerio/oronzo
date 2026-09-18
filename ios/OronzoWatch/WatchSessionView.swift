@@ -44,16 +44,19 @@ struct WatchSessionView: View {
         // Coming back from a wrist-drop suspension is a *resume*, not a re-activation, so
         // nothing else would tell the watch the phone had started something. See
         // `refreshFromContext`.
+        //
+        // It is also the one moment watchOS will grant an extended runtime session, so the
+        // runtime is re-asserted here: a restart refused in the background succeeds now, and
+        // without it a session lost mid-workout never comes back.
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { link.refreshFromContext() }
+            if phase == .active {
+                link.refreshFromContext()
+                runtime.setRunning(!link.intervals.isEmpty)
+            }
         }
         // Only keep the app alive when there is something to keep it alive for.
         .onChange(of: link.intervals.isEmpty) { _, isEmpty in
-            if isEmpty {
-                runtime.stop()
-            } else {
-                runtime.start()
-            }
+            runtime.setRunning(!isEmpty)
         }
     }
 
