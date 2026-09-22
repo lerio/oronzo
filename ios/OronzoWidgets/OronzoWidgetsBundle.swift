@@ -26,8 +26,10 @@ struct SessionLiveActivity: Widget {
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    StateWord(state: context.state, scheme: .dark)
-                        .padding(.leading, 4)
+                    if context.state.stateWordValue.showsBadge {
+                        StateWord(state: context.state, scheme: .dark)
+                            .padding(.leading, 4)
+                    }
                 }
                 DynamicIslandExpandedRegion(.trailing) {
                     Primary(state: context.state, scheme: .dark, size: TypeScale.size(.title, on: .phone))
@@ -40,13 +42,16 @@ struct SessionLiveActivity: Widget {
                         .lineLimit(1)
                 }
             } compactLeading: {
-                Text(context.state.stateWord)
+                // `compactLabel`, not the state word: these two presentations have room for one
+                // string, so dropping `WORK`/`REST` without putting something in its place would
+                // leave this slot empty and `minimal` — which is only the word — entirely blank.
+                Text(context.state.compactLabel)
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(ColorRole.text.color(.dark))
             } compactTrailing: {
                 Primary(state: context.state, scheme: .dark, size: TypeScale.size(.caption, on: .phone))
             } minimal: {
-                Text(context.state.stateWord)
+                Text(context.state.compactLabel)
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(ColorRole.text.color(.dark))
             }
@@ -65,7 +70,11 @@ private struct LockScreenSession: View {
     var body: some View {
         VStack(alignment: .leading, spacing: SpacingStep.tight.points) {
             HStack(alignment: .firstTextBaseline, spacing: SpacingStep.snug.points) {
-                StateWord(state: state, scheme: .dark)
+                // Only the states the exercise name cannot say; the name gets its own line just
+                // below, so `WORK`/`REST` here would only restate it.
+                if state.stateWordValue.showsBadge {
+                    StateWord(state: state, scheme: .dark)
+                }
                 Spacer(minLength: SpacingStep.snug.points)
                 Primary(state: state, scheme: .dark, size: TypeScale.size(.title, on: .phone))
             }
@@ -94,6 +103,26 @@ private struct LockScreenSession: View {
     }
 }
 
+private extension SessionActivityContent {
+
+    /// The wire form is a `String`, because the payload crosses into a widget extension. Parsing
+    /// it back is how this surface reads the same `showsBadge` rule as the phone and the watch
+    /// rather than restating it — the fallback is `work`, which is what an older build's payload
+    /// means by default.
+    var stateWordValue: SessionScreen.StateWord {
+        SessionScreen.StateWord(rawValue: stateWord) ?? .work
+    }
+
+    /// The one string the compact and minimal presentations have room for.
+    ///
+    /// Both showed only the state word, so removing `WORK`/`REST` would leave the Dynamic Island's
+    /// leading slot empty and `minimal` — which is nothing but the word — entirely blank. The
+    /// exercise name answers the same question, and there is always one.
+    var compactLabel: String {
+        stateWordValue.showsBadge ? stateWord : name
+    }
+}
+
 /// The state word, built from `SessionScreen.StateWord` so all three surfaces spell it the same.
 private struct StateWord: View {
 
@@ -101,7 +130,7 @@ private struct StateWord: View {
     let scheme: ColorScheme
 
     private var word: SessionScreen.StateWord {
-        SessionScreen.StateWord(rawValue: state.stateWord) ?? .work
+        state.stateWordValue
     }
 
     var body: some View {
@@ -140,8 +169,15 @@ private struct Primary: View {
                 // crash inside a widget extension is about as visible as a silent failure.
                 Text(timerInterval: Date()...end, countsDown: true)
             } else if let reps = state.reps {
-                // A rep interval has no length, so it shows its target and never a time.
-                Text("\(reps) reps")
+                // A rep interval has no length, so it shows its target and never a time. The unit
+                // is a suffix rather than a word, as on the two runners.
+                //
+                // One size here, where the runners draw the `x` smaller than the number. This
+                // view is used at 34pt on the Lock Screen and 15pt in the compact Dynamic Island,
+                // and a glyph sized as a fraction of a number that swings across that range is
+                // illegible at the bottom of it. The runners have a 48–96pt figure, where an
+                // equal-sized unit would dominate it; at 34pt and below it does not.
+                Text("\(reps)x")
             } else {
                 Text("—")
             }

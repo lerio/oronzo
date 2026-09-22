@@ -52,6 +52,18 @@ final class PlanStore {
     }
 }
 
+#if DEBUG
+extension PlanStore {
+    /// A store holding only exercise names, for the launch-argument entry points that bypass
+    /// the backend. Lives here because `exerciseNames` is `private(set)`.
+    static func seeded(_ exerciseNames: [UUID: String]) -> PlanStore {
+        let store = PlanStore()
+        store.exerciseNames = exerciseNames
+        return store
+    }
+}
+#endif
+
 // MARK: - Disk cache
 
 /// A JSON file in Application Support. Deliberately dumb: the whole point is that the last

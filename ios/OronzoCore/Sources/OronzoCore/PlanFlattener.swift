@@ -30,6 +30,26 @@ public enum PlanFlattener {
 
     public static let restLabel = "Break"
 
+    /// What to call a step.
+    ///
+    /// Public because the plan summary on the phone lists steps straight off the `Plan`, and a
+    /// name resolved a second way there would be a second answer: the summary would say one
+    /// thing and the workout that follows it another. Today `label` is `null` on every step the
+    /// builder writes (`docs/known-issues.md` §1 — no input sets it), so the exercise table is
+    /// the branch that actually runs.
+    ///
+    /// The placeholder is deliberate: an exercise deleted out from under a plan should still let
+    /// the workout run.
+    public static func name(for step: PlanStep, exerciseNames: [UUID: String] = [:]) -> String {
+        if let label = step.label {
+            return label
+        }
+        if let id = step.exerciseID, let known = exerciseNames[id] {
+            return known
+        }
+        return "Exercise"
+    }
+
     public static func flatten(_ plan: Plan, exerciseNames: [UUID: String] = [:]) -> [Interval] {
         var intervals: [Interval] = []
 
@@ -96,16 +116,7 @@ public enum PlanFlattener {
         block: PlanBlock,
         exerciseNames: [UUID: String]
     ) -> Interval {
-        let name: String
-        if let label = step.label {
-            name = label
-        } else if let id = step.exerciseID, let known = exerciseNames[id] {
-            name = known
-        } else {
-            // A placeholder rather than a crash: an exercise deleted out from under a plan
-            // should still let the workout run.
-            name = "Exercise"
-        }
+        let name = name(for: step, exerciseNames: exerciseNames)
 
         return Interval(
             index: index,

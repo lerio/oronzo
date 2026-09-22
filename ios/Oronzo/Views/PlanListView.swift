@@ -80,15 +80,9 @@ private struct PlanRowView: View {
         .padding(.vertical, 2)
     }
 
+    /// Defined once, in `OronzoCore`, and shared with the plan summary — a row that disagreed
+    /// with the screen it opens would be worse than either one being slightly wrong.
     private var summary: String {
-        let blocks = plan.blocks.count
-        let seconds = intervals.compactMap(\.duration).reduce(0, +)
-        var parts = ["\(blocks) block\(blocks == 1 ? "" : "s")",
-                     "\(intervals.count) interval\(intervals.count == 1 ? "" : "s")"]
-        if seconds > 0 {
-            let minutes = Int((seconds / 60).rounded())
-            parts.append(minutes > 0 ? "~\(minutes) min timed" : "~\(Int(seconds))s timed")
-        }
-        return parts.joined(separator: " · ")
+        PlanSummary(plan: plan, intervals: intervals).metaLine
     }
 }

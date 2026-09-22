@@ -3,7 +3,7 @@ import SwiftUI
 
 /// What the watch is for: which exercise or break you are on, and how long is left.
 ///
-/// Every *decision* — what rest promotes, when `LAST` appears, that a rep interval never shows
+/// Every *decision* — what the next line says, when `LAST` appears, that a rep interval never shows
 /// a time — lives in `OronzoCore.SessionPresentation`, where it is tested on macOS. This file only
 /// draws the result. That split is what stops the layout quietly disagreeing with the rules,
 /// which is the failure mode a screen this small invites.
@@ -108,7 +108,6 @@ struct WatchSessionView: View {
     private func content(_ screen: SessionScreen) -> some View {
         VStack(spacing: SpacingStep.tight.points) {
             info(screen)
-            controls
 
             // Only ever set when watchOS ended the runtime session itself. Without this
             // the workout just stops advancing and nothing says why.
@@ -124,17 +123,36 @@ struct WatchSessionView: View {
         .padding(.horizontal, SpacingStep.tight.points)
     }
 
-    /// The information block, as **one** accessibility element.
+    /// The information block. **Prev and next flank the primary**, and the primary is the pause
+    /// control — there is no controls row underneath any more, which is the vertical space a
+    /// 41 mm screen notices most.
     ///
-    /// Read as separate elements, VoiceOver would announce a state word, a name, a number and a
-    /// context in sequence with no relationship between them. The composed label states the same
-    /// thing in the order a person would say it — and, for a rep interval, omits the time rather
-    /// than announcing a stale one.
+    /// The text around the row is hidden from VoiceOver rather than re-announced: the composed
+    /// label on the primary already states the same things in the order a person would say them,
+    /// so leaving the pieces focusable would read all of it twice. Read as separate elements with
+    /// no label at all, VoiceOver would announce a state word, a name, a number and a context in
+    /// sequence with no relationship between them — which is what the composed form exists to fix.
     private func info(_ screen: SessionScreen) -> some View {
         VStack(spacing: SpacingStep.tight.points) {
-            stateWordBadge(screen)
-            name(screen)
-            primary(screen)
+            // Only the states the exercise name cannot say get a badge; see `showsBadge`. On a
+            // 41 mm screen the line it frees goes to the name and the clock.
+            if screen.stateWord.showsBadge {
+                stateWordBadge(screen).accessibilityHidden(true)
+            }
+            name(screen).accessibilityHidden(true)
+
+            primaryRow(screen)
+
+            // The target load, under the primary and outside the row above, so it does not blink
+            // with the timer. Always present — a rest and an unweighted exercise have none, and
+            // the line coming and going would move the clock, which is the shifting this screen
+            // has spent a pass removing. A space rather than an empty string, because `Text("")`
+            // reserves less than a line of real text.
+            Text(screen.weight ?? " ")
+                .font(.system(size: labelSize, weight: .medium))
+                .foregroundStyle(ColorRole.muted.color(colorScheme))
+                .lineLimit(1, reservesSpace: true)
+                .accessibilityHidden(true)
 
             if let context = screen.context {
                 Text(context)
@@ -142,6 +160,7 @@ struct WatchSessionView: View {
                     .foregroundStyle(ColorRole.muted.color(colorScheme))
                     .textCase(.uppercase)
                     .lineLimit(1)
+                    .accessibilityHidden(true)
             }
 
             if let next = screen.next {
@@ -150,19 +169,72 @@ struct WatchSessionView: View {
                     .foregroundStyle(ColorRole.text.color(colorScheme))
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
+                    .accessibilityHidden(true)
             }
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(screen.accessibilityAnnouncement)
+    }
+
+    /// The primary, with the step controls either side of it.
+    ///
+    /// The clock is given `maxWidth: .infinity` and allowed to shrink, so the buttons keep their
+    /// size and position as the primary grows to `62:30` or narrows to `8`. Sizing them by what
+    /// the clock happens to say would move them under the thumb between intervals.
+    private func primaryRow(_ screen: SessionScreen) -> some View {
+        HStack(spacing: SpacingStep.snug.points) {
+            stepControl("backward.fill", label: "Previous") { link.send(.previous) }
+
+            primaryControl(screen)
+                .frame(maxWidth: .infinity)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+
+            stepControl("forward.fill", label: "Next") { link.send(.next) }
+        }
+    }
+
+    /// The primary, and the pause control when pausing means anything.
+    ///
+    /// Whether it is tappable is the model's decision, not this view's — see
+    /// `SessionScreen.allowsPause`. A rep set has no clock to stop, so it is inert there. It stays
+    /// live while the session is already paused, which keeps a session that was paused on a rest
+    /// and then stepped onto a rep set recoverable; that is the job the old pause button did.
+    ///
+    /// The blink carries the paused state, so this is where it is applied. It gets its own
+    /// `TimelineView` rather than borrowing the one around the whole screen: that one is there to
+    /// move the countdown, and coupling a second, slower rhythm to it would make both harder to
+    /// reason about — and the two would drift whenever either rate changed.
+    private func primaryControl(_ screen: SessionScreen) -> some View {
+        TimelineView(.periodic(from: .now, by: PausedTimerBlink.sampleInterval)) { context in
+            let content = primary(screen)
+
+            // Both branches carry the composed label: it belongs on the thing you are looking at,
+            // whether or not that thing is also a button.
+            Group {
+                if screen.allowsPause {
+                    Button { link.send(.togglePause) } label: { content }
+                        .buttonStyle(.plain)
+                        .accessibilityHint(isPaused ? "Double tap to resume" : "Double tap to pause")
+                } else {
+                    content
+                }
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(screen.accessibilityAnnouncement)
+            .opacity(PausedTimerBlink.opacity(isPaused: isPaused, at: context.date))
+        }
     }
 
     /// The state word carries the meaning; the colour only reinforces it.
     ///
-    /// The word is drawn in `text` — maximum contrast — because it is the colour-independent
-    /// signal both glance metrics depend on, and nothing essential is allowed to be a mid-tone
-    /// that dies in a bright gym. The state colour goes on the capsule instead, where it costs
-    /// no legibility. `accent` and `rest` are required by test to differ in *luminance*, so the
-    /// reinforcement still reads as two states when dimmed or in greyscale.
+    /// It appears only for the states the exercise name cannot express — `PAUSED` and `DONE`.
+    /// The word is drawn in `text` — maximum contrast — because nothing essential is allowed to be
+    /// a mid-tone that dies in a bright gym, and the state colour goes on the capsule instead,
+    /// where it costs no legibility.
+    ///
+    /// It is kept for those two rather than dropped outright because they are the moments a glance
+    /// is least reliable: the clock has stopped, and the countdown alone cannot say whether that is
+    /// a rest, a pause, or the end. This is also the element that replaced signalling rest by
+    /// *dimming the clock* — colour-only, and nothing to a colour-blind user or a dimmed screen.
     private func stateWordBadge(_ screen: SessionScreen) -> some View {
         Text(screen.stateWord.rawValue)
             .font(.system(size: labelSize, weight: .bold))
@@ -176,13 +248,19 @@ struct WatchSessionView: View {
             )
     }
 
+    /// The name, always two rows tall whatever it needs.
+    ///
+    /// A one-line name and a two-line name must be the same interval to everything below them —
+    /// the clock, the context and the next-up line all sit on a fixed line rather than stepping
+    /// up and down as the session advances. On a 41 mm screen the alternative is a clock that
+    /// moves between every interval, which is the one thing a glance cannot absorb.
     private func name(_ screen: SessionScreen) -> some View {
         Text(screen.name)
             .font(.system(size: titleSize, weight: .semibold, design: .rounded))
             .foregroundStyle(ColorRole.text.color(colorScheme))
             .multilineTextAlignment(.center)
             .minimumScaleFactor(0.55)
-            .lineLimit(2)
+            .lineLimit(2, reservesSpace: true)
     }
 
     @ViewBuilder
@@ -194,12 +272,15 @@ struct WatchSessionView: View {
                 .foregroundStyle(ColorRole.text.color(colorScheme))
 
         case .reps(let reps):
-            VStack(spacing: -2) {
+            // The unit rides beside the target instead of under it, freeing the line the name
+            // needed more. `title` rather than `caption`: beside a figure this size a caption-
+            // sized `x` reads as a footnote rather than as the unit.
+            HStack(alignment: .firstTextBaseline, spacing: 1) {
                 Text("\(reps)")
                     .font(.system(size: primarySize, weight: .semibold, design: .rounded).monospacedDigit())
                     .foregroundStyle(ColorRole.text.color(colorScheme))
-                Text("reps")
-                    .font(.system(size: captionSize))
+                Text("x")
+                    .font(.system(size: titleSize, weight: .semibold))
                     .foregroundStyle(ColorRole.muted.color(colorScheme))
             }
 
@@ -218,46 +299,30 @@ struct WatchSessionView: View {
 
     // MARK: - Controls
 
-    /// Hand-rolled rather than `.bordered`: the system style makes buttons wide enough that
-    /// three of them run off both edges of the screen.
-    private var controls: some View {
-        HStack(spacing: 7) {
-            controlButton("backward.fill", label: "Previous") { link.send(.previous) }
-            controlButton(
-                isPaused ? "play.fill" : "pause.fill",
-                label: isPaused ? "Resume" : "Pause",
-                prominent: true
-            ) { link.send(.togglePause) }
-            controlButton("forward.fill", label: "Next") { link.send(.next) }
-        }
-    }
-
-    private func controlButton(
+    /// Hand-rolled rather than `.bordered`: the system style makes buttons wide enough that they
+    /// run off both edges of the screen.
+    ///
+    /// Shrunk from the size these were when they sat in a row of three. They now share a line
+    /// with a 48pt clock, and on a 41 mm screen that is the whole width — the glyph is what is
+    /// aimed at, and the padding around it is the target.
+    private func stepControl(
         _ symbol: String,
         label: String,
-        prominent: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 15, weight: .semibold))
-                // A filled button, as on the phone: `.plain` overrides the tint, so the
-                // glyph colour has to be set explicitly rather than inherited.
-                .foregroundStyle(prominent ? AnyShapeStyle(.white) : AnyShapeStyle(ColorRole.muted.color(colorScheme)))
-                .frame(width: 38, height: 34)
-                .background(
-                    // The shared `accent` role rather than `Color.accentColor`. The system
-                    // accent never resolved on this target — the watch has no asset catalogue
-                    // declaring one — so it used to render as a plain fill. The vocabulary
-                    // fixes that without needing an asset.
-                    prominent
-                        ? AnyShapeStyle(ColorRole.accent.color(colorScheme))
-                        : AnyShapeStyle(.quaternary),
-                    in: .rect(cornerRadius: 9)
-                )
+                .font(.system(size: 14, weight: .semibold))
+                // `.plain` overrides the tint, so the glyph colour is set explicitly rather than
+                // inherited, and the shared `muted` role is what makes it subordinate to the
+                // clock beside it. No `accent`: these are navigation, not the action this screen
+                // is for.
+                .foregroundStyle(ColorRole.muted.color(colorScheme))
+                .frame(width: 32, height: 32)
+                .background(.quaternary, in: .rect(cornerRadius: 8))
         }
         .buttonStyle(.plain)
-        // These are icon-only, so without a label VoiceOver announces three anonymous buttons.
+        // Icon-only, so without a label VoiceOver announces anonymous buttons.
         .accessibilityLabel(label)
     }
 

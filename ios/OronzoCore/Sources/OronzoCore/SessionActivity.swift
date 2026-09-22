@@ -15,8 +15,9 @@ import Foundation
 /// left the tests unable to see the type at all, and silently never run.
 public struct SessionActivityContent: Codable, Hashable, Sendable {
 
-    /// `WORK` / `REST` / `PAUSED`. The state word, and the reason the Lock Screen never depends
-    /// on colour to say what is happening.
+    /// `WORK` / `REST` / `PAUSED` / `DONE`, carried as the raw string because the payload has to
+    /// cross into a widget extension. Which of them is actually *drawn* as a word is
+    /// `SessionScreen.StateWord.showsBadge`, so this surface cannot diverge from the Watch.
     public var stateWord: String
     public var name: String
     public var context: String?
@@ -52,7 +53,7 @@ public struct SessionActivityContent: Codable, Hashable, Sendable {
     }
 
     /// Built from the shared model, so the Lock Screen cannot disagree with the watch about the
-    /// state word, what rest promotes, or `LAST`.
+    /// state word, what the next line says, or `LAST`.
     public init(screen: SessionScreen, intervalEnd: Date?, remainingWhenPaused: TimeInterval?) {
         var reps: Int?
         if case .reps(let value) = screen.primary { reps = value }

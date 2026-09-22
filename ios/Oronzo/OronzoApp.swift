@@ -27,10 +27,15 @@ private struct RootView: View {
     var body: some View {
         Group {
             #if DEBUG
-            // `-demoSession` goes straight to the runner, so it can be looked at without an
-            // account or a backend. See DemoPlan.
+            // `-demoSession` goes straight to the runner, and `-demoSummary` to the plan
+            // summary, so both can be looked at without an account or a backend. See DemoPlan.
             if let demo = DemoPlan.launchArgumentPlan {
                 SessionRunner(plan: demo, exerciseNames: [:])
+            } else if DemoPlan.wantsSummary {
+                NavigationStack {
+                    PlanDetailView(plan: DemoPlan.builderShaped())
+                }
+                .environment(PlanStore.seeded(DemoPlan.builderExerciseNames))
             } else {
                 content
             }

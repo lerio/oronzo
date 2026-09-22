@@ -6,7 +6,7 @@ import XCTest
 /// The *decisions* live in `OronzoCore` as a pure function so they can be proved on macOS,
 /// leaving the view to do nothing but render. That is the same split the engine already uses:
 /// extract the decision, inject the effect. It means the rules most likely to be got wrong —
-/// what rest promotes, when `LAST` appears, that a rep interval never shows a time — are
+/// what the next line says, when `LAST` appears, that a rep interval never shows a time — are
 /// tested rather than eyeballed on a wrist.
 ///
 /// What these tests cannot cover: whether it is *readable*. Metrics 1 and 4 are judged by a
@@ -95,31 +95,54 @@ final class SessionScreenTests: XCTestCase {
         ))
     }
 
-    // MARK: - The rest promotion (the design's one non-obvious decision)
+    // MARK: - Each slot means what it says
 
-    /// During rest the name slot shows **the next exercise**, because "Break" tells you what you
-    /// already know and what you actually want mid-rest is what you are resting *toward*.
-    func testRestPromotesTheNextExerciseIntoTheNameSlot() {
-        let intervals = mixedIntervals()
+    /// A rest names itself, and the next line carries the exercise.
+    ///
+    /// The name slot used to *promote* the upcoming exercise during rest, on the reasoning that
+    /// "Break" tells you what you already know. Removing the `REST` badge retired that reasoning:
+    /// with the promotion in place a rest screen showed the **next** exercise's name and nothing
+    /// anywhere said you were resting. Naming the rest puts a real word back on that screen, and
+    /// it costs the next line nothing.
+    func testARestNamesItselfAndTheNextLineCarriesTheExercise() {
         let screen = SessionPresentation.screen(
-            intervals: intervals, index: 1,          // the rest after "Row"
+            intervals: mixedIntervals(), index: 1,          // the rest after "Row"
             end: t0.addingTimeInterval(30), isPaused: false, isFinished: false,
             planName: "P", startedAt: t0, now: t0
         )
 
-        XCTAssertEqual(screen?.name, "Bench Press", "rest must promote what is next")
+        XCTAssertEqual(screen?.name, "Break", "the rest says what it is")
+        XCTAssertEqual(screen?.next, .exercise("Bench Press"), "and next says what it is for")
     }
 
-    /// And because the name slot now carries it, the next line is suppressed rather than
-    /// repeating the same word twice.
-    func testRestSuppressesTheNextLineBecauseTheNameSlotCarriesIt() {
+    /// The next line is present on **every** running screen, rest included.
+    ///
+    /// The promotion forced it away: it was suppressed while resting to stop it repeating the
+    /// promoted name, so the line vanished and the layout changed shape at exactly the moment you
+    /// started resting.
+    func testTheNextLineIsPresentOnARestScreenToo() {
         let screen = SessionPresentation.screen(
             intervals: mixedIntervals(), index: 1,
             end: t0.addingTimeInterval(30), isPaused: false, isFinished: false,
             planName: "P", startedAt: t0, now: t0
         )
 
-        XCTAssertNil(screen?.next)
+        XCTAssertNotNil(screen?.next, "a rest screen keeps its next line")
+    }
+
+    /// A rest is announced with the same word and the same order as it is drawn: what this is,
+    /// how long is left, then what it is for. Nothing is said twice, and nothing is dropped.
+    func testARestIsAnnouncedInTheOrderItIsDrawn() {
+        let screen = SessionPresentation.screen(
+            intervals: mixedIntervals(), index: 1,
+            end: t0.addingTimeInterval(30), isPaused: false, isFinished: false,
+            planName: "P", startedAt: t0, now: t0
+        )
+
+        XCTAssertEqual(
+            screen?.accessibilityAnnouncement,
+            "Resting. Break. 30 seconds remaining. Next: Bench Press."
+        )
     }
 
     // MARK: - The next line
@@ -148,10 +171,11 @@ final class SessionScreenTests: XCTestCase {
         XCTAssertEqual(screen?.next, .last)
     }
 
-    /// The edge case the promotion rule creates: resting on the very last interval means there
-    /// is nothing to promote, so the name slot keeps the current name — and `LAST` must still
-    /// appear, or the promotion would have silently swallowed the one fact worth having.
-    func testTheFinalRestStillShowsLastBecauseThereIsNothingToPromote() {
+    /// The final interval is a rest whenever the last step carries a `restAfter` — which is every
+    /// step that carries one, since it fires after the final set too. `LAST` must still appear:
+    /// knowing the last interval is the last one is the most motivating fact this screen carries,
+    /// and a blank slot would swallow it.
+    func testTheFinalRestStillShowsLast() {
         let plan = Plan(name: "P", blocks: [
             PlanBlock(steps: [PlanStep(label: "Row", mode: .time, duration: 60, restAfter: 30)]),
         ])
@@ -163,7 +187,7 @@ final class SessionScreenTests: XCTestCase {
         )
 
         XCTAssertEqual(screen?.stateWord, .rest)
-        XCTAssertEqual(screen?.name, "Break", "nothing to promote, so the current name stays")
+        XCTAssertEqual(screen?.name, "Break", "the rest names itself here too")
         XCTAssertEqual(screen?.next, .last, "and the last interval must still be announced")
     }
 
@@ -183,6 +207,190 @@ final class SessionScreenTests: XCTestCase {
         if case .clock = screen?.primary {
             XCTFail("a rep interval has no length, so it must never show a clock")
         }
+    }
+
+    // MARK: - Which states are drawn as a word
+
+    /// `WORK` and `REST` are the ordinary flow of a session and the name slot already says which
+    /// one you are in, so neither is drawn. `PAUSED` is carried by the **blinking timer** instead
+    /// — a badge is a line that appears and pushes the title and the clock down as it does, and
+    /// this screen has just spent a pass getting rid of exactly that movement. `DONE` is the one
+    /// left: the name slot has become the plan name and no clock is running to blink.
+    func testOnlyDoneIsDrawnAsAWord() {
+        XCTAssertFalse(SessionScreen.StateWord.work.showsBadge)
+        XCTAssertFalse(SessionScreen.StateWord.rest.showsBadge)
+        XCTAssertFalse(SessionScreen.StateWord.paused.showsBadge)
+        XCTAssertTrue(SessionScreen.StateWord.done.showsBadge)
+    }
+
+    // MARK: - The target load
+
+    /// A weighted set carries its load, and a rest does not — the weight belongs to the exercise,
+    /// so the interval you rest between two weighted sets of the same exercise has none.
+    func testAWeightedExerciseCarriesItsLoadAndARestDoesNot() {
+        let plan = Plan(name: "P", blocks: [
+            PlanBlock(steps: [
+                PlanStep(label: "Bench Press", mode: .reps, reps: 8,
+                         targetWeightKg: 20, restAfter: 30),
+            ]),
+        ])
+        let intervals = PlanFlattener.flatten(plan)   // [Bench, Break]
+
+        let bench = SessionPresentation.screen(
+            intervals: intervals, index: 0, end: nil,
+            isPaused: false, isFinished: false,
+            planName: "P", startedAt: t0, now: t0
+        )
+        let rest = SessionPresentation.screen(
+            intervals: intervals, index: 1,
+            end: t0.addingTimeInterval(30), isPaused: false, isFinished: false,
+            planName: "P", startedAt: t0, now: t0
+        )
+
+        XCTAssertEqual(bench?.weight, "20 kg")
+        XCTAssertNil(rest?.weight)
+    }
+
+    /// The load is spoken, and in the position it is drawn — straight after the primary and
+    /// before the progress. Both surfaces now hide this text behind the composed label, so a
+    /// weight left out of the announcement would be one VoiceOver could not reach at all.
+    func testTheLoadIsAnnouncedAfterThePrimary() {
+        let plan = Plan(name: "P", blocks: [
+            PlanBlock(steps: [
+                PlanStep(label: "Bench Press", sets: 4, mode: .reps, reps: 8,
+                         targetWeightKg: 20, restAfter: 30),
+            ]),
+        ])
+        let intervals = PlanFlattener.flatten(plan)
+
+        let screen = SessionPresentation.screen(
+            intervals: intervals, index: 0, end: nil,
+            isPaused: false, isFinished: false,
+            planName: "P", startedAt: t0, now: t0
+        )
+
+        XCTAssertEqual(
+            screen?.accessibilityAnnouncement,
+            "Working. Bench Press. 8 reps. 20 kg. Set 1 of 4. Next: Break."
+        )
+    }
+
+    /// An exercise with no target load says nothing about one — no stray unit, no empty slot in
+    /// the sentence.
+    func testAnUnweightedExerciseAnnouncesNoLoad() {
+        let screen = SessionPresentation.screen(
+            intervals: mixedIntervals(), index: 2,          // the rep step, no target weight
+            end: nil, isPaused: false, isFinished: false,
+            planName: "P", startedAt: t0, now: t0
+        )
+
+        XCTAssertNil(screen?.weight)
+        XCTAssertEqual(
+            screen?.accessibilityAnnouncement, "Working. Bench Press. 8 reps. Next: Last interval."
+        )
+    }
+
+    // MARK: - The paused timer's blink
+
+    /// Visible for the first half of each cycle, hidden for the second, so the two surfaces
+    /// cannot blink out of step — they read the same clock, not two copies of a timer.
+    func testTheBlinkIsVisibleForTheFirstHalfOfEachCycleAndHiddenForTheSecond() {
+        let t = Date(timeIntervalSince1970: 1_700_000_000)   // a whole second
+        let half = PausedTimerBlink.period / 2
+
+        XCTAssertTrue(PausedTimerBlink.isVisible(at: t), "start of the cycle")
+        XCTAssertTrue(PausedTimerBlink.isVisible(at: t.addingTimeInterval(half - 0.01)))
+        XCTAssertFalse(PausedTimerBlink.isVisible(at: t.addingTimeInterval(half)), "second half")
+        XCTAssertFalse(PausedTimerBlink.isVisible(at: t.addingTimeInterval(PausedTimerBlink.period - 0.01)))
+        XCTAssertTrue(PausedTimerBlink.isVisible(at: t.addingTimeInterval(PausedTimerBlink.period)), "and it wraps")
+    }
+
+    /// A running session does not blink, whatever the clock says — otherwise the timer would
+    /// disappear for half of every second of the workout.
+    func testARunningSessionIsAlwaysAtFullOpacity() {
+        let t = Date(timeIntervalSince1970: 1_700_000_000)
+        for offset in stride(from: 0.0, through: PausedTimerBlink.period, by: 0.1) {
+            XCTAssertEqual(PausedTimerBlink.opacity(isPaused: false, at: t.addingTimeInterval(offset)), 1)
+        }
+    }
+
+    /// The blink has to be sampled often enough that its halves land on whole frames, or the
+    /// timer jitters instead of blinking.
+    func testTheSampleRateGivesWholeFramesPerHalfCycle() {
+        XCTAssertGreaterThanOrEqual(PausedTimerBlink.period / PausedTimerBlink.sampleInterval, 2)
+    }
+
+    /// The word still reaches VoiceOver in **every** state, the two undrawn ones included.
+    ///
+    /// Speech has no layout to save, and a listener who joins mid-interval has no colour and no
+    /// position to infer the state from. The spoken form is the same content as the screen, in the
+    /// order it reads — the word, the name, the count, then what is next.
+    func testTheSpokenWordSurvivesForTheStatesThatAreNoLongerDrawn() {
+        let screen = SessionPresentation.screen(
+            intervals: mixedIntervals(), index: 1,          // the synthetic rest
+            end: t0.addingTimeInterval(30), isPaused: false, isFinished: false,
+            planName: "P", startedAt: t0, now: t0
+        )
+
+        XCTAssertEqual(screen?.stateWord, .rest, "the model still carries it")
+        XCTAssertEqual(
+            screen?.accessibilityAnnouncement,
+            "Resting. Break. 30 seconds remaining. Next: Bench Press.",
+            "and it is still spoken"
+        )
+    }
+
+    // MARK: - Where a pause control applies
+
+    /// Pause is a statement about a clock, so a rep set — whose `primary` is the rep target and
+    /// whose length is whatever you take — does not offer it. Timed work and rest both do.
+    func testPauseAppliesOnlyWhereThereIsAClock() {
+        let intervals = mixedIntervals()   // [Row 60s, Break 30s, Bench 8 reps]
+
+        func screen(_ index: Int) -> SessionScreen? {
+            SessionPresentation.screen(
+                intervals: intervals, index: index,
+                // A rep interval has no end date at all. An earlier version of this fixture
+                // substituted zero and handed a rep set a clock it never has in a session.
+                end: intervals[index].duration.map { t0.addingTimeInterval($0) },
+                isPaused: false, isFinished: false,
+                planName: "P", startedAt: t0, now: t0
+            )
+        }
+
+        XCTAssertEqual(screen(0)?.allowsPause, true, "timed work has a clock")
+        XCTAssertEqual(screen(1)?.allowsPause, true, "so does rest")
+        XCTAssertEqual(screen(2)?.allowsPause, false, "a rep set has none")
+    }
+
+    /// The case that makes the rule more than a negation of "is this a rep set".
+    ///
+    /// `ExecutionEngine.advance` and `goBack` both run in the paused phase, so a session can be
+    /// paused on a rest and then moved onto a rep set. Refusing the control there would leave it
+    /// paused with nothing on screen able to resume it — the demo cannot reach this state, which
+    /// is exactly why it is pinned here rather than eyeballed.
+    func testARepSetStillAllowsPauseWhenTheSessionIsAlreadyPaused() {
+        let screen = SessionPresentation.screen(
+            intervals: mixedIntervals(), index: 2,          // the rep step
+            end: nil, isPaused: true, isFinished: false,
+            planName: "P", startedAt: t0, now: t0
+        )
+
+        XCTAssertEqual(screen?.stateWord, .paused)
+        XCTAssertEqual(screen?.primary, .reps(8), "still a rep set, not a clock")
+        XCTAssertEqual(screen?.allowsPause, true, "but the way out must stay reachable")
+    }
+
+    /// A finished session has no clock either, so it refuses pause on the same grounds — there
+    /// is nothing left to stop.
+    func testAFinishedSessionRefusesPause() {
+        let screen = SessionPresentation.screen(
+            intervals: mixedIntervals(), index: 2,
+            end: nil, isPaused: false, isFinished: true,
+            planName: "P", startedAt: t0, now: t0
+        )
+
+        XCTAssertEqual(screen?.allowsPause, false)
     }
 
     // MARK: - VoiceOver

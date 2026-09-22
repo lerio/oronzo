@@ -10,7 +10,7 @@ import SwiftUI
 /// large figure, not a uniformly small screen.
 ///
 /// What is shown comes from `SessionPresentation` in `OronzoCore`, the same model the watch
-/// draws from, so the two cannot disagree about the state word, what rest promotes, or `LAST`.
+/// draws from, so the two cannot disagree about the state word, what the next line says, or `LAST`.
 struct SessionRunner: View {
 
     @Environment(\.dismiss) private var dismiss
@@ -80,9 +80,42 @@ struct SessionRunner: View {
     @ViewBuilder
     private var live: some View {
         if let screen = controller.screen(at: .now) {
-            stateWordBadge(screen)
+            // Only the states the exercise name cannot say get a badge — which on this surface
+            // means `PAUSED` alone. A finished session replaces the runner with the summary, so
+            // `DONE` never reaches here.
+            if screen.stateWord.showsBadge {
+                stateWordBadge(screen)
+            }
             intervalName(screen)
-            primary(screen)
+            // The paused state is carried by the timer blinking, not by a badge: a badge is a
+            // line that appears and pushes the title and the clock down as it does, which is the
+            // shifting this screen has just spent a pass getting rid of.
+            //
+            // Its own `TimelineView` because the runner's re-render is driven by the session tick,
+            // and the tick stops when the session is paused — so a paused screen would never
+            // redraw, and the blink would sit at whichever half it happened to be caught in.
+            //
+            // The same construct and the same rule as the watch. A `.repeatForever` opacity
+            // animation was tried first and settles rather than oscillating, leaving the timer
+            // invisible for the whole pause.
+            TimelineView(.periodic(from: .now, by: PausedTimerBlink.sampleInterval)) { context in
+                primary(screen)
+                    .opacity(PausedTimerBlink.opacity(isPaused: controller.isPaused, at: context.date))
+            }
+
+            // The target load sits under the primary, not under the name: the two are one figure
+            // — "8x at 20 kg" — and a weight that names the exercise above the number reads as
+            // part of the title. `label` rather than `caption`, a step up, because a load is a
+            // number you act on rather than chrome you read past.
+            //
+            // Outside the timeline above, so it does not blink with the timer, and always
+            // present: a rest and an unweighted exercise have no weight, and letting the line
+            // come and go moved the clock by the same 33pt a one-row name did. A space rather
+            // than an empty string — `Text("")` reserves 6px less than a line of real text.
+            Text(screen.weight ?? " ")
+                .font(.system(size: labelSize))
+                .foregroundStyle(ColorRole.muted.color(colorScheme))
+                .lineLimit(1, reservesSpace: true)
 
             if let label = screen.context {
                 Text(label)
@@ -113,9 +146,11 @@ struct SessionRunner: View {
 
     /// The state word carries the meaning; the colour only reinforces it.
     ///
-    /// This element did not exist before: rest used to be signalled by *dimming the clock*, which
-    /// is colour-only signalling and gives nothing to a colour-blind user or a dimmed screen. The
-    /// word is drawn in `text` at maximum contrast, and the state colour goes on the stroke.
+    /// It exists for the states the exercise name cannot express, and here that is `PAUSED` —
+    /// where the clock has stopped and nothing else on screen says why. The word is drawn in
+    /// `text` at maximum contrast and the state colour goes on the stroke, so the badge never
+    /// depends on colour to be read: this element replaced signalling rest by *dimming the
+    /// clock*, which is colour-only and gives nothing to a colour-blind user or a dimmed screen.
     private func stateWordBadge(_ screen: SessionScreen) -> some View {
         Text(screen.stateWord.rawValue)
             .font(.system(size: labelSize, weight: .bold))
@@ -138,15 +173,13 @@ struct SessionRunner: View {
                 .foregroundStyle(ColorRole.text.color(colorScheme))
                 .multilineTextAlignment(.center)
                 .minimumScaleFactor(0.6)
-                .lineLimit(2)
-
-            // Phone-only detail: the watch has no room for it, and the shared model carries
-            // only what the two surfaces must agree on.
-            if let weight = controller.current?.weightDisplay, controller.current?.kind == .exercise {
-                Text(weight)
-                    .font(.system(size: captionSize))
-                    .foregroundStyle(ColorRole.muted.color(colorScheme))
-            }
+                // Two rows' height whatever the name needs.
+                //
+                // A one-line name and a two-line name must be the same interval to everything
+                // below them, or the figure underneath moves up and down as the session advances
+                // and has to be re-found each time. This screen is read from a metre away, which
+                // is exactly where a moving target costs the most.
+                .lineLimit(2, reservesSpace: true)
         }
     }
 
@@ -162,12 +195,16 @@ struct SessionRunner: View {
                 .padding(.vertical, SpacingStep.snug.points)
 
         case .reps(let reps):
-            VStack(spacing: 0) {
+            // The unit rides beside the target instead of under it. That row was a full line of
+            // the screen's height, and the line it frees is one the name needed more. `title`
+            // rather than `caption`: at `caption` beside a figure this size the `x` reads as a
+            // footnote rather than as the unit, and the number stops looking like a target.
+            HStack(alignment: .firstTextBaseline, spacing: 2) {
                 Text("\(reps)")
                     .font(.system(size: primarySize, weight: .semibold, design: .rounded).monospacedDigit())
                     .foregroundStyle(ColorRole.text.color(colorScheme))
-                Text("reps")
-                    .font(.system(size: labelSize))
+                Text("x")
+                    .font(.system(size: titleSize, weight: .semibold))
                     .foregroundStyle(ColorRole.muted.color(colorScheme))
             }
             .padding(.vertical, SpacingStep.snug.points)
@@ -204,6 +241,14 @@ struct SessionRunner: View {
         }
     }
 
+    /// Whether a pause control applies, from the shared model so the watch cannot disagree.
+    ///
+    /// Defaults to offering it: a screen that failed to build is no reason to take a control
+    /// away, and `allowsPause` needs a real `SessionScreen` to answer.
+    private var allowsPause: Bool {
+        controller.screen(at: .now)?.allowsPause ?? true
+    }
+
     private var controls: some View {
         HStack(spacing: 28) {
             Button {
@@ -218,28 +263,39 @@ struct SessionRunner: View {
             .disabled(controller.position <= 1)
             .accessibilityLabel("Previous")
 
-            Button {
-                controller.isPaused ? controller.resume() : controller.pause()
-            } label: {
-                Image(systemName: controller.isPaused ? "play.fill" : "pause.fill")
-                    .font(.system(size: 32))
-                    .foregroundStyle(.white)
-                    .frame(width: 84, height: 84)
-                    .background(ColorRole.accent.color(colorScheme), in: .circle)
+            if allowsPause {
+                Button {
+                    controller.isPaused ? controller.resume() : controller.pause()
+                } label: {
+                    Image(systemName: controller.isPaused ? "play.fill" : "pause.fill")
+                        .font(.system(size: 32))
+                        .foregroundStyle(.white)
+                        .frame(width: 84, height: 84)
+                        .background(ColorRole.accent.color(colorScheme), in: .circle)
+                }
+                .accessibilityLabel(controller.isPaused ? "Resume" : "Pause")
+            } else {
+                // The slot is held open rather than closed up. Recentring the two remaining
+                // controls would move them between every interval, and a control that moves is
+                // one you have to look for — on a screen read from a metre away, mid-set.
+                Color.clear.frame(width: 84, height: 84)
             }
-            .accessibilityLabel(controller.isPaused ? "Resume" : "Pause")
 
             Button {
                 controller.advance()
             } label: {
-                // "Done" for a rep set, "skip ahead" for a timed one.
-                Image(systemName: controller.current?.advancesAutomatically == true
-                      ? "forward.fill" : "checkmark")
+                // One glyph for both meanings. The checkmark it used to show on a rep set read as
+                // "confirm what you just saw", which is not what the tap does — it moves you on,
+                // the same as on a timed interval. The meanings differ; the glyph does not have to.
+                Image(systemName: "forward.fill")
                     .font(.system(size: 22, weight: .semibold))
                     .foregroundStyle(ColorRole.accent.color(colorScheme))
                     .frame(width: 60, height: 60)
                     .background(ColorRole.accent.color(colorScheme).opacity(0.14), in: .circle)
             }
+            // The label still carries the distinction the glyph no longer does: on a rep set the
+            // tap finishes *your* set, and saying "skip ahead" there would invite you to think you
+            // were abandoning it.
             .accessibilityLabel(
                 controller.current?.advancesAutomatically == true ? "Skip ahead" : "Done with this set"
             )

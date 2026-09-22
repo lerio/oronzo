@@ -59,7 +59,7 @@ final class SessionController {
     /// The shared presentation model.
     ///
     /// The phone and the watch both draw from `SessionPresentation`, so they cannot disagree
-    /// about what the state word is, when rest promotes what's next, or when `LAST` appears.
+    /// about what the state word is, what the next line says, or when `LAST` appears.
     /// Those rules are tested once, in `OronzoCore`, rather than implemented twice and left to
     /// drift — which is the whole reason the model lives there.
     ///
@@ -69,7 +69,13 @@ final class SessionController {
         SessionPresentation.screen(
             intervals: engine.intervals,
             index: engine.currentIndex,
-            end: engine.intervalEnd,
+            // Paused holds the clock rather than clearing it. `Engine.pause` sets `intervalEnd`
+            // to nil and keeps the remainder in `remainingWhenPaused`, so passing `intervalEnd`
+            // alone drew the **em dash** — the "nothing to count" sign — for the whole pause.
+            // `WatchLink.position` has always turned the remainder back into a date for the
+            // watch; this is the same conversion, and the phone had simply never had it.
+            end: engine.intervalEnd
+                ?? engine.remainingWhenPaused.map { now.addingTimeInterval($0) },
             isPaused: isPaused,
             isFinished: isFinished,
             planName: planName,
