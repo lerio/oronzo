@@ -82,7 +82,7 @@ Full detail in `docs/patterns.md`. The short version:
 ## Commands
 
 ```bash
-cd ios/OronzoCore && swift test      # 56 tests, no simulator or signing — run this first
+cd ios/OronzoCore && swift test      # 132 tests, no simulator or signing — run this first
 cd ios && xcodegen generate          # after editing ios/project.yml or adding files
 cd web && npm run dev                # localhost:5173
 cd web && npm run build              # tsc -b is what catches stale field references
@@ -113,6 +113,23 @@ Each of these cost real time. They are not hypothetical.
   a "start" followed by an "update" leaves only the update. That is why `SessionSnapshot` carries
   the plan *and* the position and is re-sent whole on every change. Do not "optimise" this into
   incremental messages.
+- **The watch can ask, and must be able to.** `WatchControl.requestState` exists because every way
+  a push can go missing is silent — a write that lands before the phone's session activates, a
+  snapshot overwritten by a `sessionEnded` from a runner that is no longer the live one, a resume
+  that is never handed the context it missed. Without the ask, each of those leaves **"No workout"**
+  on the wrist for the rest of the workout, indistinguishable from a phone that never started one.
+  When the phone is the thing that is wrong, the watch asking is the only thing that fixes it.
+  Re-read `docs/integration-contracts.md` before changing either half.
+- **A SwiftUI view's initializer is re-run on every re-render — and what it builds outlives the
+  build.** `SessionRunner` constructs its `SessionController` in `@State(initialValue:)`, and the
+  view presenting it re-evaluates that expression whenever it redraws, so a workout builds fresh
+  controllers repeatedly. Measured on a simulator session: the previous one is **not released
+  until the next build replaces it**, so there is always a discarded controller alive. Anything
+  with a side effect in `SessionController.init` therefore happens to a copy that SwiftUI is about
+  to throw away — binding the watch link from there is what produced a wrist that jumped back to
+  the first exercise and then stopped responding while the phone was untouched. Side effects go in
+  `onAppear`/`start()`, and anything that can *act* must check it is still the live session
+  (`SessionController.pushState`, `PhoneConnectivity.claim`).
 - **Adding a field to `Interval` breaks decoding of snapshots already in flight.** `Interval` is
   `Codable` with no defaults and no version field, and the application context persists across
   launches — so a snapshot written by an older build fails to decode and the watch silently shows

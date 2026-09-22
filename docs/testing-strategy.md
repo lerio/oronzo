@@ -2,7 +2,7 @@
 
 ## Where the tests are
 
-**All 56 tests live in `ios/OronzoCore/Tests/OronzoCoreTests/`.** Nothing else in the repository
+**All 132 tests live in `ios/OronzoCore/Tests/OronzoCoreTests/`.** Nothing else in the repository
 has a single automated test — not the iOS app target, not the watch app, not the web app.
 
 ```bash
@@ -13,7 +13,13 @@ cd ios/OronzoCore && swift test     # ~1 second, no simulator, no signing, no de
 |---|---|---|
 | `PlanFlattenerTests.swift` | 23 | The flattening contract — sets, rounds, both rest mechanisms, naming, formatting |
 | `ExecutionEngineTests.swift` | 25 | The session state machine — start/tick/pause/resume/advance/goBack/finish/abandon/snapshot |
+| `SessionScreenTests.swift` | 29 | The presentation model both screens draw from — state words, `LAST`, what a rep interval shows |
+| `PlanSummaryTests.swift` | 14 | What the plan summary says about a plan, including the spoken meta line |
+| `DesignTokenTests.swift` | 11 | The token scale — every role resolves, on both surfaces |
+| `HapticLanguageTests.swift` | 10 | Which transitions earn a cue, and which stay silent |
 | `WatchProjectionTests.swift` | 8 | Walking the interval list forward from an absolute anchor |
+| `LinkTests.swift` | 7 | The phone↔watch wire format — the control vocabulary, a whole snapshot, and decode tolerance |
+| `SessionActivityTests.swift` | 5 | The Lock Screen surface's content |
 
 This is possible because `OronzoCore` is a **plain SwiftPM package** rather than a folder of shared
 sources inside the app target. That decision is stated in `ios/project.yml`: *"so that it can be
@@ -92,6 +98,27 @@ xcrun simctl launch booted com.lerio.oronzo.watchkitapp -demoSession
 Both are wrapped in `#if DEBUG` and have no entry point in a release build. The demo cannot save
 — with no signed-in session, finishing reports "Auth session missing" and offers a retry. That is
 the failure path working, not a bug.
+
+**The watch link can be exercised between a paired iPhone and Watch simulator**, which is worth
+knowing because it is the only way to watch the protocol move without two devices. Boot the pair,
+install both apps, and attach a console to each:
+
+```bash
+xcrun simctl install <watch-udid>   /tmp/oronzo-dd/Build/Products/Debug-watchsimulator/OronzoWatch.app
+xcrun simctl install <phone-udid>   /tmp/oronzo-dd/Build/Products/Debug-iphonesimulator/Oronzo.app
+xcrun simctl launch --console-pty <phone-udid> com.lerio.oronzo -demoSession
+xcrun simctl launch --console-pty <watch-udid> com.lerio.oronzo.watchkitapp   # no flag: real link
+```
+
+`--console-pty` is what makes `Log.debug` visible; `simctl io <udid> screenshot` is how the result
+is checked. What this **cannot** reproduce is the reason the link fails in the first place: a
+wrist-drop suspension, an out-of-range phone, and the extended runtime session all need hardware.
+Treat it as a way to prove the protocol *works*, never as a way to prove it always will.
+
+Two flaky edges, both worth recognising if a run looks impossible: the watch app can be slow to
+install (minutes, occasionally hanging — kill it and retry), and a `terminate` immediately
+followed by a `launch` can leave the old process on screen, so what you screenshot is not what
+you just started.
 
 For the web app, screenshot it with headless Chrome. Arithmetic alone missed real CSS bugs twice
 on this project — a selector that never matched, and a placeholder clipped in a narrow field.

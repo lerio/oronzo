@@ -145,10 +145,43 @@ screen can be looked at without a paired phone:
 xcrun simctl launch booted com.lerio.oronzo.watchkitapp -demoSession
 ```
 
+`-demoSession` on the watch is **hermetic**: it never activates the link, so a paired phone
+cannot talk it out of the session it seeded. To exercise the real link from the watch's side —
+which otherwise needs a second pair of hands, since a simulator cannot tap the button — press
+Next on a timer instead:
+
+```bash
+xcrun simctl launch booted com.lerio.oronzo.watchkitapp -autoNext 6
+```
+
+It sends exactly what the button sends, so a control that stops reaching the phone, or reaches
+the wrong session, shows up in the phone's log on the next press. Both flags are `#if DEBUG`.
+
 Note that the demo cannot save: with no signed-in session, finishing reports "Auth session
 missing" and offers a retry. That is the failure path working, not a bug.
 
 ## Troubleshooting
+
+### Reading the watch link
+
+It fails silently, so the log lines *are* the diagnosis. Both apps print with `Log.debug`, which
+compiles out of release builds — check you are running a Debug build before concluding there is
+nothing to see.
+
+**Phone** (`xcrun simctl launch --console-pty <phone> com.lerio.oronzo -demoSession`, or the Xcode
+console):
+
+| Line | What it settles |
+|---|---|
+| `activation: state=2 reachable=… paired=… watchAppInstalled=…` | Whether the link can work at all. `watchAppInstalled=false` or a non-zero `error=` explains everything downstream. |
+| `sent session (N bytes); reachable=…` | A push left. `reachable=false` is normal — the application context is the durable path. |
+| `updateApplicationContext failed: …` | **The line that matters most.** The write was refused, so the watch was told nothing, and nothing else retries it. `WCErrorCodeSessionNotActivated` means the session had not finished activating. |
+| `answer: live session` / `answer: nothing running` | The watch asked (`requestState`) and this is what it was told. Present within a second of the wrist waking, when the link is healthy. |
+| `send skipped: no session` | `activate()` has not run — the link was never started. |
+
+**Watch**: `asking the phone for state`, `refresh: …`, `applied session: N intervals, index=…`,
+and `could not decode an incoming message — are both apps the same build?`. A watch that is
+showing the wrong thing and never logs an ask is not running this build.
 
 | Symptom | Cause |
 |---|---|
@@ -156,4 +189,7 @@ missing" and offers a retry. That is the failure path working, not a bug.
 | `This app cannot be installed because its integrity could not be verified` | The Watch's UDID isn't registered with your team. Open Window → Devices and Simulators, select the watch, and let it prepare. |
 | `Multiple commands produce` on the watch target | Someone set the watch target to `application.watchapp2`. It must be `application`. |
 | `xcodebuild` can't find the Apple Watch destination | The watch has never been prepared. Devices and Simulators → select it → wait for "Preparing device for development" to finish. |
-| The watch shows **"No workout"** while a session runs on the phone, and the phone's log shows no send failures | **The watch app on the watch is stale.** Regenerating the project or changing a target does not reliably replace the watch app that is already installed — watchOS keeps the old one, which receives nothing and shows its idle screen. Fix: run the **OronzoWatch** scheme to the watch. Cost several hours to find once; there is no error message anywhere, because the old build is behaving exactly as written. |
+| The watch shows **"No workout"** while a session runs on the phone, and the phone's log shows `sent session` and, once the wrist wakes, `answer: live session` | **The watch app on the watch is stale.** Regenerating the project or changing a target does not reliably replace the watch app that is already installed — watchOS keeps the old one, which receives nothing and shows its idle screen. Fix: run the **OronzoWatch** scheme to the watch. Cost several hours to find once; there is no error message anywhere, because the old build is behaving exactly as written. |
+| The watch shows **"No workout"** and the phone logs `updateApplicationContext failed` | The write was refused — usually the session had not finished activating. The phone re-sends the moment activation completes, so this should self-clear within a second; if it does not, the link is not coming up at all and the `activation:` line says why. |
+| The watch logs `could not decode an incoming message` | The two apps are different builds. Install both from the same run — the phone scheme embeds the watch app, but does not reliably replace one already on the watch. |
+| The watch shows a session that ended (or that no phone is running) | A phantom, from the application context having no expiry. The phone clears it on coming forward, and answers "nothing running" whenever the watch asks. If it persists, the watch is not reaching the phone at all. |

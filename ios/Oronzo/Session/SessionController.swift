@@ -34,10 +34,18 @@ final class SessionController {
         self.engine = ExecutionEngine(
             intervals: PlanFlattener.flatten(plan, exerciseNames: exerciseNames)
         )
-
-        link.onControl = { [weak self] control in
-            self?.handle(control)
-        }
+        // Deliberately nothing here but construction.
+        //
+        // `SessionRunner` builds this as a `@State(initialValue:)`, and SwiftUI re-evaluates that
+        // expression on **every** re-render of the view presenting it — the runner included, so
+        // this happens repeatedly during a workout, not once at the start. Measured on a simulator
+        // session: each re-render builds a fresh controller, and the previous one is not released
+        // until the next build replaces it, so there is always a discarded controller alive.
+        //
+        // Anything done here is therefore done to one of those. Binding the watch link from here
+        // is what let one answer the watch's controls from its own empty engine — a wrist that
+        // jumped back to the first exercise and then stopped responding, with the phone entirely
+        // unaffected. See `pushState`'s guard and `PhoneConnectivity.claim`.
     }
 
     // MARK: - What the view reads
@@ -88,7 +96,15 @@ final class SessionController {
 
     func start() {
         guard engine.phase == .idle, !isEmpty else { return }
-        link.setSessionActive(true)
+        // From here until `teardown`, this controller *is* what the watch is being told about —
+        // and it is refused if a live session already holds the link. A refused controller is
+        // inert on purpose: it is either a SwiftUI re-render's discarded copy or a genuine second
+        // runner, and in neither case may it move the wrist. Logged, because it means something
+        // upstream is building a runner it does not install.
+        guard link.claim(self) else {
+            Log.debug("refused to start a second session while one is live")
+            return
+        }
         audio.start()
         // Deliberately ignoring the returned event: a beep the instant you press Start
         // would be noise, not information.
@@ -127,14 +143,17 @@ final class SessionController {
         stopTicking()
         audio.stop()
 
-        // Leaving the runner by swiping it away ends the session as far as the watch is
-        // concerned, even though nothing was "finished". Harmless if it already ended.
-        link.setSessionActive(false)
-        // Unbind, or the next controller to install its own handler silently leaves this
-        // dead one still receiving the watch's controls.
-        link.onControl = nil
+        // Leaving the runner ends the session as far as the watch is concerned, even though
+        // nothing was "finished" — but **only if this runner is still the one the watch is
+        // hearing about**. `resign` refuses if a newer session has already advertised itself,
+        // which is the case that must not clear: a re-created runner would otherwise hand the
+        // watch a running session and then erase it, leaving the wrist on "No workout" while
+        // the workout carried on. Harmless if the session already ended.
+        if link.resign(self) {
+            link.send(.sessionEnded)
+        }
+
         activity.end()
-        link.send(.sessionEnded)
     }
 
     func pause() {
@@ -217,7 +236,33 @@ final class SessionController {
     /// Tells the watch where the session is. Skipped when nothing has moved, since the tick
     /// runs ten times a second and the watch needs none of those.
     private func pushState(force: Bool = false) {
-        let state = SessionState(
+        // **Only the session holding the link may speak to the watch**, whatever asked it to.
+        //
+        // This is the guard that closes a real reported failure. A controller that never claimed
+        // the link — the copy SwiftUI builds and discards on every re-render of the presenter —
+        // can still be driven by a watch control if it won the handler, and its engine is empty:
+        // `advance` passes its `!isFinished` check on an idle engine, does nothing, and then
+        // pushed a **first-interval** snapshot anyway. The wrist jumped back to exercise one while
+        // the phone was untouched, and the next press pushed the identical state, which the dedupe
+        // below swallowed — so the button then appeared dead. Both halves, one cause: a session
+        // that was not the session writing to the wrist.
+        guard link.isAdvertising(self) else { return }
+
+        let state = currentState
+        guard force || state != lastPushedState else { return }
+        lastPushedState = state
+        link.send(currentMessage)
+
+        // The Lock Screen tracks the same state through the same model, so the two cannot say
+        // different things. It only speaks when something moved, which is the dedupe above.
+        if let content = activityContent() {
+            activity.update(content)
+        }
+    }
+
+    /// Where the session is, in the shape the watch needs it.
+    private var currentState: SessionState {
+        SessionState(
             currentIndex: engine.currentIndex,
             isPaused: isPaused,
             isFinished: isFinished,
@@ -227,32 +272,21 @@ final class SessionController {
             // climbs forever. Sent so the watch can freeze it at the real finish.
             finishedAt: engine.finishedAt
         )
-        guard force || state != lastPushedState else { return }
-        lastPushedState = state
-        link.send(
-            .session(
-                SessionSnapshot(
-                    planName: planName,
-                    intervals: engine.intervals,
-                    startedAt: engine.startedAt ?? .now,
-                    state: state
-                )
-            )
-        )
-
-        // The Lock Screen tracks the same state through the same model, so the two cannot say
-        // different things. It only speaks when something moved, which is the dedupe above.
-        if let content = activityContent() {
-            activity.update(content)
-        }
     }
 
-    private func handle(_ control: WatchControl) {
+    /// A control from the watch.
+    ///
+    /// `.requestState` is normally answered by the link itself — it has to be answerable when
+    /// no session is running at all, which is exactly when the watch asks. This case is here so
+    /// the switch stays exhaustive without a `default:` that would silently swallow whatever
+    /// control is added next; reaching it costs one redundant snapshot, and nothing else.
+    func handle(_ control: WatchControl) {
         switch control {
         case .next: advance()
         case .previous: goBack()
         case .togglePause: isPaused ? resume() : pause()
         case .finish: finishEarly()
+        case .requestState: pushState(force: true)
         }
     }
 
@@ -294,5 +328,24 @@ final class SessionController {
                 pushState(force: true)
             }
         }
+    }
+}
+
+// MARK: - What the watch hears from this session
+
+/// `currentMessage` is built rather than cached, so an answer is always the state *now*: the
+/// same reason nothing in this file reads the clock twice. It is what the link sends when the
+/// watch asks, so a request can never be answered from a stale snapshot.
+extension SessionController: AdvertisedSession {
+
+    var currentMessage: WatchMessage {
+        .session(
+            SessionSnapshot(
+                planName: planName,
+                intervals: engine.intervals,
+                startedAt: engine.startedAt ?? .now,
+                state: currentState
+            )
+        )
     }
 }

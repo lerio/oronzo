@@ -86,6 +86,20 @@ public enum WatchControl: String, Codable, Sendable {
     case previous
     case togglePause
     case finish
+    /// "I have nothing to show — tell me where this session is."
+    ///
+    /// The phone has only ever *pushed*, and the watch has only ever listened. That works
+    /// until a push goes missing, and every way it can go missing is silent: the write lands
+    /// before the phone's `WCSession` finished activating, a snapshot is overwritten in the
+    /// application context by a `sessionEnded` from a runner that is no longer the live one,
+    /// or the watch resumes from a wrist-drop suspension without being handed the context it
+    /// missed. The wrist then reads **"No workout"** for the rest of the workout, which is
+    /// indistinguishable from the phone never having started one — the failure this project
+    /// has now chased four times (see `docs/runbook.md`).
+    ///
+    /// So the watch can ask. The phone answers from whatever is *actually* running, which is
+    /// what turns each of those from a permanently wrong screen into a sub-second recovery.
+    case requestState
 }
 
 // MARK: - Encoding

@@ -36,10 +36,23 @@ struct WatchSessionView: View {
         .task {
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("-demoSession") {
+                // Hermetic on purpose. The demo stands in for the phone, so it must not be
+                // talked out of its own session by a real one — activation, the stored context
+                // and the ask below would each do exactly that, and the screen would go blank
+                // the moment a paired phone was in range.
                 link.loadDemoSession()
+                // Logged because a demo that silently failed to seed looks exactly like an
+                // empty link, which is the ambiguity this whole file keeps having to remove.
+                Log.debug("watch: demo seeded \(link.intervals.count) intervals")
+                return
             }
             #endif
             link.activate()
+            #if DEBUG
+            if let every = Self.autoNextInterval {
+                link.startAutoNext(everySeconds: every)
+            }
+            #endif
         }
         // Coming back from a wrist-drop suspension is a *resume*, not a re-activation, so
         // nothing else would tell the watch the phone had started something. See
@@ -51,6 +64,11 @@ struct WatchSessionView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
                 link.refreshFromContext()
+                // And ask outright, rather than wait to be told again. The stored context is
+                // what the phone sent *last*, which is no help when a push went missing — the
+                // failure that reads as "No workout" for a whole workout. `askForState` is a
+                // no-op when there is nothing worth asking about.
+                link.askForState()
                 runtime.setRunning(!link.intervals.isEmpty)
             }
         }
@@ -327,6 +345,18 @@ struct WatchSessionView: View {
     }
 
     private var isPaused: Bool { link.state?.isPaused ?? false }
+
+    #if DEBUG
+    /// The interval from `-autoNext <seconds>`. See `WatchLink.startAutoNext` for why the watch
+    /// can press its own buttons in a debug build.
+    private static var autoNextInterval: Double? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let flag = arguments.firstIndex(of: "-autoNext"),
+              arguments.indices.contains(flag + 1)
+        else { return nil }
+        return Double(arguments[flag + 1])
+    }
+    #endif
 }
 
 #Preview {

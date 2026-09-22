@@ -2,6 +2,29 @@ import Foundation
 import OronzoCore
 import WatchConnectivity
 
+/// The session driving the watch, as the link sees it.
+///
+/// A **reference**, rather than the bare `onControl` closure and `hasActiveSession` flag this
+/// replaces, for one reason: the link has to be able to tell *which* session is talking to it.
+/// A closure cannot be compared to anything, so a tear-down had to clear the handler and the
+/// flag unconditionally — leaving nothing to stop one runner's tear-down from clearing the
+/// watch on behalf of a *different, still-running* session, or from leaving the link convinced
+/// a workout was in progress after the controller had gone. `advertise` / `resign` are what
+/// make both impossible: a live session can only be displaced by another session, never by a
+/// stale tear-down.
+///
+/// Held weakly by `PhoneConnectivity`, so a controller deallocated without ever calling
+/// `teardown()` cannot leave the link believing a workout is still running — the phantom
+/// session, from the other side.
+@MainActor
+protocol AdvertisedSession: AnyObject {
+    /// The complete message the watch should be showing right now. Never partial: the
+    /// application context is a single slot, so this is re-sent whole every time.
+    var currentMessage: WatchMessage { get }
+    /// Something the watch did — a step control, a pause, a finish.
+    func handle(_ control: WatchControl)
+}
+
 /// The phone's half of the link to the watch.
 ///
 /// Every message is written to the **application context** as well as sent directly. The
@@ -17,11 +40,12 @@ final class PhoneConnectivity: NSObject {
 
     static let shared = PhoneConnectivity()
 
-    /// Called when the watch asks for something. Set by `SessionController`.
-    var onControl: (@MainActor (WatchControl) -> Void)?
+    /// Whether a workout is running, as the link sees it — *derived from a live session*
+    /// rather than remembered, which is what stops it from ever being stale.
+    var hasActiveSession: Bool { advertised != nil }
 
-    /// Whether this phone believes a workout is in progress. Read only by `clearIfIdle`.
-    private(set) var hasActiveSession = false
+    /// The live session. `@ObservationIgnored` because it is a back-reference, not UI state.
+    @ObservationIgnored private weak var advertised: (any AdvertisedSession)?
 
     private var session: WCSession?
 
@@ -41,8 +65,38 @@ final class PhoneConnectivity: NSObject {
         self.session = session
     }
 
-    func setSessionActive(_ active: Bool) {
-        hasActiveSession = active
+    /// Claims the link for this session — **unless another session already holds it**.
+    ///
+    /// The refusal is the point. SwiftUI builds a `SessionRunner` on every re-render of the view
+    /// presenting it, and each build constructs a `SessionController` that may outlive the build;
+    /// before this check, such a controller could take the link and then answer the watch's
+    /// controls from its own empty engine. That is a wrist which jumps back to the first exercise
+    /// and then stops responding, with the phone entirely unaffected — see `pushState` for the
+    /// other half of the guard.
+    ///
+    /// Claiming is idempotent, so a session that already holds the link can re-claim it. A
+    /// session that has gone cannot block anything: the reference is weak, so a released
+    /// controller leaves the link empty and the next real session starts normally.
+    @discardableResult
+    func claim(_ session: any AdvertisedSession) -> Bool {
+        guard advertised == nil || advertised === session else { return false }
+        advertised = session
+        return true
+    }
+
+    /// Whether this session is the one the watch is hearing from. The licence to speak.
+    func isAdvertising(_ session: any AdvertisedSession) -> Bool {
+        advertised === session
+    }
+
+    /// Unregisters — **only if this session is still the live one** — and reports whether it
+    /// was. The return value is the caller's licence to tell the watch the session has ended:
+    /// a runner that has already been superseded by a newer one must not clear it.
+    @discardableResult
+    func resign(_ session: any AdvertisedSession) -> Bool {
+        guard advertised === session else { return false }
+        advertised = nil
+        return true
     }
 
     /// Called when the app comes forward. If nothing is running, say so.
@@ -53,6 +107,17 @@ final class PhoneConnectivity: NSObject {
     func clearIfIdle() {
         guard !hasActiveSession else { return }
         send(.sessionEnded)
+    }
+
+    /// Answers the watch with the truth: the live session's own message, or "nothing is
+    /// running". Called when the watch asks, and when the link comes up.
+    ///
+    /// This is what makes the link recoverable. The phone used to speak only when its state
+    /// changed, so anything the watch missed stayed missed; now the watch can ask, and the
+    /// answer is built from whatever is *actually* running rather than from a remembered flag.
+    func answer() {
+        Log.debug("answer: \(hasActiveSession ? "live session" : "nothing running")")
+        send(advertised?.currentMessage ?? .sessionEnded)
     }
 
     func send(_ message: WatchMessage) {
@@ -109,6 +174,16 @@ extension PhoneConnectivity: WCSessionDelegate {
             + "watchAppInstalled=\(session.isWatchAppInstalled) "
             + "error=\(error.map { String(describing: $0) } ?? "none")"
         )
+
+        // Speak again now that the link is up.
+        //
+        // Two holes this closes. A workout started *before* activation finished had its only
+        // push dropped — `updateApplicationContext` throws while the session is not activated,
+        // which the link logs and, until this line, never retried. And the phantom clear
+        // depended on a `scenePhase` *change* to `.active`, which a cold launch does not
+        // necessarily produce; activation always completes, so this is the hook that can be
+        // relied on. Idempotent: it sends the truth, which at launch is "nothing running".
+        Task { @MainActor in self.answer() }
     }
 
     // Required on iOS: the session goes inactive while the watch is switched, and has to be
@@ -133,6 +208,29 @@ extension PhoneConnectivity: WCSessionDelegate {
               let control = WatchControl(rawValue: raw)
         else { return }
 
-        Task { @MainActor in self.onControl?(control) }
+        Task { @MainActor in self.deliver(control) }
+    }
+
+    /// Routes a control from the watch.
+    ///
+    /// `.requestState` is answered here rather than handed to the session, so that the watch
+    /// gets a reply even when no session is running — which is precisely the moment it needs
+    /// one, because that is the wrist showing "No workout" and hoping to be wrong.
+    ///
+    /// The other controls are logged, because this direction is otherwise invisible: from the
+    /// wrist, a press that reached a session that was no longer live and a press that reached
+    /// nothing at all look exactly the same, and that ambiguity is reported as "the next button
+    /// stopped working".
+    private func deliver(_ control: WatchControl) {
+        guard control != .requestState else {
+            answer()
+            return
+        }
+        guard let advertised else {
+            Log.debug("control \(control.rawValue): dropped, nothing running")
+            return
+        }
+        Log.debug("control \(control.rawValue): handed to the live session")
+        advertised.handle(control)
     }
 }

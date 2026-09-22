@@ -65,6 +65,35 @@ both.
 Not supported: EMOM/AMRAP/time-capped work, which needs a *variable* rest (whatever is left
 in the minute). Adding it means a new interval concept, not a new column.
 
+## The watch asks, the phone answers
+
+For a long time the watch could only *listen*: the phone pushed when its own state changed, and
+whatever the watch missed stayed missed. Every way a push can go missing is silent — a write that
+lands before the phone's `WCSession` finished activating, a snapshot overwritten by a
+`sessionEnded` from a runner that is no longer the live one, a resume from a wrist-drop suspension
+that is never handed the context it missed. The wrist then reads **"No workout"** for the rest of
+the workout, which is indistinguishable from a phone that never started one. That ambiguity is the
+single most expensive bug in this project; it has been "fixed" four times, each time by narrowing
+the window rather than by removing the class.
+
+So the protocol has a second half. `WatchControl.requestState` lets the watch say *"I have nothing
+— tell me the truth"*, and the phone answers from whatever is **actually running** (or with "nothing
+running"), rather than from a remembered flag. The watch asks when it becomes active and when
+activation completes, because those are the two moments it can be sure it is awake — a cold launch
+does not necessarily produce a `scenePhase` change.
+
+This is deliberately **not** a poll. It is one message per wrist raise, and only when the phone is
+in range or the watch has nothing to lose by queueing it. The prohibition below on a per-second
+message stream is untouched: the watch still renders from the absolute interval list, and the
+answer is a re-anchor, not a heartbeat.
+
+The other half of the same decision is on the phone: **only a live session may clear the watch.**
+A `SessionController` advertises itself to `PhoneConnectivity` on `start` and resigns on
+`teardown`, and a resignation is refused unless that controller is still the advertised one — so a
+runner whose view SwiftUI re-created cannot erase a newer session's snapshot on its way out. The
+reference is weak, so a controller that is deallocated without a `teardown` cannot leave the link
+believing a workout is still running.
+
 ## Constraints from a free Apple personal team
 
 These are not preferences. A paid account ($99/yr) lifts every one of them.
