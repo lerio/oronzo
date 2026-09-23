@@ -34,6 +34,18 @@ public struct SessionActivityContent: Codable, Hashable, Sendable {
     /// Shown as static text while paused, because a running timer cannot be paused.
     public var remainingWhenPaused: TimeInterval?
 
+    /// **Deliberately no `staleDate`.**
+    ///
+    /// One was added here for a reason that turned out to be false: the theory was that the app
+    /// could not post a content update from a locked phone, so the card should at least stop
+    /// claiming to be current. It *can* — and setting the stale date to `intervalEnd` put it at
+    /// the exact instant the app sends the next interval's content, which is the one moment the
+    /// update has to land. So the card stopped advancing: the write goes out, the activity has
+    /// just been marked stale, and the card holds what it had. A skip from the watch, arriving
+    /// mid-interval, moved it — which is how it was found.
+    ///
+    /// Staleness is for a card the app *cannot* refresh. This app can, from any state of the
+    /// phone, so the right stale date is none at all.
     public init(
         stateWord: String,
         name: String,

@@ -112,7 +112,10 @@ final class SessionScreenTests: XCTestCase {
         )
 
         XCTAssertEqual(screen?.name, "Break", "the rest says what it is")
-        XCTAssertEqual(screen?.next, .exercise("Bench Press"), "and next says what it is for")
+        XCTAssertEqual(
+            screen?.next, .exercise("Bench Press", weight: nil),
+            "and next says what it is for"
+        )
     }
 
     /// The next line is present on **every** running screen, rest included.
@@ -154,7 +157,7 @@ final class SessionScreenTests: XCTestCase {
             planName: "P", startedAt: t0, now: t0
         )
 
-        XCTAssertEqual(screen?.next, .exercise("Break"))
+        XCTAssertEqual(screen?.next, .exercise("Break", weight: nil))
     }
 
     /// `LAST` answers "what's next" when the answer is "nothing". Knowing the final interval is
@@ -189,6 +192,95 @@ final class SessionScreenTests: XCTestCase {
         XCTAssertEqual(screen?.stateWord, .rest)
         XCTAssertEqual(screen?.name, "Break", "the rest names itself here too")
         XCTAssertEqual(screen?.next, .last, "and the last interval must still be announced")
+    }
+
+    // MARK: - The next line carries the load
+
+    /// Two weighted exercises with a rest between them — the fixture where the load you are
+    /// lifting and the load coming up are *different numbers*, which is what pins the next line
+    /// to the right one.
+    private func twoWeightedExercises() -> [Interval] {
+        PlanFlattener.flatten(Plan(name: "P", blocks: [
+            PlanBlock(steps: [
+                PlanStep(label: "Bench Press", mode: .reps, reps: 8,
+                         targetWeightKg: 20, restAfter: 30),
+                PlanStep(label: "Lat Pulldown", mode: .reps, reps: 10, targetWeightKg: 40),
+            ]),
+        ]))
+    }
+
+    /// A weighted exercise coming up states its load on the next-up line.
+    ///
+    /// The interval this earns its place on is the rest before it: the current line is a `Break`
+    /// with no load of its own, so without this the number you are about to need is nowhere on
+    /// the screen at all — which is the one moment you have time to set the weight.
+    func testTheNextLineCarriesTheUpcomingLoad() {
+        let intervals = twoWeightedExercises()   // [Bench 20, Break, Lat Pulldown 40]
+
+        let duringTheRest = SessionPresentation.screen(
+            intervals: intervals, index: 1,
+            end: t0.addingTimeInterval(30), isPaused: false, isFinished: false,
+            planName: "P", startedAt: t0, now: t0
+        )
+
+        XCTAssertEqual(duringTheRest?.next, .exercise("Lat Pulldown", weight: "40 kg"))
+        XCTAssertEqual(duringTheRest?.next?.label, "NEXT · Lat Pulldown · 40 kg")
+    }
+
+    /// The load on that line is the **upcoming** interval's, not the current one's. The two
+    /// differ on the interval before every rest, and a line that quietly restated the load
+    /// already on screen would be worse than one that said nothing.
+    func testTheLoadOnTheNextLineBelongsToTheUpcomingIntervalNotTheCurrentOne() {
+        let intervals = twoWeightedExercises()
+
+        let onTheBench = SessionPresentation.screen(
+            intervals: intervals, index: 0, end: nil,
+            isPaused: false, isFinished: false,
+            planName: "P", startedAt: t0, now: t0
+        )
+
+        XCTAssertEqual(onTheBench?.weight, "20 kg", "the current line has its own load")
+        XCTAssertEqual(
+            onTheBench?.next, .exercise("Break", weight: nil),
+            "and the next line says nothing about a load, because a break has none"
+        )
+        XCTAssertEqual(onTheBench?.next?.label, "NEXT · Break")
+    }
+
+    /// An upcoming exercise with no prescribed load adds nothing to the line — no stray unit and
+    /// no trailing separator.
+    func testTheNextLineAddsNothingWhenTheUpcomingIntervalHasNoLoad() {
+        let screen = SessionPresentation.screen(
+            intervals: mixedIntervals(), index: 0,   // its next is the unweighted "Break"
+            end: t0.addingTimeInterval(10), isPaused: false, isFinished: false,
+            planName: "P", startedAt: t0, now: t0
+        )
+
+        XCTAssertEqual(screen?.next?.label, "NEXT · Break")
+    }
+
+    /// The load is spoken on the next line too, and written for the ear — the drawn `·` is
+    /// punctuation for a small screen, not speech. It has to be spoken at all because both
+    /// runners hide this line behind the composed label.
+    func testTheUpcomingLoadIsSpokenOnTheNextLine() {
+        let plan = Plan(name: "P", blocks: [
+            PlanBlock(steps: [
+                PlanStep(label: "Row", mode: .time, duration: 60, restAfter: 30),
+                PlanStep(label: "Bench Press", mode: .reps, reps: 8, targetWeightKg: 20),
+            ]),
+        ])
+        let intervals = PlanFlattener.flatten(plan)
+
+        let screen = SessionPresentation.screen(
+            intervals: intervals, index: 1,          // the rest before the weighted bench
+            end: t0.addingTimeInterval(30), isPaused: false, isFinished: false,
+            planName: "P", startedAt: t0, now: t0
+        )
+
+        XCTAssertEqual(
+            screen?.accessibilityAnnouncement,
+            "Resting. Break. 30 seconds remaining. Next: Bench Press, 20 kg."
+        )
     }
 
     // MARK: - Rep intervals never imply a duration

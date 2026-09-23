@@ -21,7 +21,7 @@ final class SessionController {
     private let audio: WorkoutAudio
     private let link = PhoneConnectivity.shared
     /// The Lock Screen surface, when the system allows one.
-    private let activity = LiveSessionActivity()
+    private let activity = LiveSessionActivity.shared
     private var engine: ExecutionEngine
     private var ticker: Task<Void, Never>?
     private var lastCountdownSecond: Int?
@@ -105,6 +105,10 @@ final class SessionController {
             Log.debug("refused to start a second session while one is live")
             return
         }
+        // Named, because *which* controller is running the workout is what every failure in this
+        // file comes down to — there is more than one of these alive at a time, by SwiftUI's doing
+        // rather than by design, and from the outside they are indistinguishable.
+        Log.debug("session: started by \(ObjectIdentifier(self))")
         audio.start()
         // Deliberately ignoring the returned event: a beep the instant you press Start
         // would be noise, not information.
@@ -233,9 +237,27 @@ final class SessionController {
         pushState()
     }
 
-    /// Tells the watch where the session is. Skipped when nothing has moved, since the tick
-    /// runs ten times a second and the watch needs none of those.
+    /// Tells the watch where the session is, and keeps the Lock Screen in step. Each is skipped
+    /// when nothing has moved, since the tick runs ten times a second and neither needs those.
     private func pushState(force: Bool = false) {
+        // **The Lock Screen first, and deliberately outside the guard below.**
+        //
+        // That guard exists so a stale `SessionController` cannot move the *wrist* — SwiftUI builds
+        // one on every re-render of the runner, and they can hold a session between them. The Lock
+        // Screen is this process's own surface and has no business being gated on which session the
+        // watch link is pointed at. Putting this call after the guard did exactly that, and it is
+        // why a locked phone sat on the previous exercise at `0:00`: the interval expired, the
+        // engine moved on, the watch stayed correct — it projects its own position from the
+        // interval list it was sent at the start, so it needs no further pushes — and the card was
+        // never told. Skipping an interval *from the watch* moved it, because that control is
+        // delivered to `advertised` and so runs on the session the link knows about.
+        //
+        // Whether a write is owed is the Activity's question, not this one's; see
+        // `LiveSessionActivity.update`.
+        if let content = activityContent() {
+            activity.update(content)
+        }
+
         // **Only the session holding the link may speak to the watch**, whatever asked it to.
         //
         // This is the guard that closes a real reported failure. A controller that never claimed
@@ -246,18 +268,22 @@ final class SessionController {
         // the phone was untouched, and the next press pushed the identical state, which the dedupe
         // below swallowed — so the button then appeared dead. Both halves, one cause: a session
         // that was not the session writing to the wrist.
-        guard link.isAdvertising(self) else { return }
-
         let state = currentState
-        guard force || state != lastPushedState else { return }
+        let moved = force || state != lastPushedState
+
+        guard link.isAdvertising(self) else {
+            // Worth a line only when something had moved — the tick comes ten times a second — and
+            // worth one at all because this is invisible from the outside: the wrist carries on
+            // looking right whether it is being told or not.
+            if moved {
+                Log.debug("session: \(ObjectIdentifier(self)) is not the live session; the watch was not told")
+            }
+            return
+        }
+
+        guard moved else { return }
         lastPushedState = state
         link.send(currentMessage)
-
-        // The Lock Screen tracks the same state through the same model, so the two cannot say
-        // different things. It only speaks when something moved, which is the dedupe above.
-        if let content = activityContent() {
-            activity.update(content)
-        }
     }
 
     /// Where the session is, in the shape the watch needs it.

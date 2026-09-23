@@ -34,7 +34,14 @@ final class SessionActivityTests: XCTestCase {
     /// the Lock Screen is exactly the drift the shared vocabulary exists to stop, so it moved
     /// into the model and all three read it from here.
     func testTheNextLabelIsWordedOnce() {
-        XCTAssertEqual(SessionScreen.Next.exercise("Lat Pulldown").label, "NEXT · Lat Pulldown")
+        XCTAssertEqual(
+            SessionScreen.Next.exercise("Lat Pulldown", weight: nil).label,
+            "NEXT · Lat Pulldown"
+        )
+        XCTAssertEqual(
+            SessionScreen.Next.exercise("Lat Pulldown", weight: "20 kg").label,
+            "NEXT · Lat Pulldown · 20 kg"
+        )
         XCTAssertEqual(SessionScreen.Next.last.label, "LAST")
     }
 
@@ -55,6 +62,30 @@ final class SessionActivityTests: XCTestCase {
         // Absolute rather than a countdown, so the system renders the timer and the app does not
         // have to send anything per second — the same principle as the watch.
         XCTAssertEqual(state.intervalEnd, end)
+    }
+
+    /// The Lock Screen reads the same next-up line as the two runners, the load included — it is
+    /// `Next.label` verbatim, so a load dropped here would be a load the three surfaces word
+    /// differently.
+    ///
+    /// This payload has no load field of its own, so the next-up line is the only place a weight
+    /// can appear on the Lock Screen at all. It is worth most on the rest before an exercise,
+    /// which is the interval pinned here.
+    func testTheLockScreenCarriesTheUpcomingLoadInItsNextLine() {
+        let intervals = PlanFlattener.flatten(Plan(name: "P", blocks: [
+            PlanBlock(name: "Main", steps: [
+                PlanStep(label: "Row", mode: .time, duration: 60, restAfter: 30),
+                PlanStep(label: "Bench Press", mode: .reps, reps: 8, targetWeightKg: 20),
+            ]),
+        ]))
+
+        let state = SessionActivityContent(
+            screen: screen(intervals: intervals, index: 1, end: t0.addingTimeInterval(30)),
+            intervalEnd: t0.addingTimeInterval(30),
+            remainingWhenPaused: nil
+        )
+
+        XCTAssertEqual(state.next, "NEXT · Bench Press · 20 kg")
     }
 
     /// A rep interval has no length, so it carries its target and no end date. Otherwise the

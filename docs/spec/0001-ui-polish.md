@@ -33,9 +33,18 @@ Three things resolve it:
 **And the fit with this codebase is unusually good.** Oronzo's Watch design already works by sending
 *absolute end dates* rather than a per-second stream — `docs/integration-contracts.md` records that
 as load-bearing. A Live Activity wants exactly that: the extension renders a system-driven timer from
-an absolute end date, so the countdown stays correct with **no ongoing updates from the app at all**.
-The app only updates on state *changes*, which is precisely the cadence `SessionController.pushState`
+an absolute end date, so the **countdown** stays correct with no ongoing updates from the app at all.
+The app updates only on state *changes*, which is precisely the cadence `SessionController.pushState`
 already runs at.
+
+**Corrected after the surface was built and used.** The paragraph above is true of the countdown and
+false of the **transition**. The card changes only when the app posts a content update — the system's
+timer is display-only and clamps at `0:00` — and while the phone is locked, iOS does not take such an
+update from an app whose only background justification is audio playback, which is the only kind this
+app has. The card therefore holds the interval it was handed until the app is next in the foreground.
+Push-to-update is the supported path and this design deliberately has none, so this is a **known
+limitation rather than a defect**: `docs/known-issues.md` §12, and the locked-phone state in
+`docs/ui-design/0001-ui-polish.md` §5.
 
 The one target-level cost: a widget extension is a **third target**, with its own bundle identifier
 and provisioning profile — so the 7-day free-team expiry now covers three things to re-sign instead

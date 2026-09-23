@@ -82,7 +82,7 @@ Interval name           ← the exercise, or `Break`
    [ ‹ ]  PRIMARY  [ › ]   ← the step controls flank the clock, which is the pause control
 Target load             ← `20 kg`, or an empty line
 Set 2 of 4              ← context
-NEXT · Lat Pulldown     ← caption, present in every running state
+NEXT · Lat Pulldown · 20 kg   ← caption, present in every running state
 ```
 
 ### The controls flank the primary
@@ -123,10 +123,10 @@ meaning each, in every state.
 
 | # | State | State word badge | Name slot | Primary | Context | Next line |
 |---|---|---|---|---|---|---|
-| 1 | Timed work | *(none)* | exercise name | clock | `contextLabel` | `NEXT · <name or Break>` |
-| 2 | Rest | *(none)* | `Break` | clock | `contextLabel` | `NEXT · <the exercise it is for>` |
-| 3 | Rep work, no duration | *(none)* | exercise name | `10x` | `contextLabel` | `NEXT · <name or Break>` |
-| 4 | Paused | *(none — the timer blinks)* | exercise name | **frozen** remaining, blinking | `contextLabel` | `NEXT · <name>` |
+| 1 | Timed work | *(none)* | exercise name | clock | `contextLabel` | `NEXT · <name or Break>[ · <load>]` |
+| 2 | Rest | *(none)* | `Break` | clock | `contextLabel` | `NEXT · <the exercise it is for>[ · <load>]` |
+| 3 | Rep work, no duration | *(none)* | exercise name | `10x` | `contextLabel` | `NEXT · <name or Break>[ · <load>]` |
+| 4 | Paused | *(none — the timer blinks)* | exercise name | **frozen** remaining, blinking | `contextLabel` | `NEXT · <name>[ · <load>]` |
 | 5 | Final interval | *(none)* | as above | as above | as above | **`LAST`** |
 | 6 | Finished | `DONE` | plan name | total elapsed | — | — |
 | 7 | No session | *(none)* | — | `No workout` | `Start a plan on your iPhone` | — |
@@ -150,6 +150,16 @@ Notes on the decisions:
   primary that moves. The phone draws it outside the timer's `TimelineView` so it does not blink,
   and both surfaces hide it from VoiceOver — which is why `SessionScreen.weight` exists and why the
   composed announcement carries it, in the position it is drawn.
+- **The next-up line carries the upcoming load.** It states the load of the interval it *names* —
+  the one you are about to do, not the one you are on. That makes it worth most on the rest before
+  an exercise, which is the interval where it is the only weight on the screen: the current line is
+  a `Break`, and a `Break` has no load of its own. It is held off the name by the same `·` as the
+  prefix, because run together (`Bench Press 20 kg`) a multi-word name and its number read as one
+  phrase on a line this narrow — the misreading the main screen avoids by stacking them instead.
+  Nothing is special-cased for the unweighted case: a rest and an exercise with no target have no
+  load to state, so the line simply ends at the name, with no stray unit and no trailing separator.
+  The spoken form says `Next: Bench Press, 20 kg` — the drawn `·` is punctuation for a small
+  screen, not speech, which is the same asymmetry as the rep unit.
 - **The word is drawn only where the name cannot say it** — `DONE` alone now. `WORK` and `REST`
   are the ordinary flow of a session, and the name slot already distinguishes them; a badge
   restating it is a line of chrome above every interval, which a 41 mm screen feels most.
@@ -161,12 +171,12 @@ Notes on the decisions:
   interval is the final one in the list. Knowing the last interval is the last one is the single
   most motivating fact the Watch can carry, so it gets the slot rather than a blank.
 - **Rep intervals never show a time.** A rep interval has no length, so nothing may imply one —
-  neither the primary (the rep target, not a clock) nor the next-up line (name only, never a
-  duration). The target carries its unit as a suffix rather than on a line of its own: the row
-  `reps` used to occupy was a whole line of the screen's height, and that line is worth more to the
-  exercise name. The suffix is `title`-sized, not `caption` — beside a figure this size a caption
-  reads as a footnote rather than as the unit. **The name is unchanged by this**: same font size,
-  still capped at two rows.
+  neither the primary (the rep target, not a clock) nor the next-up line (the name and at most a
+  load, never a duration). The target carries its unit as a suffix rather than on a line of its
+  own: the row `reps` used to occupy was a whole line of the screen's height, and that line is
+  worth more to the exercise name. The suffix is `title`-sized, not `caption` — beside a figure
+  this size a caption reads as a footnote rather than as the unit. **The name is unchanged by
+  this**: same font size, still capped at two rows.
 - **The unit is drawn, never spoken.** The announcement says "8 reps"; "eight x" is not how anyone
   says it. This is the same asymmetry as the state word, and for the same kind of reason: the drawn
   form is compressed for a small screen, the spoken form is written to be heard.
@@ -234,9 +244,9 @@ The phone sits on a surface and is read from 1–2 metres (PRD metric 5). Theref
 
 | State | What is shown | Copy |
 |---|---|---|
-| Running, timed | Exercise name, large clock, set context, next up | `NEXT · <name>` |
+| Running, timed | Exercise name, large clock, set context, next up | `NEXT · <name>[ · <load>]` |
 | Running, rep interval | Rep target as the primary, no clock | `8x` |
-| Rest | `Break`, clock, next up | `Break` · `NEXT · <name>` |
+| Rest | `Break`, clock, next up | `Break` · `NEXT · <name>[ · <load>]` |
 | Paused | Frozen clock, and the primary control becomes resume | *(blinking timer)* · button `Resume` |
 | Saving | Unchanged content; the save control reflects progress | `Saving…` |
 | Saved | Confirmation does not block the summary | `Saved` |
@@ -266,16 +276,17 @@ interval list is never sent here (Spec §4).
 |---|---|---|
 | State word | never | `showsBadge` draws `DONE` alone, and a finished session **ends** the Activity, so no state word appears here at all. A paused Lock Screen is signalled by its frozen clock, which the system renders as static text — see the states below. |
 | Exercise name | the current interval — the exercise, or `Break` | Same rule as the Watch: the name slot is what you are in, the next-up line is what comes after |
-| Primary | the clock, driven by the **system's own timer** from the absolute end date — or `8x` for a rep interval | Not app-updated. This is what makes it live without a per-second stream. The rep unit is `8x` here too, at **one size** rather than as a smaller suffix: this view is drawn at 34pt and at 15pt, and a suffix sized as a fraction of a number that swings across that range is illegible at the bottom of it. |
+| Primary | the clock, driven by the **system's own timer** from the absolute end date — or `8x` for a rep interval | Not app-updated *while it counts*, which is what makes it live without a per-second stream. It is clamped at `0:00` when the date passes and never advances the content itself, so the handover to the next interval is still the app's — see the locked-phone row in the states below. The rep unit is `8x` here too, at **one size** rather than as a smaller suffix: this view is drawn at 34pt and at 15pt, and a suffix sized as a fraction of a number that swings across that range is illegible at the bottom of it. |
 | Set context | `Set 2 of 4` | |
-| Next-up | `NEXT · <name>`, or `LAST` | Rep intervals show the name only, never a duration |
+| Next-up | `NEXT · <name>[ · <load>]`, or `LAST` | Rep intervals show the name and at most a load, never a duration. This payload has no load field of its own, so the next-up line is the only place a weight can appear on this surface at all |
 
 ### States
 
 | State | Behaviour |
 |---|---|
-| Running | As above. Updates only on state transitions, not per second. |
-| Paused | Clock stops at the frozen remaining value, as static text — a running system timer cannot be paused. It does **not** blink here: the Lock Screen is glanced at rather than watched, and a blinking card on a locked phone is a nuisance. The frozen value is the signal. |
+| Running, phone in use | As above. Updates only on state transitions, not per second. |
+| **Running, phone locked** | **The card holds the interval it was last handed.** A transition is the app's job — the system's timer counts down and stops at `0:00`, and never advances the content itself — and while the phone is locked iOS does not take a content update from an app whose only background justification is audio playback, which is the only kind this app has. The card therefore goes **stale** at the interval's end (`staleDate` is that end), and corrects itself the next time the app is in the foreground. Push-to-update is the supported path and this design deliberately has none: see `docs/known-issues.md` §12. |
+| Paused | Clock stops at the frozen remaining value, as static text — a running system timer cannot be paused. It does **not** blink here: the Lock Screen is glanced at rather than watched, and a blinking card on a locked phone is a nuisance. The frozen value is the signal. A paused card carries no stale date: it is still describing the present. |
 | Finished | The Activity is **ended** on the same three paths that send `.sessionEnded` today. |
 | **Live Activities unavailable** | `ActivityAuthorizationInfo().areActivitiesEnabled` is false. **Nothing is shown and nothing is said.** The session runs normally. An unavailable enhancement is never an error state. |
 | **App terminated mid-session** | The Activity outlives the app and will show a stale countdown. It must be ended on next launch — the same phantom-session class of bug the project already fixed once for the Watch. |
@@ -361,6 +372,8 @@ Every user-facing string this spec introduces or fixes. Existing strings marked 
 | Watch / Lock Screen / runner, rest interval | `Break` |
 | Watch / Lock Screen, final interval | `LAST` |
 | Watch / Lock Screen, next-up prefix | `NEXT · ` |
+| Any surface, load on the next-up line *(drawn)* | `20 kg`, separated by ` · ` — the load of the interval the line **names**, omitted entirely when that interval has none |
+| Any surface, load on the next-up line *(spoken)* | `, 20 kg` — the ` · ` is punctuation for a small screen, so it is not what is said |
 | Watch / Lock Screen / runner, target load | `20 kg`, under the primary — drawn in every running state, empty when there is none |
 | Watch / Lock Screen / runner, rep unit | `x`, as a suffix on the rep count (`8x`) — `title`-sized on the two runners, where the number is 48–96pt, and one size on the Lock Screen, where it is 34pt or less |
 | Watch / runner, rep unit *(spoken)* | `8 reps` — the announcement still says the word, because "eight x" is not speech |

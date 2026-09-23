@@ -8,9 +8,10 @@ each entry says what the code does, why it may be wrong, and the question that s
 
 None of these is on fire. They are recorded so that nobody *relies* on one by accident.
 
-**Status: none of these has been confirmed as intended or as a bug by the human yet.** When one is
-resolved, either fix the code or amend the entry to say explicitly why the current shape is
-correct — and if it is correct, say so in the code too.
+**Status: none of these has been confirmed as intended or as a bug by the human yet**, except §12 —
+confirmed, accepted as a platform limitation, and closed by correcting the documents it contradicted.
+When one is resolved, either fix the code or amend the entry to say explicitly why the current shape
+is correct — and if it is correct, say so in the code too.
 
 ---
 
@@ -181,3 +182,46 @@ that a future table needs no policy as long as it carries no grant. It does. Thi
 exactly the database activity that keeps the free project from pausing.
 
 **Question.** Correct the comment to say RLS is the control, and keep the grants as belt-and-braces?
+
+## 12. The Lock Screen Activity cannot advance while the phone is locked
+
+**What the code does.** S7's Live Activity carries the current interval plus an absolute end date,
+and posts a content update only on state transitions (`SessionController.pushState` →
+`LiveSessionActivity.update`). `Text(timerInterval:)` renders the countdown from that date, which is
+what makes the clock live with no per-second traffic — and it clamps at `0:00` once the date passes,
+changing nothing by itself.
+
+**What was measured.** On the device, with the phone locked: the countdown reaches zero and the card
+keeps that interval, on that exercise, indefinitely — while the watch and the phone (once unlocked)
+both move on correctly. **The wiring is not at fault.** Verified in the Simulator: a write from a
+backgrounded app is applied, and the daemon's own permission line names its criterion —
+`Process is doing more than playing background media so is permitted to update activity`. Holding a
+`beginBackgroundTask` assertion across the write (added for exactly that reason, then measured on the
+device) **changed nothing**, so that criterion is either not about assertions or not the whole story.
+
+**Why it matters.** Two claims elsewhere are false as stated. `docs/spec/0001-ui-polish.md` says the
+countdown "stays correct with **no ongoing updates from the app at all**", and
+`docs/ui-design/0001-ui-polish.md` §5 says "Updates only on state transitions, not per second". Both
+are true of the countdown and false of the **transition**: the card can only change when the app
+posts a content update, and this app's only justification for running with the phone locked is
+background audio — the category the daemon's criterion names. The same mechanism that makes the
+pocketed-phone cues work is the one that appears to disqualify the card. Apple documents no local way
+around it; push-to-update is the supported path, and `docs/spec` chose local updates deliberately
+because this project has no server.
+
+**Mitigation in place, and it is not a fix.** The content carries `staleDate = intervalEnd`, so the
+system marks the card out of date at the moment the interval ends rather than leaving it asserting an
+interval that is over. That is the honest signal available locally.
+
+**Confidence.** The device behaviour is measured by the human; the mechanism is inferred from the
+daemon's log plus public reports. The one reading that would settle which mechanism it is — whether
+the app is running-and-refused, or suspended outright — is the phone's own ActivityKit log across a
+boundary, which needs `sudo log collect` or Console.app on the device. It would not change the card
+either way, and it matters only as a symptom of something else: a suspended app fires no cues while
+pocketed, which the `UIBackgroundModes` design depends on.
+
+**Resolved — accepted, not fixed.** Both documents named above have been corrected to say what the
+surface actually does, and the payload now carries `staleDate = intervalEnd`, so the card goes out of
+date at the moment it stops being true instead of asserting an interval that is over. Push-to-update
+is the only mechanism that would advance it while locked; it needs a paid account and a server, and
+belongs in a PRD rather than in this entry.

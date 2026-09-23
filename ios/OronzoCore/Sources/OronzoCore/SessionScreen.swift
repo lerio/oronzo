@@ -46,7 +46,12 @@ public struct SessionScreen: Equatable, Sendable {
     }
 
     public enum Next: Equatable, Sendable {
-        case exercise(String)
+        /// The exercise coming up, and the load it is prescribed at when it has one.
+        ///
+        /// The load belongs to the same question the name does — *what am I doing next, and with
+        /// what* — and it is worth most on the rest before the exercise, where the current line
+        /// has no weight of its own to show.
+        case exercise(String, weight: String?)
         case last
 
         /// The wording of the next-up line.
@@ -55,9 +60,14 @@ public struct SessionScreen: Equatable, Sendable {
         /// separately in the watch view and the phone runner; the Lock Screen would have made
         /// three hand-written copies of the same two strings, which is the duplication this
         /// whole vocabulary exists to prevent.
+        ///
+        /// The load is held off the name by the same `·` the prefix uses. Run together — `Bench
+        /// Press 20 kg` — a multi-word name and its number read as one phrase on a line this
+        /// narrow, which is the misreading the main screen avoids by stacking them instead.
         public var label: String {
             switch self {
-            case .exercise(let name): "NEXT · \(name)"
+            case .exercise(let name, let weight):
+                if let weight { "NEXT · \(name) · \(weight)" } else { "NEXT · \(name)" }
             case .last: "LAST"
             }
         }
@@ -65,7 +75,7 @@ public struct SessionScreen: Equatable, Sendable {
         /// The exercise name, when there is one. `LAST` is a statement, not a name.
         public var exerciseName: String? {
             switch self {
-            case .exercise(let name): name
+            case .exercise(let name, _): name
             case .last: nil
             }
         }
@@ -197,10 +207,15 @@ public enum SessionPresentation {
         // the answer to "what's next" is that there isn't one, and knowing the last interval is
         // the last one is the most motivating fact this screen can carry, so it gets the slot
         // rather than a blank.
+        //
+        // The load carried is the *upcoming* interval's, which is nil on a rest — so a break
+        // before an unweighted exercise, or before another break, stays a bare `NEXT · Break`
+        // with nothing trailing it. Nothing here special-cases that: it falls out of the interval
+        // the line is about, which is the only one whose load it has any business stating.
         let nextLine: SessionScreen.Next? = if isFinished {
             nil
         } else {
-            upcoming.map { .exercise($0.name) } ?? .last
+            upcoming.map { .exercise($0.name, weight: $0.weightDisplay) } ?? .last
         }
 
         // MARK: Primary
@@ -295,9 +310,14 @@ public enum SessionPresentation {
         }
     }
 
+    /// Written for the ear rather than copied from the drawn form — the same asymmetry the rep
+    /// unit has. `, 20 kg` is how the load is said; the drawn `·` is punctuation for a small
+    /// screen. It has to be spoken at all because both runners hide this line behind the composed
+    /// label, so a load left out here would be one VoiceOver could not reach.
     private static func spoken(_ next: SessionScreen.Next) -> String {
         switch next {
-        case .exercise(let name): "Next: \(name)"
+        case .exercise(let name, let weight):
+            if let weight { "Next: \(name), \(weight)" } else { "Next: \(name)" }
         case .last: "Next: Last interval"
         }
     }
