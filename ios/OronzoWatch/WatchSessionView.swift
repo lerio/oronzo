@@ -11,6 +11,11 @@ struct WatchSessionView: View {
 
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.colorScheme) private var colorScheme
+    /// Whether the wrist is down and the display is in its dimmed, always-on state.
+    ///
+    /// Read from the start but used from now on: this is the system telling an app that nobody is
+    /// looking, and until this pass nothing here listened to it.
+    @Environment(\.isLuminanceReduced) private var isDimmed
 
     @State private var link = WatchLink()
     @State private var runtime = WatchRuntime()
@@ -61,6 +66,12 @@ struct WatchSessionView: View {
         // It is also the one moment watchOS will grant an extended runtime session, so the
         // runtime is re-asserted here: a restart refused in the background succeeds now, and
         // without it a session lost mid-workout never comes back.
+        //
+        // And it is the moment a cue can have been missed. The cue loop sleeps until an exact
+        // instant, and `Task.sleep` does not fire while the app is suspended — so a transition
+        // that fell inside the suspension would never be announced. Raising the wrist re-anchors
+        // the loop and announces on the spot, which turns a missed buzz into a late one. That is
+        // a correctness requirement rather than a nicety: the failure mode without it is silence.
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
                 link.refreshFromContext()
@@ -69,13 +80,33 @@ struct WatchSessionView: View {
                 // failure that reads as "No workout" for a whole workout. `askForState` is a
                 // no-op when there is nothing worth asking about.
                 link.askForState()
-                runtime.setRunning(!link.intervals.isEmpty)
+                syncRuntimeAndCues()
             }
         }
         // Only keep the app alive when there is something to keep it alive for.
-        .onChange(of: link.intervals.isEmpty) { _, isEmpty in
-            runtime.setRunning(!isEmpty)
-        }
+        .onChange(of: keepsRunning) { _, _ in syncRuntimeAndCues() }
+    }
+
+    /// Whether there is still a workout to stay awake for.
+    ///
+    /// **Deliberately not "the phone has sent us intervals".** A finished session keeps its
+    /// intervals — the DONE screen is drawn from them, which is why `WatchLink` does not clear
+    /// them — but it has nothing left to do. The extended runtime session is the only thing
+    /// stopping watchOS suspending us, so holding one for a workout that is already over is how
+    /// the watch stayed awake, redrawing at four times a second, for up to an hour after the last
+    /// set. Every way a session can end lands here: finishing runs its course, ending early, and
+    /// the phone clearing the screen.
+    private var keepsRunning: Bool {
+        !link.intervals.isEmpty && !(link.state?.isFinished ?? false)
+    }
+
+    /// Puts the watch in the state the session calls for: awake, and listening for the next cue.
+    private func syncRuntimeAndCues() {
+        runtime.setRunning(keepsRunning)
+        // Cheap to call on every wrist raise, and that is the point: it announces once on the spot
+        // — which is how a cue missed across a suspension still reaches the wrist — and then works
+        // out for itself whether anything is due.
+        if keepsRunning { link.startHaptics() }
     }
 
     // MARK: - Nothing running
@@ -98,14 +129,42 @@ struct WatchSessionView: View {
 
     // MARK: - Running
 
+    @ViewBuilder
     private var running: some View {
-        // A quarter-second tick keeps the seconds from looking stuck; the phone does not
-        // need to send anything for this to stay correct.
-        TimelineView(.periodic(from: .now, by: 0.25)) { context in
-            if let screen = screen(at: context.date) {
+        if isFinished {
+            // **DONE is drawn without a timeline, and that is what ends the session.**
+            //
+            // Its total is frozen at the moment the workout ended rather than counted from the
+            // clock (`SessionScreen`), so a timer here would repaint the same pixels forever — and
+            // a timer is what kept the app awake, extended runtime session and all, until the phone
+            // happened to clear the screen. Nothing is moving, so nothing needs waking.
+            if let screen = screen(at: .now) {
                 content(screen)
             }
+        } else {
+            TimelineView(tick) { context in
+                if let screen = screen(at: context.date) {
+                    content(screen)
+                }
+            }
         }
+    }
+
+    /// How often the screen repaints while a session runs, and how often it may while nobody is
+    /// looking.
+    ///
+    /// **One second, where this was a quarter of one.** The clock it draws is `M:SS` — it changes
+    /// once a second — so three of every four redraws were repainting identical pixels, on the
+    /// largest thing a watch has to pay for. The value drawn comes from `context.date` rather than
+    /// from a count of ticks, so a slower tick cannot make the clock *wrong*; it can only make a
+    /// second appear late.
+    ///
+    /// Dimmed — wrist down, or the always-on display — drops to once a minute, which is what the
+    /// system asks of an app in that state and more than a screen nobody is reading needs. Nothing
+    /// has to restore the faster rate: raising the wrist changes this and SwiftUI rebuilds the
+    /// schedule.
+    private var tick: PeriodicTimelineSchedule {
+        .periodic(from: .now, by: isDimmed ? 60 : 1)
     }
 
     private func screen(at now: Date) -> SessionScreen? {
@@ -217,29 +276,43 @@ struct WatchSessionView: View {
     /// live while the session is already paused, which keeps a session that was paused on a rest
     /// and then stepped onto a rep set recoverable; that is the job the old pause button did.
     ///
-    /// The blink carries the paused state, so this is where it is applied. It gets its own
-    /// `TimelineView` rather than borrowing the one around the whole screen: that one is there to
-    /// move the countdown, and coupling a second, slower rhythm to it would make both harder to
-    /// reason about — and the two would drift whenever either rate changed.
+    /// **The blink's timeline exists only while there is a blink.** It used to be installed for
+    /// the whole session at four times a second, because `PausedTimerBlink.opacity` returns 1
+    /// immediately when the session is not paused — so most of a workout's redraws existed to draw
+    /// the same opaque clock again. When there is no blink, the same content goes out through the
+    /// same modifier chain without a timeline, so the layout is identical either way.
+    @ViewBuilder
     private func primaryControl(_ screen: SessionScreen) -> some View {
-        TimelineView(.periodic(from: .now, by: PausedTimerBlink.sampleInterval)) { context in
-            let content = primary(screen)
-
-            // Both branches carry the composed label: it belongs on the thing you are looking at,
-            // whether or not that thing is also a button.
-            Group {
-                if screen.allowsPause {
-                    Button { link.send(.togglePause) } label: { content }
-                        .buttonStyle(.plain)
-                        .accessibilityHint(isPaused ? "Double tap to resume" : "Double tap to pause")
-                } else {
-                    content
-                }
+        if isPaused && !isDimmed {
+            TimelineView(.periodic(from: .now, by: PausedTimerBlink.sampleInterval)) { context in
+                primaryControlBody(screen, at: context.date)
             }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(screen.accessibilityAnnouncement)
-            .opacity(PausedTimerBlink.opacity(isPaused: isPaused, at: context.date))
+        } else {
+            primaryControlBody(screen, at: nil)
         }
+    }
+
+    /// The paused state is carried by the timer blinking; see `primaryControl` for when the
+    /// timeline that drives it is built.
+    private func primaryControlBody(_ screen: SessionScreen, at now: Date?) -> some View {
+        let content = primary(screen)
+
+        // Both branches carry the composed label: it belongs on the thing you are looking at,
+        // whether or not that thing is also a button.
+        return Group {
+            if screen.allowsPause {
+                Button { link.send(.togglePause) } label: { content }
+                    .buttonStyle(.plain)
+                    .accessibilityHint(isPaused ? "Double tap to resume" : "Double tap to pause")
+            } else {
+                content
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(screen.accessibilityAnnouncement)
+        // No date means nothing about this view is animating, and the blink is a pure function of
+        // the clock — so "not blinking" and "not paused" are the same answer: fully opaque.
+        .opacity(now.map { PausedTimerBlink.opacity(isPaused: isPaused, at: $0) } ?? 1)
     }
 
     /// The state word carries the meaning; the colour only reinforces it.
@@ -345,6 +418,7 @@ struct WatchSessionView: View {
     }
 
     private var isPaused: Bool { link.state?.isPaused ?? false }
+    private var isFinished: Bool { link.state?.isFinished ?? false }
 
     #if DEBUG
     /// The interval from `-autoNext <seconds>`. See `WatchLink.startAutoNext` for why the watch

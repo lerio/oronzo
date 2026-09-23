@@ -110,6 +110,47 @@ These are not preferences. A paid account ($99/yr) lifts every one of them.
 range-of-motion exercise. It is the longest-lived extended runtime available to us that
 allows background execution, so it is what we use.
 
+## The Lock Screen surface: built, and removed
+
+A Live Activity showing the current interval on the iPhone's Lock Screen was specified (PRD 0001's
+first amendment), built as slice S7, used, and then **deleted**. The reasoning is worth keeping
+because the removal was the correct outcome of a real design flaw rather than a failed
+implementation.
+
+**It worked.** Feasibility question 10 came back positive — a Live Activity provisions on a free
+personal team with no App Groups and no entitlement beyond `NSSupportsLiveActivities`, which was the
+one genuinely uncertain thing in the whole plan. The countdown was right: an absolute end date handed
+to the system, which renders the timer itself, so the clock stayed correct with no per-second traffic.
+That is the same principle the Watch is built on, and it held.
+
+**It could not do the job it was specified for.** The card changes only when the app posts a content
+update. The system's timer is display-only and clamps at `0:00`; the handover to the next interval is
+the app's. And while the phone is locked, iOS does not take a content update from an app whose only
+background justification is audio playback — which is the only kind this app has, and the same
+mechanism that makes the pocketed-phone cues work. So for the half of a workout when the phone was in
+a pocket, the card held whichever interval it had last been handed.
+
+**The stated use case and the mechanism were in conflict from the start.** The amendment's reasoning
+was "the phone sits on a surface with its screen on, so the Lock Screen is what is visible for most of
+a workout" — but a phone left on a surface *locks*, and a locked phone is exactly where the surface
+stopped working. Question 10 asked whether the surface was achievable, and nothing asked what it added
+that the Watch screen did not.
+
+**What it cost, and what that decided.** A widget extension is a third target: its own bundle
+identifier, its own provisioning profile, and therefore a third thing in the seven-day re-sign ritual
+for a free personal team. Push-to-update — the supported path for keeping an Activity current while
+locked — needs a server and a paid account, both of which are non-goals. So the price was real and the
+benefit was a surface that was right only while the phone was in your hand.
+
+The Watch carries the whole no-look burden, as it always did.
+
+**The generalisable rule.** For a surface whose value is not obvious from the design, ask *what does
+this get you that the surface you already have does not* **before** the feasibility work. Feasibility
+is the easier question, and it is the one that feels like progress — it produces a crisp yes or no and
+a working prototype, while the value question produces an argument. Two surfaces were added by
+amendment in one sitting and both were essentially additive; the one that was asked "can we" rather
+than "should we" is the one that is gone.
+
 ## Xcode project generation
 
 `ios/project.yml` is the source of truth; the `.xcodeproj` is generated and gitignored.

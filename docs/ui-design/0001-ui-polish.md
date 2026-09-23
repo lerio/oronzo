@@ -30,13 +30,12 @@ Following the rule to reuse before adding.
 1. The `OronzoCore` token layer — colour roles, type roles, spacing steps (Spec 0001 §1).
 2. An `AccentColor` asset catalogue on the Watch target — without it `.tint`/`Color.accentColor` do not resolve to a colour (`docs/known-issues.md`, and the existing code comment says so).
 3. **A state word element.** No equivalent existed before; state was carried by *dimming the clock* when resting, which is colour-only signalling and fails metric 1. It is now drawn only for the states the exercise name cannot express — see §7.1.
-4. The Live Activity UI.
 
 ---
 
 ## 2. The shared vocabulary
 
-Defined once in `OronzoCore`, consumed by the iPhone app, the Watch app and the Lock Screen extension. Metric 3 counts these; the counts below are the budget.
+Defined once in `OronzoCore`, consumed by the iPhone app and the Watch app. Metric 3 counts these; the counts below are the budget.
 
 ### Colour roles — 8
 
@@ -256,54 +255,29 @@ The phone sits on a surface and is read from 1–2 metres (PRD metric 5). Theref
 The last three reuse `SessionRunner`'s existing `SaveState` copy verbatim. It is already good and
 already distinguishes "saving" from "failed" from "saved"; only its presentation changes.
 
-### The both-visible state
+### The two surfaces cannot disagree
 
-The runner and the Live Activity can be on screen at once only in the sense that the Activity lives
-on the Lock Screen — they are never literally both visible. They **cannot disagree**, because both
-are projections of the same `SessionState` and neither holds state of its own. No reconciliation
-logic is needed, and none should be added.
+The runner and the Watch screen are both projections of the same `SessionState` and neither holds
+state of its own. No reconciliation logic is needed, and none should be added.
 
 ---
 
-## 5. Surface 3 — the Lock Screen Live Activity (direction A, live-tracking)
+## 5. Surface 3 — the Lock Screen Live Activity — *removed*
 
-**Payload constraint:** current interval + next, only. Hard 4 KB `ActivityAttributes` limit — the
-interval list is never sent here (Spec §4).
+**This surface was built, used, and then removed.** Everything below this heading used to describe
+it: the Lock Screen presentation table, its states, the Dynamic Island, and the dimmed behaviour.
 
-### Lock Screen presentation
+It worked, and it was taken out because it was not worth having. Its countdown was correct, but the
+card could not advance while the phone was locked — iOS does not take a content update from an app
+whose only background justification is audio playback, which is the only one available here — so for
+the half of a workout when the phone was in a pocket it held whichever interval it was last handed.
+A surface that is right only while the phone is in your hand, on a phone that is deliberately on a
+surface a metre away, does not earn a third target, a widget extension, and its own share of the
+re-sign ritual. `docs/decisions.md` records the decision.
 
-| Region | Content | Notes |
-|---|---|---|
-| State word | never | `showsBadge` draws `DONE` alone, and a finished session **ends** the Activity, so no state word appears here at all. A paused Lock Screen is signalled by its frozen clock, which the system renders as static text — see the states below. |
-| Exercise name | the current interval — the exercise, or `Break` | Same rule as the Watch: the name slot is what you are in, the next-up line is what comes after |
-| Primary | the clock, driven by the **system's own timer** from the absolute end date — or `8x` for a rep interval | Not app-updated *while it counts*, which is what makes it live without a per-second stream. It is clamped at `0:00` when the date passes and never advances the content itself, so the handover to the next interval is still the app's — see the locked-phone row in the states below. The rep unit is `8x` here too, at **one size** rather than as a smaller suffix: this view is drawn at 34pt and at 15pt, and a suffix sized as a fraction of a number that swings across that range is illegible at the bottom of it. |
-| Set context | `Set 2 of 4` | |
-| Next-up | `NEXT · <name>[ · <load>]`, or `LAST` | Rep intervals show the name and at most a load, never a duration. This payload has no load field of its own, so the next-up line is the only place a weight can appear on this surface at all |
-
-### States
-
-| State | Behaviour |
-|---|---|
-| Running, phone in use | As above. Updates only on state transitions, not per second. |
-| **Running, phone locked** | **The card holds the interval it was last handed.** A transition is the app's job — the system's timer counts down and stops at `0:00`, and never advances the content itself — and while the phone is locked iOS does not take a content update from an app whose only background justification is audio playback, which is the only kind this app has. The card therefore goes **stale** at the interval's end (`staleDate` is that end), and corrects itself the next time the app is in the foreground. Push-to-update is the supported path and this design deliberately has none: see `docs/known-issues.md` §12. |
-| Paused | Clock stops at the frozen remaining value, as static text — a running system timer cannot be paused. It does **not** blink here: the Lock Screen is glanced at rather than watched, and a blinking card on a locked phone is a nuisance. The frozen value is the signal. A paused card carries no stale date: it is still describing the present. |
-| Finished | The Activity is **ended** on the same three paths that send `.sessionEnded` today. |
-| **Live Activities unavailable** | `ActivityAuthorizationInfo().areActivitiesEnabled` is false. **Nothing is shown and nothing is said.** The session runs normally. An unavailable enhancement is never an error state. |
-| **App terminated mid-session** | The Activity outlives the app and will show a stale countdown. It must be ended on next launch — the same phantom-session class of bug the project already fixed once for the Watch. |
-
-### Dynamic Island
-
-Minimal by design: one string and the clock. The compact and minimal presentations have room for
-exactly one, which used to be the state word — so removing `WORK`/`REST` there would have left the
-leading slot empty and `minimal`, which is nothing but the word, entirely blank. They now show the
-**exercise name** where there is no state word to show, and the word where there is. The full name
-still does not fit in the expanded regions and is not worth the compression.
-
-### Always-on, dimmed
-
-The state word badge, where one is drawn, and the primary must both survive dimming — which they do,
-by the no-mid-tones rule.
-**Metric 5's three dimmed trials are the acceptance test for this surface.**
+Deleted with it: the `OronzoWidgets` extension target, `LiveSessionActivity`, the payload type in
+`OronzoCore`, and `NSSupportsLiveActivities` from the app's `Info.plist`. The Watch is the surface
+that carries the no-look burden, and it always was.
 
 ---
 
@@ -353,9 +327,8 @@ no Watch. Only the feel itself needs a wrist.
    nothing to put in it, which is the cheaper of the two — a screen you read from a metre away
    cannot afford a clock that moves.
 5. **Rep intervals never imply a duration**, anywhere.
-6. **No surface invents a state the others lack.** If `DONE` is worth showing on the Watch, the
-   Live Activity ends rather than showing a third treatment — the asymmetry is deliberate and is
-   noted rather than smoothed over.
+6. **No surface invents a state the others lack.** `DONE` is drawn on the Watch, where a glance is
+   least reliable, and spoken everywhere.
 
 ---
 
@@ -369,13 +342,13 @@ Every user-facing string this spec introduces or fixes. Existing strings marked 
 | Watch, finished | `DONE` |
 | Any surface, timed work *(spoken only)* | `WORK` |
 | Any surface, rest *(spoken only)* | `REST` |
-| Watch / Lock Screen / runner, rest interval | `Break` |
-| Watch / Lock Screen, final interval | `LAST` |
-| Watch / Lock Screen, next-up prefix | `NEXT · ` |
+| Watch / runner, rest interval | `Break` |
+| Watch / runner, final interval | `LAST` |
+| Watch / runner, next-up prefix | `NEXT · ` |
 | Any surface, load on the next-up line *(drawn)* | `20 kg`, separated by ` · ` — the load of the interval the line **names**, omitted entirely when that interval has none |
 | Any surface, load on the next-up line *(spoken)* | `, 20 kg` — the ` · ` is punctuation for a small screen, so it is not what is said |
-| Watch / Lock Screen / runner, target load | `20 kg`, under the primary — drawn in every running state, empty when there is none |
-| Watch / Lock Screen / runner, rep unit | `x`, as a suffix on the rep count (`8x`) — `title`-sized on the two runners, where the number is 48–96pt, and one size on the Lock Screen, where it is 34pt or less |
+| Watch / runner, target load | `20 kg`, under the primary — drawn in every running state, empty when there is none |
+| Watch / runner, rep unit | `x`, as a suffix on the rep count (`8x`) — `title`-sized, where the number is 48–96pt |
 | Watch / runner, rep unit *(spoken)* | `8 reps` — the announcement still says the word, because "eight x" is not speech |
 | Watch, idle | `No workout` *(kept)* |
 | Watch, idle hint | `Start a plan on your iPhone` *(kept)* |
@@ -401,12 +374,11 @@ that is a gap in this spec.
 - Fixing `docs/known-issues.md` items, except the two this spec touches: the unroutable
   `WatchControl.finish` (see below) and the phantom-session guard.
 
-**One open question this spec raises and does not settle:** the Watch has no way to end a session
-(`WatchControl.finish` is handled by the phone but unreachable from the Watch UI —
-`docs/known-issues.md` §8). The haptic and state work here makes the omission more visible, because
-`DONE` can now only ever be reached from the phone. **Decide whether to wire it in this pass or
-explicitly defer it** — but note that if it stays unwired, a session abandoned on the phone leaves
-the Live Activity needing to end on a path the Watch cannot trigger.
+**Open question, still open:** the Watch has no way to end a session (`WatchControl.finish` is
+handled by the phone but unreachable from the Watch UI — `docs/known-issues.md` §8). The haptic and
+state work makes the omission more visible, because `DONE` can only ever be reached from the phone.
+It was deferred once as new functionality. It is now the only remaining asymmetry, since the Lock
+Screen surface — the other thing that could not be reached from the wrist — is gone.
 
 ---
 

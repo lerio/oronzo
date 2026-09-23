@@ -13,9 +13,6 @@ struct OronzoApp: App {
                 // Activated once, early, and left alone: there is exactly one WCSession and
                 // it has to be running before a workout starts, not when one does.
                 .task { PhoneConnectivity.shared.activate() }
-                // A force-quit mid-workout would otherwise leave a Lock Screen counting down a
-                // session that ended hours ago — the same phantom the watch link already clears.
-                .task { LiveSessionActivity.endOrphans() }
         }
     }
 }

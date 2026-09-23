@@ -41,10 +41,6 @@
 	</array>
 	<key>UILaunchScreen</key>
 	<dict/>
-	<!-- Required before any Live Activity can start. Without it, Activity.request throws and the
-	     Lock Screen surface silently never appears. See docs/plan/0001-ui-polish.md (S1/S7). -->
-	<key>NSSupportsLiveActivities</key>
-	<true/>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

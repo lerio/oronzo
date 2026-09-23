@@ -8,7 +8,6 @@
 
 export type StepKind = 'exercise' | 'rest';
 export type StepMode = 'time' | 'reps';
-export type SessionStatus = 'in_progress' | 'completed' | 'abandoned';
 
 export interface Exercise {
   id: string;
@@ -20,7 +19,6 @@ export interface Exercise {
   default_mode: StepMode;
   default_duration_seconds: number | null;
   default_reps: number | null;
-  notes: string | null;
 }
 
 /**
@@ -68,7 +66,6 @@ export interface Interval {
   kind: StepKind;
   /** What to show on the Watch: the exercise name, or "Break". */
   name: string;
-  mode: StepMode | null;
   /** Non-null for timed intervals AND for rest intervals. */
   duration_seconds: number | null;
   reps: number | null;
@@ -81,7 +78,6 @@ export interface Interval {
   block_round: number;
   /** How many rounds that block has. */
   block_round_count: number;
-  block_name: string | null;
 }
 
 /** "10 reps", or null for a timed interval. */
@@ -138,21 +134,23 @@ export function flattenPlan(plan: Plan, exerciseNames: Map<string, string>): Int
 
   blocks.forEach((block) => {
     const blockRounds = Math.max(1, block.rounds);
+    // Sorted once, outside the loop: this used to re-sort the same steps on every round, so a
+    // five-round circuit allocated and sorted five identical arrays.
+    const steps = [...block.steps].sort((a, b) => a.position - b.position);
 
     for (let blockRound = 1; blockRound <= blockRounds; blockRound++) {
-      const steps = [...block.steps].sort((a, b) => a.position - b.position);
 
       for (const step of steps) {
         for (let setIndex = 1; setIndex <= Math.max(1, step.sets); setIndex++) {
           intervals.push(
-            toInterval(step, intervals.length, setIndex, blockRound, blockRounds, block, exerciseNames),
+            toInterval(step, intervals.length, setIndex, blockRound, blockRounds, exerciseNames),
           );
 
           if (step.rest_after_seconds && step.rest_after_seconds > 0) {
             intervals.push(
               restInterval(
                 intervals.length, step.rest_after_seconds, setIndex, Math.max(1, step.sets),
-                blockRound, blockRounds, block,
+                blockRound, blockRounds,
               ),
             );
           }
@@ -163,7 +161,7 @@ export function flattenPlan(plan: Plan, exerciseNames: Map<string, string>): Int
         intervals.push(
           restInterval(
             intervals.length, block.rest_between_rounds_seconds, blockRound, 1,
-            blockRound, blockRounds, block,
+            blockRound, blockRounds,
           ),
         );
       }
@@ -179,7 +177,6 @@ function toInterval(
   setIndex: number,
   blockRound: number,
   blockRoundCount: number,
-  block: PlanBlock,
   exerciseNames: Map<string, string>,
 ): Interval {
   const name = step.label || (step.exercise_id ? exerciseNames.get(step.exercise_id) : null) || 'Exercise';
@@ -188,7 +185,6 @@ function toInterval(
     index,
     kind: 'exercise',
     name,
-    mode: step.mode,
     duration_seconds: step.mode === 'time' ? step.duration_seconds : null,
     reps: step.mode === 'reps' ? step.reps : null,
     target_weight_kg: step.target_weight_kg,
@@ -196,7 +192,6 @@ function toInterval(
     set_count: Math.max(1, step.sets),
     block_round: blockRound,
     block_round_count: blockRoundCount,
-    block_name: block.name,
   };
 }
 
@@ -207,13 +202,11 @@ function restInterval(
   setCount: number,
   blockRound: number,
   blockRoundCount: number,
-  block: PlanBlock,
 ): Interval {
   return {
     index,
     kind: 'rest',
     name: REST_LABEL,
-    mode: 'time',
     duration_seconds: duration,
     reps: null,
     target_weight_kg: null,
@@ -221,13 +214,60 @@ function restInterval(
     set_count: setCount,
     block_round: blockRound,
     block_round_count: blockRoundCount,
-    block_name: block.name,
   };
 }
 
-/** Total planned time; rep-based intervals contribute nothing since their length is unknown. */
-export function estimateSeconds(intervals: Interval[]): number {
-  return intervals.reduce((total, i) => total + (i.duration_seconds ?? 0), 0);
+/**
+ * How long a rep-based set takes, per rep.
+ *
+ * **The same constant, for the same reason, as `PlanSummary.secondsPerRep` in `OronzoCore`.** It
+ * is calibrated against a real session: `supabase/plans/monday-upper-body-a.sql` sums to 32.5
+ * minutes of timed work and rest, and its reps take it to about 50 in practice, so this pace lands
+ * the estimate on 45 — the low end of the 45–50 the programme itself claims, which is the right
+ * place for a number read before you start.
+ */
+const SECONDS_PER_REP = 3.7;
+
+/** A duration, and whether any of it had to be estimated. */
+export interface DurationEstimate {
+  seconds: number;
+  /**
+   * True when part of the total is not a duration the plan can prove — a rep target, or a timed
+   * step whose length is missing. A surface showing the seconds must say `~` when this is set.
+   */
+  isEstimate: boolean;
+}
+
+/**
+ * What the workout will actually take: every timed interval, plus an estimate for the reps.
+ *
+ * **This used to count only the timed half, and the two surfaces disagreed about the same plan.**
+ * The iPhone's `PlanSummary` has always estimated rep work; this counted timed seconds alone, so
+ * Monday's plan read ~45 min on the phone and ~32m here. The phone is the one that is right —
+ * counting only what the data can prove gives a floor for a workout that is half reps, which is a
+ * confidently wrong answer rather than a cautious one.
+ *
+ * Measured over the *steps*, not the flattened intervals, so it matches `PlanSummary` exactly: the
+ * flattener emits one interval per set per round, and counting those would silently multiply the
+ * estimate by the block's round count.
+ */
+export function estimatePlanDuration(plan: Plan, intervals: Interval[]): DurationEstimate {
+  const timed = intervals.reduce((total, i) => total + (i.duration_seconds ?? 0), 0);
+
+  let reps = 0;
+  let isEstimate = false;
+  for (const block of plan.blocks) {
+    for (const step of block.steps) {
+      if (step.mode === 'reps') {
+        reps += step.sets * (step.reps ?? 0) * SECONDS_PER_REP;
+        isEstimate = true;
+      } else if (step.duration_seconds == null) {
+        isEstimate = true;
+      }
+    }
+  }
+
+  return { seconds: timed + reps, isEstimate };
 }
 
 export function formatDuration(totalSeconds: number): string {

@@ -28,7 +28,9 @@ import Foundation
 ///   after the final one.
 public enum PlanFlattener {
 
-    public static let restLabel = "Break"
+    /// What a rest is called, wherever it is drawn. Private because it is only ever written into an
+    /// `Interval`'s name here — nothing outside needs to spell it a second way, which is the point.
+    private static let restLabel = "Break"
 
     /// What to call a step.
     ///

@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { createExercise, deleteExercise, listExercises } from '../lib/api';
 import { EQUIPMENT, MUSCLE_GROUPS, type Exercise, type StepMode } from '../lib/types';
 
@@ -58,9 +58,18 @@ export default function Exercises() {
     }
   }
 
-  const visible = exercises.filter((e) => e.name.toLowerCase().includes(filter.toLowerCase()));
-  const seeded = visible.filter((e) => e.user_id === null);
-  const custom = visible.filter((e) => e.user_id !== null);
+  // Memoised because the filter box drives this on every keystroke, and the old form also
+  // lower-cased every exercise's name once per element per render to test it.
+  const { seeded, custom } = useMemo(() => {
+    const needle = filter.trim().toLowerCase();
+    const matched = needle
+      ? exercises.filter((e) => e.name.toLowerCase().includes(needle))
+      : exercises;
+    return {
+      seeded: matched.filter((e) => e.user_id === null),
+      custom: matched.filter((e) => e.user_id !== null),
+    };
+  }, [exercises, filter]);
 
   if (loading) return <p className="muted">Loading exercises…</p>;
 

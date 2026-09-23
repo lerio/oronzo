@@ -36,7 +36,7 @@ Wire types are `private`, suffixed `Row` for reads and `New<Table>` for inserts 
 if you find yourself needing one, the wire struct is misnamed.
 
 TypeScript follows the same split: `PlanStep.exercise_id` is snake_case because it mirrors the
-column, while `flattenPlan` and `estimateSeconds` are camelCase because they are behaviour.
+column, while `flattenPlan` and `estimatePlanDuration` are camelCase because they are behaviour.
 
 ## Data access
 
@@ -121,9 +121,25 @@ introduce Combine.
 first. `ISO8601DateFormatter` was rejected for the same reason (non-Sendable class in a static).
 
 **async/await throughout.** No completion handlers, no `DispatchQueue`, no Combine. The only
-primitives in use are `async let` for parallel fetches and `Task` + `Task.sleep` loops for
-periodic work (engine tick at 10 Hz, watch haptics at 4 Hz) — always stored in a property and
-cancelled explicitly.
+primitives in use are `async let` for parallel fetches and a `Task` + `Task.sleep` loop per surface
+for scheduled work — always stored in a property and cancelled explicitly.
+
+**`OronzoCore` may hold platform-framework-shaped things, and the guard is what makes that safe.**
+`#if os(iOS)` rather than `canImport(ActivityKit)`: the module imports fine on macOS while the symbol
+inside it is unavailable there, so `canImport` compiles the guard and then fails on the type — a
+confusing error in a package that is otherwise plain Swift. The rule outlived the file that taught it.
+The design tokens made the same call from the other direction — plain values, no platform types at
+all — so both that and this exist to keep one property: **`swift test` runs the whole engine on macOS
+in a second.**
+
+**Scheduled, not polled.** A loop never asks the clock whether something has happened; it sleeps
+until the instant something *will*. `OronzoCore.SessionSchedule` computes that instant from the
+session's absolute dates, and it is a pure function so `swift test` can prove it. Both surfaces rest
+entirely on this: the watch used to wake four times a second for the whole workout and the phone ten
+times, and neither needed to — a minute-long interval has four instants at which anything can
+happen. `SessionScheduleTests` counts the wakes a session costs, so a regression to polling fails
+the suite rather than the battery. The display cadences (`TimelineView`) are separate from this and
+are stated where they are set.
 
 **Web has no state library.** `useState` + `useEffect`, one `Plan` object per editor, nested
 arrays, and a single `mutate()` funnel that runs `normalize()` on every change.

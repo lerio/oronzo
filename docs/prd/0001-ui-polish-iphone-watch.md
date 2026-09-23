@@ -1,8 +1,8 @@
 # PRD 0001 — UI/UX polish, iPhone and Apple Watch
 
-**Status:** **approved** — 16 September 2026, then **amended** the same day to add a third surface and a distance-legibility requirement. See [Amendment](#amendment).
+**Status:** **approved** — 16 September 2026, then **amended** the same day to add a third surface and a distance-legibility requirement. **Amended a second time, 23 September 2026: that third surface was built, used, and removed** — see [Amendment](#amendment).
 **Date:** 16 September 2026
-**Scope:** iPhone app, Apple Watch app, and the iPhone Lock Screen while a session runs. The web plan builder is explicitly deferred.
+**Scope:** iPhone app and Apple Watch app. The Lock Screen surface was added by amendment and later removed; the web plan builder is explicitly deferred.
 
 ---
 
@@ -48,12 +48,12 @@ Design work resists numbers, so the numbers below are deliberately behavioural t
 
 ## Scope
 
-**In scope for v1 — the three surfaces where the product is actually used:**
+**In scope for v1 — the two surfaces where the product is actually used:**
 
 1. **The session runner (iPhone)** — the screen(s) visible for the entire duration of a workout. The highest-value surface by a wide margin: it is on screen for 45 minutes, where every other screen is on screen for seconds.
 2. **The Watch session screen** — the glance surface. The hardest constraint and the one where the 3-second test is won or lost.
-3. **The Lock Screen while a session runs (iPhone)** — *added by amendment.* The phone sits on a surface with its screen on, so when the app is not foregrounded **this is what is actually visible for most of a workout.** Specified as **live-tracking**: it stays present for the whole session and counts down with it, rather than refreshing on a periodic schedule the way a weather widget does. For a countdown only the live form is usable — a periodic refresh would display a *stale* time, which is worse than displaying nothing, because a wrong number is acted on. Feasibility is question 10, and it is the most uncertain item in this PRD.
-4. **The visual language those three force** — type scale, spacing, colour roles, and how state (working / resting / paused / finished) is expressed. Defined once, applied consistently.
+3. **The Lock Screen while a session runs (iPhone)** — *added by amendment, **built, and then removed** (23 September 2026); kept below as the record of what was approved and why it did not last.* The original specification: The phone sits on a surface with its screen on, so when the app is not foregrounded **this is what is actually visible for most of a workout.** Specified as **live-tracking**: it stays present for the whole session and counts down with it, rather than refreshing on a periodic schedule the way a weather widget does. For a countdown only the live form is usable — a periodic refresh would display a *stale* time, which is worse than displaying nothing, because a wrong number is acted on. Feasibility is question 10, and it is the most uncertain item in this PRD.
+4. **The visual language those surfaces force** — type scale, spacing, colour roles, and how state (working / resting / paused / finished) is expressed. Defined once, applied consistently.
 
 **In scope if cheap once the above is settled** — these are seconds-long exposures, so they follow the system rather than driving it: sign-in, plan list, plan detail, session summary.
 
@@ -64,7 +64,7 @@ Stated plainly, because several of these are tempting:
 - **The web plan builder.** Deferred by decision, not oversight. It is a desk-bound authoring surface with entirely different constraints, and designing it in the same pass would produce a compromise. It gets its own PRD, and should inherit the visual language rather than co-author it.
 - **Any new functionality.** No new workout types (EMOM/AMRAP), no per-step logging of reps or load, no charts, no calendar. This is a design pass over what exists.
 - **Changing the product's core premise.** The Watch stays a renderer and remote; the phone stays the source of truth. No watch-standalone execution.
-- **Anything gated behind a paid Apple account** — HealthKit, Activity ring credit, and the constraints that come with the free tier are accepted as given. *Note the tension with the Lock Screen surface, which the amendment added and which may be limited by exactly those constraints. That is why feasibility question 10 is asked first: if the free tier will not support it, the surface goes, and this non-goal stands. The non-goal is not quietly relaxed to keep a surface.*
+- **Anything gated behind a paid Apple account** — HealthKit, Activity ring credit, and the constraints that come with the free tier are accepted as given. *This non-goal is what the Lock Screen surface ran into, and it is exactly the case the note below anticipated: the surface went, and the non-goal stood. It went for a free-tier reason, though not the one question 10 asked about — see the second amendment.*
 - **A brand identity.** No logo, no marketing surface, no name change. (App icon: see open questions — currently leaning out of scope.)
 - **Accessibility beyond the basics** is not deferred entirely, but see open questions: Dynamic Type and colour-independence for work/rest are treated as *requirements*, not nice-to-haves, because the 3-second test is unwinnable without them.
 
@@ -177,3 +177,32 @@ It is recorded rather than folded in silently, because it is a real change to wh
 Next in the pipeline: `spec-writer` assesses the feasibility questions, **starting with 10** — whether a live-tracking Lock Screen surface is achievable on a free personal team at all. `ui-design-spec` then defines every screen state, accessibility behaviour and the actual copy before any implementation.
 
 **One consequence worth stating plainly:** if question 10 comes back negative, that is not a failure of the plan — it means the phone stays a foreground-only companion and the Watch carries the whole no-look burden. The PRD should then be amended a second time rather than quietly dropping the surface.
+
+### Second amendment — the Lock Screen surface was removed
+
+**23 September 2026, after the surface had been built and used.** Question 10 came back **positive**:
+a Live Activity provisions and runs on a free personal team, with no App Groups and no entitlement
+beyond `NSSupportsLiveActivities`. The surface was built and worked as specified.
+
+It was removed because it could not do the job it was specified for. The card's countdown was
+correct — a system-rendered timer from an absolute end date, exactly as designed — but the *handover*
+from one interval to the next is the app's, and while the phone is locked iOS does not take a content
+update from an app whose only background justification is audio playback. That is the only kind this
+app has, and it is the same mechanism that makes the pocketed-phone cues work. So for the half of a
+workout when the phone was in a pocket, the card held whichever interval it had last been handed.
+
+Push-to-update is the supported path and would need a server and a paid account. Rather than carry a
+widget extension — a third target with its own bundle identifier and provisioning profile, and
+therefore a third thing in the weekly re-sign — for a surface that was right only while the phone was
+in your hand, it was deleted. The Watch carries the whole no-look burden, which is what the paragraph
+above anticipated for a *different* reason and is the right answer for this one.
+
+**What this PRD got wrong, and it is worth recording.** Question 10 asked whether the surface was
+*achievable*, and it was. Nobody asked what it added that the Watch screen did not. The amendment's
+own framing — "the phone sits on a surface with its screen on, so the Lock Screen is the surface
+visible for most of a workout" — contains the flaw: a phone left on a surface *locks*, and a locked
+phone is precisely where the surface stopped working. The stated use case and the mechanism were in
+conflict from the start, and the feasibility question could not surface that.
+
+`docs/decisions.md` records the decision; `docs/spec/0001-ui-polish.md` Q10 records the corrected
+reasoning.

@@ -125,13 +125,40 @@ final class WatchLink: NSObject {
     // The watch does this itself rather than waiting to be told, because a buzz is exactly
     // what you need when you are not looking at either screen.
 
+    /// Starts the cue loop, or re-anchors it if it is already running.
+    ///
+    /// **This used to wake four times a second for the whole session, and that is what cost the
+    /// battery.** It sampled the projected position and asked whether anything had changed — but
+    /// nothing here needs watching for, because every deadline is an absolute date the phone
+    /// already sent. `SessionSchedule` says which instant is next, so the loop sleeps until it
+    /// instead of asking 4,300 times an hour whether it has arrived. Measured on a 15-minute
+    /// session: 80 wakes, against 3,600 for the poll (`SessionScheduleTests`).
+    ///
+    /// Restarting re-anchors, and never clears `lastMoment` — that memory is what distinguishes a
+    /// transition from a first sighting, and losing it would silence the cue on the path that
+    /// matters most.
     func startHaptics() {
         haptics?.cancel()
         haptics = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(250))
                 guard let self else { return }
+                // Announce first, then sleep: a snapshot arriving mid-interval has to buzz on
+                // arrival rather than at the next boundary, and `announce` is idempotent — it
+                // compares against `lastMoment` and `lastCountdownSecond` before playing.
                 self.announce(now: .now)
+
+                // nil means nothing is due: a rep interval (only the phone can move it on), a
+                // paused session, a finished one, or no session at all. The loop ends; `apply`
+                // starts a new one when the phone says something new.
+                guard let next = self.nextWake() else { return }
+
+                // `nextEvent` and `nextSecond` are both strictly after the moment they were
+                // asked about, so this is normally positive. When it is not, the world moved in
+                // the gap: loop again, which re-reads the clock and recomputes — it cannot spin,
+                // because the next answer is always ahead of the newer `now`.
+                let delay = next.timeIntervalSinceNow
+                guard delay > 0 else { continue }
+                try? await Task.sleep(for: .seconds(delay))
             }
         }
     }
@@ -141,6 +168,18 @@ final class WatchLink: NSObject {
         haptics = nil
         lastMoment = nil
         lastCountdownSecond = nil
+    }
+
+    /// The next instant at which anything can happen, from wherever the session is now.
+    private func nextWake() -> Date? {
+        let now = Date()
+        let (_, end) = position(at: now)
+        return SessionSchedule.nextEvent(
+            after: now,
+            end: end,
+            isPaused: state?.isPaused ?? false,
+            isFinished: state?.isFinished ?? false
+        )
     }
 
     private func announce(now: Date) {

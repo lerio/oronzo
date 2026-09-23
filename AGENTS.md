@@ -75,6 +75,11 @@ Full detail in `docs/patterns.md`. The short version:
 - **Time is injected, never read from the clock.** The engine takes `now: Date` as a parameter, so
   it is deterministically testable and suspension-safe. `intervalEnd` is an absolute `Date`, never
   a decrementing counter.
+- **A surface sleeps until the next instant something can happen — it never polls.** Every deadline
+  in a session is an absolute date, so the next one is arithmetic: `OronzoCore.SessionSchedule`
+  computes it as a pure function and both runners sleep to it. This is not a style preference —
+  polling four times a second for an hour is what drained the Watch, and `SessionScheduleTests`
+  counts the wakes so a regression fails the suite rather than the battery.
 - **iOS state is `@MainActor @Observable final class`** (Observation, not Combine). Nonisolated
   delegate callbacks hop with `Task { @MainActor in ... }`.
 - **Plans save atomically** through the `save_plan` RPC — never as sequential client calls.
@@ -82,7 +87,7 @@ Full detail in `docs/patterns.md`. The short version:
 ## Commands
 
 ```bash
-cd ios/OronzoCore && swift test      # 137 tests, no simulator or signing — run this first
+cd ios/OronzoCore && swift test      # 140 tests, no simulator or signing — run this first
 cd ios && xcodegen generate          # after editing ios/project.yml or adding files
 cd web && npm run dev                # localhost:5173
 cd web && npm run build              # tsc -b is what catches stale field references

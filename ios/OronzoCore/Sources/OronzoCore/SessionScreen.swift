@@ -71,14 +71,6 @@ public struct SessionScreen: Equatable, Sendable {
             case .last: "LAST"
             }
         }
-
-        /// The exercise name, when there is one. `LAST` is a statement, not a name.
-        public var exerciseName: String? {
-            switch self {
-            case .exercise(let name, _): name
-            case .last: nil
-            }
-        }
     }
 
     public let stateWord: StateWord
@@ -323,7 +315,7 @@ public enum SessionPresentation {
     }
 
     /// Durations in words, because "47m 0s" read aloud is noise.
-    static func spokenDuration(_ seconds: TimeInterval) -> String {
+    private static func spokenDuration(_ seconds: TimeInterval) -> String {
         let total = Int(max(0, seconds).rounded())
         if total < 60 { return plural(total, "second") }
 

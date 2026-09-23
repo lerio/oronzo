@@ -20,9 +20,11 @@ device session that lands badly can be interrupted by a re-sign.
 **So: batch device runs deliberately.** S3 and S6 in particular both want a Watch on a wrist, and
 there is no reason they should be two separate sessions.
 
-**2. One slice is an unknown, and it gates exactly one other slice.** S1 answers whether a Live
-Activity provisions at all on this account. **Nothing except S7 depends on the answer**, which is
-why S1 is cheap to run first and cheap to fail.
+**2. One slice was an unknown, and it gated exactly one other slice.** S1 answered whether a Live
+Activity provisions at all on this account, and **nothing except S7 depended on the answer** — which
+is why S1 was cheap to run first and cheap to fail. The answer came back yes, S7 was built on it, and
+S7 was then removed anyway. The spike was not the mistake; asking only whether it *could* work, and
+never whether it *should*, was.
 
 ---
 
@@ -50,40 +52,35 @@ in a few minutes — no session required.
 
 ## The slices
 
-| # | Slice | Depends on | Device? | Gate |
+| # | Slice | Depends on | Device? | Outcome |
 |---|---|---|---|---|
-| S1 | Live Activity feasibility spike | — | iPhone | **Blocks S7 only** |
-| S2 | Shared vocabulary in `OronzoCore` | — | No | Blocks S3, S5, S7 |
-| S3 | Watch session screen | S2 | **Watch** | Highest value |
-| S4 | The `DONE` snapshot | S3 | **Watch** | Wire-format risk |
-| S5 | iPhone session runner | S2 | iPhone | |
-| S6 | Haptic vocabulary | — | **Watch** | Device-only |
-| S7 | Lock Screen Live Activity | S1, S2 | iPhone | May not survive S1 |
+| S1 | Live Activity feasibility spike | — | iPhone | Done — the answer was yes |
+| S2 | Shared vocabulary in `OronzoCore` | — | No | Done |
+| S3 | Watch session screen | S2 | **Watch** | Done |
+| S4 | The `DONE` snapshot | S3 | **Watch** | Done |
+| S5 | iPhone session runner | S2 | iPhone | Done |
+| S6 | Haptic vocabulary | — | **Watch** | Done, device-verified |
+| S7 | Lock Screen Live Activity | S1, S2 | iPhone | **Built, used, removed** |
 
-**Order of execution: P0 → S1 → S2 → S3 → S4 → S5 → S6 → S7.**
-
-S6 has no dependency on any other slice and could run at any point after P0. It is placed last
-only because it is device-only — run it in the same device session as S3 or S4's verification
-rather than opening a wrist-sized session of its own.
+**Executed in order: P0 → S1 → S2 → S3 → S4 → S5 → S6 → S7.** Every slice but the last shipped and
+is in daily use; S7 shipped too, and was then deleted once it had been used enough to judge. Its
+removal is recorded in `docs/decisions.md`, and the reasoning that held up is under S1 and S7 below.
 
 ---
 
-### S1 — Live Activity feasibility spike
+### S1 — Live Activity feasibility spike — *done*
 
-**Delivers:** an answer. Does a Live Activity provision, start and appear on the Lock Screen on a
-free personal team?
+**Delivered:** the answer. Yes — a Live Activity provisions, starts and appears on the Lock Screen
+on a free personal team, with no App Groups and no entitlement beyond `NSSupportsLiveActivities`.
 
-**Time-boxed and disposable.** A widget extension target, `NSSupportsLiveActivities`, and a
-trivial Activity showing fixed text. No design, no integration, no tests. The code is expected to
-be thrown away — S7 rewrites it properly.
+**Kept because the finding outlived the surface:** `ActivityAttributes` types may live in
+`OronzoCore`, but they must be guarded on **`os(iOS)`, not on `canImport(ActivityKit)`** — the module
+imports fine on macOS while `ActivityAttributes` itself is unavailable there, so `canImport` compiles
+the guard and then fails on the symbol. That rule now lives in `docs/patterns.md`, where it stands on
+its own; its example file was deleted with the surface.
 
-**How it is verified:** on the iPhone. Start the Activity, lock the phone, confirm it appears.
-
-**Done when:** either (a) an Activity is visible on the Lock Screen, or (b) it is not, and the
-failing step is named. **Both outcomes are done.** (b) means S7 is dropped and the PRD is amended a
-second time — which the PRD already anticipates and which costs one surface, not the plan.
-
-**Does not include:** anything reusable. Do not build the real payload here.
+**Time-boxed and disposable, and it was.** The target plumbing is what S7 built on; the spike's own
+view code was replaced wholesale, as planned.
 
 ---
 
@@ -214,34 +211,32 @@ a cue cannot clear it, it does not ship.
 
 ---
 
-### S7 — Lock Screen Live Activity
+### S7 — Lock Screen Live Activity — *built, then removed*
 
-**Delivers:** `UI design §5` — a live-tracking Activity carrying current interval plus next,
-system-driven timer, state word, and the ending behaviour on all completion paths.
+**Delivered** `UI design §5` in full: a live-tracking Activity carrying the current interval plus
+the next, a system-driven timer, and the ending behaviour on every completion path. It met its own
+"done when" — it tracked a real session, survived dimming, and disappeared cleanly however the
+session ended. The payload stayed far under the 4 KB ceiling (`SessionActivityTests` pinned that,
+including the worst-case plan).
 
-**Blocked by S1.** If S1 came back negative, this slice does not exist and the PRD is amended
-rather than the surface quietly disappearing.
+**Then it was deleted, because meeting the bar was not the same as being worth it.** The card could
+not advance while the phone was locked: the system's timer is display-only and clamps at `0:00`, the
+handover to the next interval is the app's job, and iOS does not take a content update from an app
+whose only background justification is audio playback — which is the only kind this app has, and the
+same mechanism that makes the pocketed-phone cues work. So for most of a workout, on a phone
+deliberately left on a surface a metre away, the card held whichever interval it had last been
+handed. Push-to-update is the supported path and would need a server and a paid account.
 
-**How it is verified:**
-- On an iPhone: **metric 5** and the dimmed always-on trials, which are this surface's acceptance
-  test.
-- Live Activities disabled (`areActivitiesEnabled == false`): the session must run normally with
-  the surface simply absent, and **nothing said about it**. An unavailable enhancement is not an
-  error state.
-- Force-quit the app mid-session and relaunch: the Activity must not outlive the session as a stale
-  countdown — the phantom-session class of bug the project already fixed once for the Watch.
-- All completion paths end the Activity.
-- Confirm the payload stays under the 4 KB `ActivityAttributes` limit — and keep it to current plus
-  next; the interval list must never be sent here.
+**What the verification list above missed** is the one thing that would have caught it: *use it for
+a real workout with the phone in a pocket.* Every item on the list passes with the phone in your
+hand, and every item on it passes with the phone locked. The list tested the surface; it never
+tested the situation the surface was for.
 
-**Done when:** the surface tracks a real session correctly, survives dimming, and disappears
-cleanly on every way a session can end. Plus the documented re-sign step in `docs/runbook.md` for
-the new target.
-
-**Watch out for:** sending the whole interval list "for consistency with the Watch". That is
-exactly the mistake `docs/integration-contracts.md` warns about in reverse — the Watch sends
-everything because the application context is one slot; the Activity must not, because of the size
-limit. Same principle, opposite conclusion, and both are deliberate.
+**Watch out for — and this one held up.** Sending the whole interval list "for consistency with the
+Watch" is the mistake `docs/integration-contracts.md` warns about in reverse: the Watch sends
+everything because the application context is one slot, the Activity must not because of the size
+limit. Same principle, opposite conclusion, both deliberate. That reasoning survived the surface and
+is recorded in `docs/spec/0001-ui-polish.md` §4 for whatever is added next.
 
 ---
 
@@ -252,41 +247,45 @@ limit. Same principle, opposite conclusion, and both are deliberate.
 - **Wiring `WatchControl.finish`.** **Decision taken: deferred, not open.** It is *new
   functionality*, and the PRD excludes new functionality from this pass. The design spec flagged
   that `DONE` makes the omission more visible, and it does — but visibility is not a reason to
-  expand scope. Note that all Live Activity end paths are phone-triggered, so S7 does not depend
-  on it.
+  expand scope. It was deferred once on that reasoning and is still deferred; it is now the only
+  remaining asymmetry, since the Lock Screen surface is gone (see `docs/known-issues.md` §8).
 - **The web plan builder.** Its own PRD.
-- **Fixing other `docs/known-issues.md` items**, except the two this work touches for its own
-  reasons: the phantom-session guard (S7) and the missing VoiceOver labels (S3).
+- **Fixing other `docs/known-issues.md` items**, except the two this work touched for its own
+  reasons: the phantom-session guard and the missing VoiceOver labels (S3). The phantom guard
+  outlived the surface that motivated it and is now `PhoneConnectivity.clearIfIdle()`.
 - **App icon** — Q8, out of scope.
 
 ---
 
 ## What could invalidate this plan
 
+Borne out, in the end: none of the risks below materialised, and the surface the plan spent most of
+its attention on was the one that did not survive. Kept as the shape of the reasoning rather than as
+a live warning.
+
 | If this happens | Then |
 |---|---|
-| **S1 fails** | S7 is dropped, the PRD is amended, and the Watch carries the whole no-look burden. Slices S2–S6 are unaffected. |
-| **S2's tokens cannot stay plain Swift** | The vocabulary moves to a small separate target or a per-app file, and metric 3 loses its structural guarantee — becoming discipline again. This is the plan's quietest risk and S2 tests it immediately. |
-| **S3 fails metric 1** | Direction A is wrong for the Watch. That is worth knowing before S5 and S7 are built on the same vocabulary. |
-| **A 7-day profile expiry lands mid-slice** | Re-sign and resume; `/resign` covers it. Budget for it rather than being surprised. |
+| **S1 fails** | S7 is dropped, the PRD is amended, and the Watch carries the whole no-look burden. Slices S2–S6 are unaffected. **Did not happen** — S1 passed. |
+| **S2's tokens cannot stay plain Swift** | The vocabulary moves to a small separate target or a per-app file, and metric 3 loses its structural guarantee — becoming discipline again. **Did not happen**; the tokens stayed plain values in `OronzoCore`. |
+| **S3 fails metric 1** | Direction A is wrong for the Watch. **Did not happen.** |
+| **A 7-day profile expiry lands mid-slice** | Re-sign and resume; `/resign` covers it. **Happened repeatedly, handled each time by `/resign`.** |
 
 ---
 
-## Discovery from S1 — for S2 and S7
+## Discovery from S1 — kept, because the rule outlived its example
 
-Recorded here rather than in the PR, because a PR description scrolls away and S7 will need this.
+Recorded here rather than in the PR, because a PR description scrolls away. Its subject file is gone;
+the rule is not, and it lives on in `docs/patterns.md`.
 
 **ActivityKit types may live in `OronzoCore`, but they must be guarded on `os(iOS)` — *not* on
-`canImport(ActivityKit)`.** The module imports fine on macOS; it is `ActivityAttributes` itself
-that is marked unavailable there. So `canImport` compiles the guard and then fails on the symbol,
-which is a confusing error in a package that is otherwise plain Swift.
+`canImport(ActivityKit)`.** The module imports fine on macOS; it is `ActivityAttributes` itself that
+is marked unavailable there. So `canImport` compiles the guard and then fails on the symbol, which is
+a confusing error in a package that is otherwise plain Swift.
 
-`#if os(iOS)` is correct and sufficient: it keeps the type out of the macOS build (`swift test`
-still runs, verified — 56 passing) and out of the Watch target, which has no use for it.
+`#if os(iOS)` is correct and sufficient: it keeps the type out of the macOS build — so `swift test`
+still runs — and out of the Watch target.
 
-This matters for **S2**: design tokens expressible as plain values remain unaffected, but the same
-guard discipline is the rule for anything that is platform-framework-shaped. `OronzoCore` can host
-such things; it must simply fence them.
-
-It matters for **S7**: the real `ActivityAttributes` will live alongside `SpikeActivity.swift` and
-needs the identical guard.
+The general form is worth keeping: **`OronzoCore` can host platform-framework-shaped things, and the
+guard is what makes that safe.** The design tokens made the same choice from the other direction —
+plain values, no platform types at all — and both approaches were in service of the same thing:
+`swift test` running the whole engine on macOS in a second.

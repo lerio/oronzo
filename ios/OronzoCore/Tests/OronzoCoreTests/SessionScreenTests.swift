@@ -283,6 +283,22 @@ final class SessionScreenTests: XCTestCase {
         )
     }
 
+    /// `NEXT · X` was written out separately in the watch and the phone runner, and a third copy
+    /// for the Lock Screen was exactly the drift the shared vocabulary exists to stop. The Lock
+    /// Screen is gone; this stays, because the line is still read by two surfaces and this is the
+    /// only place its wording is pinned.
+    func testTheNextLabelIsWordedOnce() {
+        XCTAssertEqual(
+            SessionScreen.Next.exercise("Lat Pulldown", weight: nil).label,
+            "NEXT · Lat Pulldown"
+        )
+        XCTAssertEqual(
+            SessionScreen.Next.exercise("Lat Pulldown", weight: "20 kg").label,
+            "NEXT · Lat Pulldown · 20 kg"
+        )
+        XCTAssertEqual(SessionScreen.Next.last.label, "LAST")
+    }
+
     // MARK: - Rep intervals never imply a duration
 
     func testARepIntervalShowsRepsAndNeverAClock() {

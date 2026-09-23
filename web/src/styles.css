@@ -326,8 +326,8 @@ textarea:focus {
    Scoped to `.step-row` rather than `.inline-field` because this select is a bare child of
    the row, not wrapped in a label like the numeric fields — and it needs the extra class
    to outrank `.step-row select`, which lets selects grow to fill the row. Without both,
-   it stretches to ~150px whatever width is set here. The exercise-name select is the one
-   that should take the slack. */
+   it stretches to ~150px whatever width is set here. The exercise-name slot is the one
+   that should take the slack, and it is `ExercisePicker`'s flex-grow that does it. */
 .step-row .w-mode {
   width: calc(4ch + 48px);
   flex: 0 0 auto;
@@ -463,11 +463,6 @@ textarea:focus {
 
 .step-row input {
   width: auto;
-}
-
-.step-row > input {
-  flex: 1 1 140px;
-  min-width: 120px;
 }
 
 .step-index {

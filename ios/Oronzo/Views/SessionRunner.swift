@@ -20,6 +20,13 @@ struct SessionRunner: View {
     @State private var saving: SaveState = .idle
     @State private var confirmingFinish = false
 
+    /// `idle` means *not saved yet*, not *saving*.
+    ///
+    /// It used to render alongside `saving` as "Saving to history…", which is what this screen said
+    /// for the whole of every workout — because nothing ever called `persist`. The only call site
+    /// was a "Try again" button inside the `.failed` branch, and `.failed` is a state only
+    /// `persist` itself can set, so the label promised a save that could not happen. It has a
+    /// caller now, and the two states say different things.
     private enum SaveState: Equatable {
         case idle
         case saving
@@ -50,17 +57,34 @@ struct SessionRunner: View {
         }
         .onAppear { controller.start() }
         .onDisappear { controller.teardown() }
+        // **The call that was missing.** A session that runs its course or is ended early lands in
+        // `controller.completed`, and this is what writes it down; without it the summary promised
+        // a history entry forever and the web History page had nothing to read. `SessionLogger` was
+        // already written and correct — it simply had no reachable caller.
+        //
+        // On `completed` rather than on the summary appearing, so the write starts at the moment
+        // the workout ends rather than when the runner is torn down with it.
+        .onChange(of: controller.completed) { _, completed in
+            guard let completed else { return }
+            Task { await persist(completed) }
+        }
     }
 
     // MARK: - Running
 
     private var runner: some View {
-        VStack(spacing: 0) {
+        // **One `SessionScreen` per redraw, not two.** `live` and the pause question each built
+        // their own, from the same state, in the same body — and the model is not free: it composes
+        // the spoken announcement on every call. Building it once and handing it down answers both
+        // from one answer, which is what it always was.
+        let screen = controller.screen(at: .now)
+
+        return VStack(spacing: 0) {
             topBar
             Spacer(minLength: SpacingStep.roomy.points)
-            live
+            live(screen)
             Spacer(minLength: SpacingStep.roomy.points)
-            controls
+            controls(screen)
         }
         .padding(.horizontal, SpacingStep.edge.points)
         .padding(.top, SpacingStep.roomy.points)
@@ -78,8 +102,8 @@ struct SessionRunner: View {
     }
 
     @ViewBuilder
-    private var live: some View {
-        if let screen = controller.screen(at: .now) {
+    private func live(_ screen: SessionScreen?) -> some View {
+        if let screen {
             // Only the states the exercise name cannot say get a badge — which on this surface
             // means `PAUSED` alone. A finished session replaces the runner with the summary, so
             // `DONE` never reaches here.
@@ -91,16 +115,26 @@ struct SessionRunner: View {
             // line that appears and pushes the title and the clock down as it does, which is the
             // shifting this screen has just spent a pass getting rid of.
             //
-            // Its own `TimelineView` because the runner's re-render is driven by the session tick,
-            // and the tick stops when the session is paused — so a paused screen would never
-            // redraw, and the blink would sit at whichever half it happened to be caught in.
+            // It gets a `TimelineView` of its own because the tick stops while the session is
+            // paused — there is nothing left for it to count — so the runner stops redrawing, and
+            // the blink would sit at whichever half it happened to be caught in.
+            //
+            // **And only while paused, which is the part that was wrong.** It used to be installed
+            // for the whole session, four samples a second, with `opacity` returning 1 immediately
+            // when nothing was paused: a redraw whose entire purpose was to draw the same opaque
+            // clock again. Unpaused, the same content goes out through the same modifier chain
+            // without a timeline, so the layout is identical either way.
             //
             // The same construct and the same rule as the watch. A `.repeatForever` opacity
             // animation was tried first and settles rather than oscillating, leaving the timer
             // invisible for the whole pause.
-            TimelineView(.periodic(from: .now, by: PausedTimerBlink.sampleInterval)) { context in
+            if controller.isPaused {
+                TimelineView(.periodic(from: .now, by: PausedTimerBlink.sampleInterval)) { context in
+                    primary(screen)
+                        .opacity(PausedTimerBlink.opacity(isPaused: true, at: context.date))
+                }
+            } else {
                 primary(screen)
-                    .opacity(PausedTimerBlink.opacity(isPaused: controller.isPaused, at: context.date))
             }
 
             // The target load sits under the primary, not under the name: the two are one figure
@@ -244,12 +278,13 @@ struct SessionRunner: View {
     /// Whether a pause control applies, from the shared model so the watch cannot disagree.
     ///
     /// Defaults to offering it: a screen that failed to build is no reason to take a control
-    /// away, and `allowsPause` needs a real `SessionScreen` to answer.
-    private var allowsPause: Bool {
-        controller.screen(at: .now)?.allowsPause ?? true
+    /// away, and `allowsPause` needs a real `SessionScreen` to answer. The screen is passed in
+    /// rather than built again here, because `live` has already built the same one.
+    private func allowsPause(_ screen: SessionScreen?) -> Bool {
+        screen?.allowsPause ?? true
     }
 
-    private var controls: some View {
+    private func controls(_ screen: SessionScreen?) -> some View {
         HStack(spacing: 28) {
             Button {
                 controller.goBack()
@@ -263,7 +298,7 @@ struct SessionRunner: View {
             .disabled(controller.position <= 1)
             .accessibilityLabel("Previous")
 
-            if allowsPause {
+            if allowsPause(screen) {
                 Button {
                     controller.isPaused ? controller.resume() : controller.pause()
                 } label: {
@@ -361,7 +396,12 @@ struct SessionRunner: View {
     @ViewBuilder
     private var saveStatus: some View {
         switch saving {
-        case .idle, .saving:
+        // Nothing to say yet. This is where the false "Saving to history…" label lived: it was
+        // shown for `idle`, which is the state this screen sits in until a workout ends.
+        case .idle:
+            EmptyView()
+
+        case .saving:
             Label("Saving to history…", systemImage: "arrow.triangle.2.circlepath")
                 .font(.footnote)
                 .foregroundStyle(.secondary)

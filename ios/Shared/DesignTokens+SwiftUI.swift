@@ -3,9 +3,9 @@ import SwiftUI
 
 /// Maps the shared vocabulary onto SwiftUI.
 ///
-/// **One file, compiled into all three surfaces** — the iPhone app, the Watch app and the Lock
-/// Screen extension. It lives in `Shared/` rather than inside any one of them precisely so that
-/// happens: `ios/project.yml` lists this folder in each target's sources.
+/// **One file, compiled into both surfaces** — the iPhone app and the Watch app. It lives in
+/// `Shared/` rather than inside either of them precisely so that happens: `ios/project.yml` lists
+/// this folder in each target's sources.
 ///
 /// It cannot live in `OronzoCore`, because `Package.swift` is explicit that the package has no
 /// SwiftUI dependency — that is what keeps `swift test` running the whole engine on macOS in a
@@ -13,9 +13,9 @@ import SwiftUI
 /// rest of the vocabulary uses.
 ///
 /// The conversion is mechanical and generic over the roles: adding a ninth colour or a fifth
-/// spacing step needs no change here, and the *values* are never restated. That is what made it
-/// tolerable to duplicate this twice; with a third surface it stopped being tolerable, and a
-/// shared source folder is a smaller answer than a fourth SwiftPM target.
+/// spacing step needs no change here, and the *values* are never restated. It was written into a
+/// shared folder when a third surface made duplicating it intolerable; that surface is gone and the
+/// folder stays, because two copies were already one too many.
 extension Color {
     init(_ token: TokenColor) {
         self.init(.sRGB, red: token.red, green: token.green, blue: token.blue, opacity: token.alpha)

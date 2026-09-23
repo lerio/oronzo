@@ -1,7 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { deletePlan, listExercises, listPlans } from '../lib/api';
-import { estimateSeconds, flattenPlan, formatDuration, type Exercise, type Plan } from '../lib/types';
+import {
+  estimatePlanDuration,
+  flattenPlan,
+  formatDuration,
+  type Exercise,
+  type Plan,
+} from '../lib/types';
 
 export default function Plans() {
   const [plans, setPlans] = useState<Plan[]>([]);
@@ -30,7 +36,27 @@ export default function Plans() {
     }
   }
 
-  const names = new Map(exercises.map((e) => [e.id, e.name]));
+  // One Map and one set of derived rows per fetch, rather than per render.
+  //
+  // The map below used to rebuild `names` on every render and re-flatten and re-estimate every
+  // plan inside the loop — so a list of eight plans re-derived the same eight arrays each time
+  // anything on the page re-rendered, including a delete's confirmation state. The work is a
+  // function of the plans and the exercise names, and neither changes while you are looking at it.
+  const names = useMemo(() => new Map(exercises.map((e) => [e.id, e.name])), [exercises]);
+
+  const rows = useMemo(
+    () =>
+      plans.map((plan) => {
+        const intervals = flattenPlan(plan, names);
+        return {
+          plan,
+          blocks: plan.blocks.length,
+          steps: intervals.length,
+          duration: estimatePlanDuration(plan, intervals),
+        };
+      }),
+    [plans, names],
+  );
 
   if (loading) return <p className="muted">Loading plans…</p>;
   if (error) return <p className="error">{error}</p>;
@@ -53,32 +79,29 @@ export default function Plans() {
         </div>
       ) : (
         <ul className="plan-list">
-          {plans.map((plan) => {
-            const intervals = flattenPlan(plan, names);
-            const seconds = estimateSeconds(intervals);
-            return (
-              <li key={plan.id} className="card plan-row">
-                <div className="plan-main">
-                  <Link className="plan-name" to={`/plans/${plan.id}`}>
-                    {plan.name}
-                  </Link>
-                  <span className="muted small">
-                    {plan.blocks.length} block{plan.blocks.length === 1 ? '' : 's'} ·{' '}
-                    {intervals.length} step{intervals.length === 1 ? '' : 's'}
-                    {seconds > 0 && ` · ~${formatDuration(seconds)} timed`}
-                  </span>
-                </div>
-                <div className="plan-actions">
-                  <Link className="link-btn" to={`/plans/${plan.id}`}>
-                    Edit
-                  </Link>
-                  <button className="link-btn danger" onClick={() => void onDelete(plan)}>
-                    Delete
-                  </button>
-                </div>
-              </li>
-            );
-          })}
+          {rows.map(({ plan, blocks, steps, duration }) => (
+            <li key={plan.id} className="card plan-row">
+              <div className="plan-main">
+                <Link className="plan-name" to={`/plans/${plan.id}`}>
+                  {plan.name}
+                </Link>
+                <span className="muted small">
+                  {blocks} block{blocks === 1 ? '' : 's'} · {steps} step{steps === 1 ? '' : 's'}
+                  {/* No longer "timed": the figure includes the rep work, so naming which half
+                      it counted was both wrong and the reason it disagreed with the phone. */}
+                  {duration.seconds > 0 && ` · ~${formatDuration(duration.seconds)}`}
+                </span>
+              </div>
+              <div className="plan-actions">
+                <Link className="link-btn" to={`/plans/${plan.id}`}>
+                  Edit
+                </Link>
+                <button className="link-btn danger" onClick={() => void onDelete(plan)}>
+                  Delete
+                </button>
+              </div>
+            </li>
+          ))}
         </ul>
       )}
     </section>

@@ -20,8 +20,6 @@ final class SessionController {
 
     private let audio: WorkoutAudio
     private let link = PhoneConnectivity.shared
-    /// The Lock Screen surface, when the system allows one.
-    private let activity = LiveSessionActivity.shared
     private var engine: ExecutionEngine
     private var ticker: Task<Void, Never>?
     private var lastCountdownSecond: Int?
@@ -116,30 +114,9 @@ final class SessionController {
         refreshClocks()
         startTicking()
 
-        // The Lock Screen surface. Started *before* the first push, so there is an Activity for
-        // that push to update rather than one created empty a moment later.
-        if let content = activityContent() {
-            activity.start(content)
-        }
-
         // The watch gets the whole plan, so it can keep counting and buzzing even if this
         // phone goes quiet. Sent as part of every update — see SessionSnapshot for why.
         pushState(force: true)
-    }
-
-    /// What the Lock Screen needs: the shared model, plus the two facts that make the countdown
-    /// *live* — an absolute end date, or a frozen remainder while paused.
-    ///
-    /// Deliberately current-plus-next only. The interval list belongs to the watch, whose
-    /// transport is a single slot with no size ceiling; this one has a 4 KB limit and would throw.
-    private func activityContent() -> SessionActivityContent? {
-        screen(at: .now).map {
-            SessionActivityContent(
-                screen: $0,
-                intervalEnd: engine.intervalEnd,
-                remainingWhenPaused: engine.remainingWhenPaused
-            )
-        }
     }
 
     /// Called when the view goes away. Safe to call at any point.
@@ -156,14 +133,16 @@ final class SessionController {
         if link.resign(self) {
             link.send(.sessionEnded)
         }
-
-        activity.end()
     }
 
     func pause() {
         guard isRunning else { return }
         _ = engine.pause(at: .now)
         refreshClocks()
+        // The clock is held, so nothing is due until someone resumes. Leaving the ticker running
+        // would be a loop that wakes, finds nothing to do, and sleeps again for as long as the
+        // session stays paused.
+        stopTicking()
         pushState()
     }
 
@@ -172,6 +151,7 @@ final class SessionController {
         _ = engine.resume(at: .now)
         refreshClocks()
         pushState()
+        rearmTicking()
     }
 
     /// Completes the current interval now — "done" on a rep set, "skip" on a timed one.
@@ -180,6 +160,7 @@ final class SessionController {
         handle(engine.advance(at: .now, skipped: skipped))
         refreshClocks()
         pushState()
+        rearmTicking()
     }
 
     func goBack() {
@@ -187,6 +168,7 @@ final class SessionController {
         _ = engine.goBack(at: .now)
         refreshClocks()
         pushState()
+        rearmTicking()
     }
 
     /// Ends the session early. Everything not reached is recorded as such.
@@ -195,9 +177,6 @@ final class SessionController {
         completed = engine.abandon(at: .now)
         stopTicking()
         audio.stop()
-        // The Lock Screen surface ends here rather than showing `DONE`, which is the watch's —
-        // a Lock Screen is for what is happening now, and a finished workout is not happening.
-        activity.end()
         // The final snapshot **replaces** `.sessionEnded` rather than preceding it. The
         // application context is a single slot — whatever is written last is all that survives
         // — so sending both would leave only the `.sessionEnded` and the watch would never show
@@ -211,21 +190,75 @@ final class SessionController {
 
     // MARK: - Ticking
 
+    /// Wakes the session at the instants it can actually change, and not otherwise.
+    ///
+    /// **This ran ten times a second for the whole workout, and it was the phone's worst piece of
+    /// busy-work.** Each tick wrote `remaining` — an observed property, so the entire runner body
+    /// re-evaluated — for a clock that only changes once a second, and each tick rebuilt a
+    /// `SessionScreen` (strings, arrays, the joined VoiceOver announcement) for the Lock Screen to
+    /// compare against what it already had. Almost every one of those wakes found nothing: a
+    /// minute-long interval has four instants at which anything can happen.
+    ///
+    /// `SessionSchedule` supplies them, so this sleeps to the next one instead of asking. The
+    /// countdown steps land exactly on their second rather than within 100 ms of it, which is a
+    /// small improvement to the beeps as well as a large one to the battery.
+    ///
+    /// It rests while the session is paused — the clock is held, so nothing is due — and `resume`,
+    /// `advance` and `goBack` start it again, because each of those can move the session onto an
+    /// interval with a new end to wait for.
     private func startTicking() {
         ticker?.cancel()
         ticker = Task { [weak self] in
-            // 10Hz: smooth enough for the countdown, fine for firing transitions promptly.
             while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(100))
                 guard let self else { return }
+                guard let next = self.nextWake() else { return }
+
+                // Positive by construction, but the world can move between the two reads; looping
+                // re-reads the clock, and the next answer is always ahead of it, so it cannot spin.
+                let delay = next.timeIntervalSinceNow
+                guard delay > 0 else { continue }
+                try? await Task.sleep(for: .seconds(delay))
+
+                guard !Task.isCancelled else { return }
                 self.tick()
             }
         }
     }
 
+    /// The next instant worth waking for, or `nil` when nothing is due and the loop can rest.
+    private func nextWake() -> Date? {
+        guard isRunning else { return nil }
+        let now = Date()
+        let event = SessionSchedule.nextEvent(
+            after: now,
+            end: engine.intervalEnd,
+            isPaused: isPaused,
+            isFinished: isFinished
+        )
+
+        // A rep interval has no clock to repaint and no deadline of its own — only the user or the
+        // watch can move it on — so a real event is the only thing worth waking for.
+        guard engine.intervalEnd != nil else { return event }
+
+        // A timed interval needs a wake per second to repaint its clock, because this surface draws
+        // its countdown from a stored remainder rather than letting the system render it.
+        let second = SessionSchedule.nextSecond(after: now)
+        return event.map { min($0, second) } ?? second
+    }
+
     private func stopTicking() {
         ticker?.cancel()
         ticker = nil
+    }
+
+    /// Re-arms the ticker after something moved the session on.
+    ///
+    /// Refuses when the session is no longer running, which is the case that matters: `advance`
+    /// is how a session finishes its last interval, and `handle` has already stopped the ticker
+    /// by then.
+    private func rearmTicking() {
+        guard isRunning else { return }
+        startTicking()
     }
 
     private func tick() {
@@ -237,27 +270,9 @@ final class SessionController {
         pushState()
     }
 
-    /// Tells the watch where the session is, and keeps the Lock Screen in step. Each is skipped
-    /// when nothing has moved, since the tick runs ten times a second and neither needs those.
+    /// Tells the watch where the session is. Skipped when nothing has moved, so a session that is
+    /// simply counting down does not send a message a second.
     private func pushState(force: Bool = false) {
-        // **The Lock Screen first, and deliberately outside the guard below.**
-        //
-        // That guard exists so a stale `SessionController` cannot move the *wrist* — SwiftUI builds
-        // one on every re-render of the runner, and they can hold a session between them. The Lock
-        // Screen is this process's own surface and has no business being gated on which session the
-        // watch link is pointed at. Putting this call after the guard did exactly that, and it is
-        // why a locked phone sat on the previous exercise at `0:00`: the interval expired, the
-        // engine moved on, the watch stayed correct — it projects its own position from the
-        // interval list it was sent at the start, so it needs no further pushes — and the card was
-        // never told. Skipping an interval *from the watch* moved it, because that control is
-        // delivered to `advertised` and so runs on the session the link knows about.
-        //
-        // Whether a write is owed is the Activity's question, not this one's; see
-        // `LiveSessionActivity.update`.
-        if let content = activityContent() {
-            activity.update(content)
-        }
-
         // **Only the session holding the link may speak to the watch**, whatever asked it to.
         //
         // This is the guard that closes a real reported failure. A controller that never claimed
@@ -272,9 +287,9 @@ final class SessionController {
         let moved = force || state != lastPushedState
 
         guard link.isAdvertising(self) else {
-            // Worth a line only when something had moved — the tick comes ten times a second — and
-            // worth one at all because this is invisible from the outside: the wrist carries on
-            // looking right whether it is being told or not.
+            // Worth a line only when something had moved, and worth one at all because this is
+            // invisible from the outside: the wrist carries on looking right whether it is being
+            // told or not.
             if moved {
                 Log.debug("session: \(ObjectIdentifier(self)) is not the live session; the watch was not told")
             }
@@ -348,7 +363,6 @@ final class SessionController {
                 completed = engine.snapshot(status: .completed)
                 stopTicking()
                 audio.stop()
-                activity.end()
                 // See `finishEarly`: this final snapshot is the terminal state, and sending
                 // `.sessionEnded` after it would erase the only thing the watch has to draw.
                 pushState(force: true)

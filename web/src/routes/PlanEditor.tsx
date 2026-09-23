@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import ExercisePicker from '../components/ExercisePicker';
 import { getPlan, listExercises, savePlan } from '../lib/api';
 import {
-  estimateSeconds,
+  estimatePlanDuration,
   flattenPlan,
   formatDuration,
   repsDisplay,
@@ -70,16 +70,16 @@ export default function PlanEditor() {
     let cancelled = false;
     (async () => {
       try {
-        const loaded = await listExercises();
+        // In parallel: the two requests do not depend on each other, and awaiting them in turn
+        // made opening an existing plan two round trips deep instead of one. `setExercises`
+        // happens once both are in, exactly as before.
+        const [loaded, found] = await Promise.all([
+          listExercises(),
+          isNew ? Promise.resolve(null) : getPlan(id!),
+        ]);
         if (cancelled) return;
         setExercises(loaded);
-
-        if (isNew) {
-          setPlan(blankPlan());
-        } else {
-          const found = await getPlan(id!);
-          if (!cancelled) setPlan(found ?? blankPlan());
-        }
+        setPlan(isNew ? blankPlan() : (found ?? blankPlan()));
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Could not load plan');
       }
@@ -97,6 +97,23 @@ export default function PlanEditor() {
   const preview = useMemo(
     () => (plan ? flattenPlan(plan, exerciseNames) : []),
     [plan, exerciseNames],
+  );
+
+  const duration = useMemo(
+    () => (plan ? estimatePlanDuration(plan, preview) : { seconds: 0, isEstimate: false }),
+    [plan, preview],
+  );
+
+  // Per step, in the plan's own shape, so each row below can index straight into it. Flattened it
+  // would lose which step each problem belongs to, and the row would have to work it out again —
+  // which is what it did, so every keystroke walked all the steps twice.
+  const stepProblems = useMemo(
+    () => plan?.blocks.map((block) => block.steps.map(stepProblem)) ?? [],
+    [plan],
+  );
+  const problemCount = stepProblems.reduce(
+    (total, block) => total + block.filter((problem) => problem !== null).length,
+    0,
   );
 
   if (!plan) return <p className="muted">{error ?? 'Loading…'}</p>;
@@ -186,18 +203,14 @@ export default function PlanEditor() {
     });
   }
 
-  const problems = plan.blocks.flatMap((block) =>
-    block.steps.map(stepProblem).filter((problem): problem is string => problem !== null),
-  );
-
   async function onSave() {
     if (!plan) return;
     if (!plan.name.trim()) {
       setError('Give the plan a name first.');
       return;
     }
-    if (problems.length > 0) {
-      setError(`Fix ${problems.length} step${problems.length === 1 ? '' : 's'} before saving.`);
+    if (problemCount > 0) {
+      setError(`Fix ${problemCount} step${problemCount === 1 ? '' : 's'} before saving.`);
       return;
     }
     setSaving(true);
@@ -213,8 +226,9 @@ export default function PlanEditor() {
     }
   }
 
-  const totalSeconds = estimateSeconds(preview);
-
+  // Derived once per plan change rather than on every render. This was the worst of the three
+  // memos put in: `stepProblem` ran over every step for `problems`, and then ran again per row
+  // inside the JSX below — so a single keystroke in any field walked all the steps twice.
   return (
     <section>
       <div className="page-head">
@@ -244,7 +258,9 @@ export default function PlanEditor() {
         <span>
           {plan.blocks.length} block{plan.blocks.length === 1 ? '' : 's'} · {preview.length} interval
           {preview.length === 1 ? '' : 's'}
-          {totalSeconds > 0 && ` · ~${formatDuration(totalSeconds)} of timed work`}
+          {/* No longer "of timed work": the figure now includes the reps, as the phone's does. */}
+          {duration.seconds > 0 &&
+            ` · ~${formatDuration(duration.seconds)}${duration.isEstimate ? ' plus reps' : ''}`}
         </span>
         <span className="muted small">
           An exercise's <em>sets</em> is its set count; a block's <em>rounds</em> repeats the whole
@@ -308,7 +324,7 @@ export default function PlanEditor() {
           )}
 
           {block.steps.map((step, stepIndex) => {
-            const problem = stepProblem(step);
+            const problem = stepProblems[blockIndex]?.[stepIndex] ?? null;
             return (
               <div key={stepIndex} className={problem ? 'step-row invalid' : 'step-row'}>
                 <span className="step-index">{stepIndex + 1}</span>

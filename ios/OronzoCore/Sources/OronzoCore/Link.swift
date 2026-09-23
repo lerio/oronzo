@@ -104,7 +104,13 @@ public enum WatchControl: String, Codable, Sendable {
 
 // MARK: - Encoding
 
-/// One encoder/decoder pair for both sides, so they cannot disagree about dates.
+/// The two sides encode through the same pair of calls, so they cannot disagree about dates.
+///
+/// Each call builds its own `JSONEncoder`/`JSONDecoder`, and that is deliberate rather than
+/// overlooked: neither is `Sendable`, so hoisting them into a `static let` would be a shared
+/// mutable object reachable from both actors — the same reasoning that keeps
+/// `SessionLogger`'s formatter off a static. The cost is one allocation per message, and messages
+/// are one per state change rather than one per tick.
 public enum WireCodec {
     public static func encode<T: Encodable>(_ value: T) throws -> Data {
         try JSONEncoder().encode(value)
