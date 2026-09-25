@@ -181,7 +181,11 @@ Debug builds accept two launch arguments that skip sign-in entirely:
 ```bash
 xcrun simctl launch booted com.lerio.oronzo -demoSession   # a realistic plan
 xcrun simctl launch booted com.lerio.oronzo -demoFinish    # 6 seconds, reaches the summary
+xcrun simctl launch booted com.lerio.oronzo -demoRecord    # the same plan, written down
 ```
+
+`-demoRecord` is `-demoSession` with the session record left on disk, which is what makes the
+resume path testable without an account — see [Reproducing a cleared watch](#reproducing-a-cleared-watch).
 
 Useful for working on the runner UI without an account or a network. Release builds have
 no such entry point — see `ios/Oronzo/Session/DemoPlan.swift`, which is wrapped in
@@ -209,6 +213,48 @@ the wrong session, shows up in the phone's log on the next press. Both flags are
 Note that the demo cannot save: with no signed-in session, finishing reports "Auth session
 missing" and offers a retry. That is the failure path working, not a bug.
 
+## Reproducing a cleared watch
+
+The failure this project has chased five times — a workout running on the phone and the wrist
+reading **"No workout"** — used to be reproducible in under a minute on paired simulators, with no
+device and no account. Worth knowing, because it is the fastest way to tell whether a change has
+made the class better or worse.
+
+```bash
+# both apps installed and the pair connected; see `xcrun simctl list pairs`
+xcrun simctl launch <watch-udid> com.lerio.oronzo.watchkitapp
+xcrun simctl launch <phone-udid> com.lerio.oronzo -demoSession
+sleep 8
+xcrun simctl io <watch-udid> screenshot /tmp/before.png   # the workout, counting down
+
+# kill the phone without ending the workout, then start it again
+xcrun simctl terminate <phone-udid> com.lerio.oronzo
+xcrun simctl launch <phone-udid> com.lerio.oronzo
+sleep 6
+xcrun simctl io <watch-udid> screenshot /tmp/after.png
+```
+
+**Before the record existed**, `/tmp/after.png` was the idle screen: `answer()` ran from
+`activationDidCompleteWith`, a fresh process had no session in memory *by construction*, and so the
+phone told the watch "nothing is running" on every launch — with the watch's controls dead behind
+it, because there was nothing left to route them to. It now logs `answer: a session` and the wrist
+keeps counting.
+
+**Resuming** is exercised the same way and needs no account — but with `-demoRecord` rather than
+`-demoSession`, because the plain demo is deliberately *not* written down:
+
+```bash
+xcrun simctl launch <phone-udid> com.lerio.oronzo -demoRecord
+sleep 30                      # let the warm-up elapse, so there is catching up to do
+xcrun simctl terminate <phone-udid> com.lerio.oronzo
+xcrun simctl launch <phone-udid> com.lerio.oronzo      # no flags
+```
+
+The runner should come back **where the session should be by now**, not where it was when the app
+died — a timed interval that elapsed while the phone was gone is walked past, and the phone logs
+`host: resumed … at interval N of M`. Both apps should show the same interval. `-demoSession`
+clears any record it finds, so running it once afterwards returns to a clean slate.
+
 ## Troubleshooting
 
 ### Reading the watch link
@@ -225,12 +271,29 @@ console):
 | `activation: state=2 reachable=… paired=… watchAppInstalled=…` | Whether the link can work at all. `watchAppInstalled=false` or a non-zero `error=` explains everything downstream. |
 | `sent session (N bytes); reachable=…` | A push left. `reachable=false` is normal — the application context is the durable path. |
 | `updateApplicationContext failed: …` | **The line that matters most.** The write was refused, so the watch was told nothing, and nothing else retries it. `WCErrorCodeSessionNotActivated` means the session had not finished activating. |
-| `answer: live session` / `answer: nothing running` | The watch asked (`requestState`) and this is what it was told. Present within a second of the wrist waking, when the link is healthy. |
+| `answer: a session` / `answer: nothing running` | The watch asked (`requestState`) and this is what it was told. Present within a second of the wrist waking, when the link is healthy. **`a session` is answered from the live session *or from the record on disk***, so a cold launch that had a workout in flight says `a session` rather than clearing the watch — see `session-record.json` below. |
+| `host: resumed "…" at interval N of M` | The phone picked up a workout it was already in the middle of. This is the line that proves a relaunch did not lose the session. |
+| `host: a record was found but is not live (phase …)` | A record exists but is finished, or older than six hours. It is not resumed; the phone still answers the watch from it while it is fresh. |
+| `session: re-asserted by …` | A runner reappeared onto a session that was already running. Normal, and the fix for a wrist that was cleared and never told again. |
+| `health: recorded the workout ending …` | Health accepted the finished workout. **The only proof the write worked** — the app requests write-only access, so it can never read its own sample back to check. |
+| `health: not recorded — Ns is under the 180s minimum` | The three-minute rule declined the session. Ordinary for a mis-tap, or a plan tapped through faster than it runs. |
+| `health: could not write the workout — …` | Health refused the save. The summary shows this line too. The usual cause is permission: Settings → Health → Data Access & Devices → Oronzo. There is no retry by design, so fixing permission only affects the *next* session. |
+| `health: the authorization request failed — …` | The permission sheet could not be raised at all. This says nothing about whether permission was *granted* — a refused request still succeeds here, and is discovered at save time. |
+| `watch build mismatch: …` | The watch is a different build from this phone. The same thing is shown on screen; see the stale-watch row below. |
 | `send skipped: no session` | `activate()` has not run — the link was never started. |
 
 **Watch**: `asking the phone for state`, `refresh: …`, `applied session: N intervals, index=…`,
 and `could not decode an incoming message — are both apps the same build?`. A watch that is
-showing the wrong thing and never logs an ask is not running this build.
+showing the wrong thing and never logs an ask is not running this build. A watch that has the
+session but never logs an ask has not had its wrist raised.
+
+**The record.** The phone writes the running session to
+`Library/Application Support/session-record.json` in its own container — readable with
+`xcrun simctl get_app_container <phone-udid> com.lerio.oronzo data`. It is what the phone answers
+the watch from when it has nothing in memory, and what it resumes from. If a wrist shows
+"No workout" while a workout is going, **read this file first**: a record that is present and
+`"phase":"running"` means the phone knows about the workout and the watch is the problem; an
+absent record means the phone lost it and the watch is right.
 
 | Symptom | Cause |
 |---|---|
@@ -238,7 +301,7 @@ showing the wrong thing and never logs an ask is not running this build.
 | `This app cannot be installed because its integrity could not be verified` | The Watch's UDID isn't registered with your team. Open Window → Devices and Simulators, select the watch, and let it prepare. |
 | `Multiple commands produce` on the watch target | Someone set the watch target to `application.watchapp2`. It must be `application`. |
 | `xcodebuild` can't find the Apple Watch destination | The watch has never been prepared. Devices and Simulators → select it → wait for "Preparing device for development" to finish. |
-| The watch shows **"No workout"** while a session runs on the phone, and the phone's log shows `sent session` and, once the wrist wakes, `answer: live session` | **The watch app on the watch is stale.** Regenerating the project or changing a target does not reliably replace the watch app that is already installed — watchOS keeps the old one, which receives nothing and shows its idle screen. Fix: run the **OronzoWatch** scheme to the watch. Cost several hours to find once; there is no error message anywhere, because the old build is behaving exactly as written. |
+| The watch shows **"No workout"** while a session runs on the phone, and the phone's log shows `sent session` and, once the wrist wakes, `answer: a session` | **The watch app on the watch is stale.** Regenerating the project or changing a target does not reliably replace the watch app that is already installed — watchOS keeps the old one, which receives nothing and shows its idle screen. Fix: run the **OronzoWatch** scheme to the watch. Cost several hours to find once. **It now says so for itself**: a mismatched watch shows *"Can't read your iPhone — reinstall the Watch app"* on the wrist, and the phone shows *"Your Watch app is out of date — run the OronzoWatch scheme"* under the session header. The phone's banner appears for any version difference, including a stale watch that still happens to work — updating the watch clears it. |
 | The watch shows **"No workout"** and the phone logs `updateApplicationContext failed` | The write was refused — usually the session had not finished activating. The phone re-sends the moment activation completes, so this should self-clear within a second; if it does not, the link is not coming up at all and the `activation:` line says why. |
 | The watch logs `could not decode an incoming message` | The two apps are different builds. Install both from the same run — the phone scheme embeds the watch app, but does not reliably replace one already on the watch. |
 | The watch shows a session that ended (or that no phone is running) | A phantom, from the application context having no expiry. The phone clears it on coming forward, and answers "nothing running" whenever the watch asks. If it persists, the watch is not reaching the phone at all. |

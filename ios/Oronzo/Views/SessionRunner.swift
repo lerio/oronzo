@@ -16,7 +16,12 @@ struct SessionRunner: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
 
-    @State private var controller: SessionController
+    /// **Owned by `SessionHost`, not by this view.** It used to be `@State(initialValue:)`, which
+    /// SwiftUI re-evaluates on every re-render — so the view built controllers it threw away, and
+    /// four guards grew up around the consequences. A session outlives the screen that started it;
+    /// taking it as a plain `let` means this view cannot create, replace or strand one.
+    let controller: SessionController
+
     @State private var saving: SaveState = .idle
     @State private var confirmingFinish = false
 
@@ -42,11 +47,6 @@ struct SessionRunner: View {
     @ScaledMetric(relativeTo: .caption) private var captionSize = TypeScale.size(.caption, on: .phone)
     private let primarySize = TypeScale.size(.primary, on: .phone)
 
-    @MainActor
-    init(plan: Plan, exercises: [UUID: ExerciseInfo]) {
-        _controller = State(initialValue: SessionController(plan: plan, exercises: exercises))
-    }
-
     var body: some View {
         Group {
             if let completed = controller.completed {
@@ -55,8 +55,11 @@ struct SessionRunner: View {
                 runner
             }
         }
+        // Started here rather than in an initializer, because a view's initializer runs on every
+        // re-render and this has side effects. That much was already true; what is new is that
+        // `start` is idempotent, so a reappearing runner re-asserts its session rather than
+        // either starting a second one or doing nothing at all.
         .onAppear { controller.start() }
-        .onDisappear { controller.teardown() }
         // **The call that was missing.** A session that runs its course or is ended early lands in
         // `controller.completed`, and this is what writes it down; without it the summary promised
         // a history entry forever and the web History page had nothing to read. `SessionLogger` was
@@ -72,15 +75,45 @@ struct SessionRunner: View {
 
     // MARK: - Running
 
+    /// The screen, redrawn once a second by the system rather than by the session.
+    ///
+    /// **This is where the phone's clock comes from, and it is the reason the session can sleep.**
+    /// The countdown used to be repainted by the session's own wake loop, which meant waking once a
+    /// second for the whole of every timed interval — and, because the silent keep-alive holds the
+    /// app open, *continuing to wake while the phone was locked in a pocket*, for a screen nobody
+    /// was looking at. A `TimelineView` is what the watch has always used for its clock; the phone
+    /// was the surface doing it the expensive way.
+    ///
+    /// **What this changes is the wake, not the redraw.** While the screen is on, the runner still
+    /// re-evaluates about once a second, exactly as before — a later reader measuring redraws would
+    /// conclude nothing had happened. What changed is everything *else* the ticker used to do on
+    /// those wakes: an engine tick, a clock refresh, the cue arithmetic and a `pushState` dedupe,
+    /// four or five thousand times an hour, in a pocket, for nothing. A timeline stops when it is
+    /// not on screen, so a pocketed phone now does nothing at all between the four instants an
+    /// interval can actually change at.
     private var runner: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            runnerBody(at: context.date)
+        }
+    }
+
+    private func runnerBody(at now: Date) -> some View {
         // **One `SessionScreen` per redraw, not two.** `live` and the pause question each built
         // their own, from the same state, in the same body — and the model is not free: it composes
         // the spoken announcement on every call. Building it once and handing it down answers both
-        // from one answer, which is what it always was.
-        let screen = controller.screen(at: .now)
+        // from one answer, which is what it always was. `now` comes from the timeline, so what is
+        // drawn is a function of the moment drawn for rather than of when the session last ticked.
+        let screen = controller.screen(at: now)
 
         return VStack(spacing: 0) {
             topBar
+            // Only ever present when the watch has actually spoken and reported a build this one
+            // cannot work with — see `PhoneConnectivity.watchNote`. It sits above the figure rather
+            // than over it because the figure is read from across a room and the note is read at
+            // arm's length, before the set.
+            if let note = PhoneConnectivity.shared.watchNote {
+                watchWarning(note)
+            }
             Spacer(minLength: SpacingStep.roomy.points)
             live(screen)
             Spacer(minLength: SpacingStep.roomy.points)
@@ -257,6 +290,26 @@ struct SessionRunner: View {
         }
     }
 
+    /// Names a problem the phone can see and the wrist cannot say.
+    ///
+    /// The failure this exists for is the one `docs/runbook.md` records as the most expensive in
+    /// the project: a phone running a workout perfectly, a watch showing **"No workout"**, and
+    /// nothing anywhere to explain the disagreement — because the two apps are installed
+    /// separately, so a re-sign can replace one and not the other, and a watch built before
+    /// versioning existed cannot report a version to compare.
+    ///
+    /// It is deliberately a note rather than a refusal. Every symptom the mismatch causes is a
+    /// *stale screen*, never a wrong one, so the workout carries on: the countdown on this phone
+    /// is correct regardless of what the watch is doing. Fixing it means running the other scheme,
+    /// which is a thing you do afterwards, not mid-set.
+    private func watchWarning(_ note: String) -> some View {
+        Label(note, systemImage: "applewatch.exclamationmark")
+            .font(.system(size: captionSize, weight: .medium))
+            .foregroundStyle(ColorRole.danger.color(colorScheme))
+            .multilineTextAlignment(.center)
+            .padding(.top, SpacingStep.tight.points)
+    }
+
     private var topBar: some View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 2) {
@@ -372,6 +425,7 @@ struct SessionRunner: View {
             .padding(.top, 4)
 
             saveStatus
+            healthStatus
 
             Spacer()
 
@@ -423,6 +477,49 @@ struct SessionRunner: View {
                 }
                 .buttonStyle(.bordered)
             }
+        }
+    }
+
+    /// What became of the Apple Health entry, beside what became of the history one.
+    ///
+    /// **Silent only when there is nothing true to say.** `.notAttempted` is the ordinary state
+    /// before a session has ended, and the three-minute rule is not an event. But a *failure* is
+    /// the one outcome the user cannot otherwise see, and the absence it causes looks exactly like
+    /// the feature not existing at all — the same shape as the false "Saving to history…" label
+    /// this screen used to show, which is why it is not left to a debug log.
+    ///
+    /// The wording claims only what the store confirmed. Oronzo asks to write and never reads
+    /// back, so this cannot say the workout *is in the Fitness app* — only that Health took it.
+    /// And there is no "Try again" here, unlike the history line: a retry after a write that
+    /// failed is the one path that could double-post if the failure landed after the store had
+    /// already committed.
+    @ViewBuilder
+    private var healthStatus: some View {
+        switch controller.healthWrite {
+        case .notAttempted:
+            EmptyView()
+
+        case .written:
+            Label("Added to Apple Health", systemImage: "heart.fill")
+                .font(.footnote)
+                .foregroundStyle(.green)
+                .multilineTextAlignment(.center)
+
+        case .tooShort:
+            // Secondary rather than a warning: this is the rule working, not something going wrong.
+            Label("Not added to Apple Health — under three minutes", systemImage: "heart.slash")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                // These strings are longer than the history ones, so they wrap in a narrow column —
+                // and a wrapped `Label` aligns leading by default, which would sit crooked under
+                // the centred title. Same treatment the failure case below already had.
+                .multilineTextAlignment(.center)
+
+        case .failed(let message):
+            Label("Not added to Apple Health — \(message)", systemImage: "heart.slash")
+                .font(.footnote)
+                .foregroundStyle(.orange)
+                .multilineTextAlignment(.center)
         }
     }
 

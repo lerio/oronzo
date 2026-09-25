@@ -137,10 +137,14 @@ running"), rather than from a remembered flag. The watch asks when it becomes ac
 activation completes, because those are the two moments it can be sure it is awake — a cold launch
 does not necessarily produce a `scenePhase` change.
 
-This is deliberately **not** a poll. It is one message per wrist raise, and only when the phone is
-in range or the watch has nothing to lose by queueing it. The prohibition below on a per-second
-message stream is untouched: the watch still renders from the absolute interval list, and the
-answer is a re-anchor, not a heartbeat.
+This is deliberately **not** a poll. It is a bounded retry, and the bound is the feature: four
+attempts at most over about a minute (`AskSchedule`), cancelled the instant anything is applied, so
+a healthy link costs exactly one extra message and an hour with the phone never reachable costs a
+few hundred at worst — against the 3,600 the four-hertz poll this project already rejected would
+have spent. The watch still renders from the absolute interval list, and the answer is a
+re-anchor, not a heartbeat. It also **always** queues the ask on the durable channel rather than
+only when out of range, because the failure being recovered from is precisely the one where the
+phone looked reachable and was not.
 
 The other half of the same decision is on the phone: **only a live session may clear the watch.**
 A `SessionController` advertises itself to `PhoneConnectivity` on `start` and resigns on
@@ -149,21 +153,128 @@ runner whose view SwiftUI re-created cannot erase a newer session's snapshot on 
 reference is weak, so a controller that is deallocated without a `teardown` cannot leave the link
 believing a workout is still running.
 
+## The session is written down, and `advertised != nil` was never the same question
+
+The fifth time this project chased a wrist reading **"No workout"** while a workout ran, the cause
+turned out to be structural rather than another narrow window — and it was reproducible on a desk
+in under a minute.
+
+The phone's answer to *"is a workout running?"* was `advertised != nil`: a weak reference to the
+one `SessionController` the link had been told about. That is not the same question. It is *"does
+this process happen to be holding an object that says so"* — and a freshly launched process holds
+nothing, so `PhoneConnectivity.answer()` — called from `activationDidCompleteWith` — told the watch
+**"nothing is running" on every cold launch, whether or not a workout was going**. It wiped a
+correct screen, and took the watch's Next / Previous / Pause controls with it, because there was no
+longer a session to route them to.
+
+Two further consequences fell out of the same root. `SessionController.start()` opened with
+`guard engine.phase == .idle` *before* claiming the link or pushing, so a runner that reappeared
+onto its own live session returned at that guard and never told the watch anything again — a wrist
+cleared permanently, with no crash and no relaunch required. And an app that died mid-workout left
+nothing on disk, so the workout was simply gone.
+
+So the session is a value that gets **written down**. `SessionRecord` in `OronzoCore` carries the
+engine's whole state — the intervals, the position, the phase, the outcomes so far, and when any
+pause began — to a JSON file in Application Support, written on every state change and read on
+launch. `PhoneConnectivity` answers the watch from it when there is nothing in memory, and
+`SessionHost` resumes it into the runner so the watch's controls work again.
+
+Four decisions inside that are worth keeping:
+
+* **One rule decides both answering and resuming.** `SessionRecord.isLive` is used by the link and
+  by the host, so the phone can never tell the watch "running" about a session it would refuse to
+  resume. Two halves of one app disagreeing about what is happening is the failure this project has
+  bought five times over.
+* **The record is advanced through the engine before it is sent**, never re-derived. That reuses
+  the property that a suspension across three intervals resolves in one step, and it is what
+  guarantees answering from a stale file can correct the wrist but never rewind it.
+* **A runner going away is not a workout ending.** `teardown()` now acts only on a session that has
+  finished; a live one is left ticking and on the wrist. `onDisappear` fires for reasons that are
+  not "the user left", and treating it as an ending is what let a spurious one take a session apart.
+* **Ownership moved out of the view.** `SessionHost` is created once by `OronzoApp` and injected,
+  like `AuthStore` and `PlanStore`; `SessionRunner` no longer builds a controller in
+  `@State(initialValue:)`. The guards that contained that hazard are kept — they cost nothing and
+  catch a regression — but nothing new needs them.
+
+The same slice closed a real bug found on the way: `elapsed` excluded a pause only once `resume`
+had folded it into `pausedTotal`, so a session ended *while paused* wrote the final pause into
+`totalDuration`. The reading corrected itself on resume, which is why it survived — the number was
+right whenever anyone looked at the end.
+
 ## Constraints from a free Apple personal team
 
-These are not preferences. A paid account ($99/yr) lifts every one of them.
+These are not preferences. A paid account ($99/yr) lifts every one of them — **except the first,
+which needed no lifting at all:** it was not true when it was written. See
+[HealthKit signs on a free personal team](#healthkit-signs-on-a-free-personal-team) below.
 
 | Constraint | Consequence |
 |---|---|
-| **No HealthKit** (signing fails on a personal team) | No `HKWorkoutSession`. The Watch stays alive via `WKExtendedRuntimeSession` with `WKBackgroundModes = [physical-therapy]` — a 1-hour cap, and **workouts do not close your Activity rings**. |
+| ~~**No HealthKit** (signing fails on a personal team)~~ — **never was true** | HealthKit signs; the phone records finished workouts to Apple Health. What remains is that there is **no `HKWorkoutSession`**. The Watch stays alive via `WKExtendedRuntimeSession` with `WKBackgroundModes = [physical-therapy]` — a 1-hour cap, and **workouts do not close your Activity rings**. |
 | **No App Groups** | No shared container between iPhone and Watch. All data moves over WatchConnectivity. |
 | **No TestFlight** | Install from Xcode only. |
 | **Profiles expire every 7 days** | Re-run from Xcode weekly. See `runbook.md`. |
 | Max 3 devices per platform | The Watch must be registered with Xcode, or its bundle signs unsigned and install fails with "integrity could not be verified". |
 
 `physical-therapy` is a slightly awkward category for strength work — Apple intends it for
-range-of-motion exercise. It is the longest-lived extended runtime available to us that
-allows background execution, so it is what we use.
+range-of-motion exercise. It is the longest-lived extended runtime that allows background
+execution, so it is what we use. That was originally framed as "available to us" — a consequence of
+the HealthKit claim above. **It is a choice now, and it stands:** the Watch runtime is deliberately
+unchanged, and swapping it for an `HKWorkoutSession` is a large rewrite of the most failure-prone
+part of the system, for a cap that has not yet been hit in use.
+
+## HealthKit signs on a free personal team
+
+**The project believed the opposite for a long time, and never tested it.**
+
+This file, `AGENTS.md`, `README.md`, `ios/OronzoWatch/Info.plist` and `WatchRuntime.swift` all
+asserted that HealthKit could not be signed by a free personal team. That row is in the constraint
+table above as "these are not preferences". It was written as though it had been learned the hard
+way, and it was simply assumed — the repository contained no `import HealthKit` before this change,
+so nothing had ever been in a position to fail.
+
+It is false. Probing it — a throwaway target signed with the project's own team, a free Personal
+Team — built cleanly, and the resulting provisioning profile carried:
+
+```
+com.apple.developer.healthkit = true
+com.apple.developer.healthkit.background-delivery = true
+com.apple.developer.healthkit.access = [health-records]
+```
+
+`com.lerio.oronzo` itself was then rebuilt with the entitlement and signs the same way. **A paid
+account is not required to write to Apple Health.**
+
+**What this settles, and what it does not.** It settles signing, and nothing else. The Watch's
+extended runtime session, its one-hour cap, and the absent Activity ring credit are all still in
+place — those follow from having no `HKWorkoutSession`, which is a separate decision. This entry
+exists so that the *next* person does not repeat the assumption, not to reopen the Watch runtime.
+
+### The recording that follows from it
+
+A finished session is written to Apple Health as a single `HKWorkout`
+(`.traditionalStrengthTraining`) **when it ends**, not through a live `HKWorkoutSession`.
+
+Save-at-end keeps Oronzo the single source of truth for timing. A live session would make
+HealthKit's builder a second authority on when the workout started and stopped, and would cost a
+delegate, interruption handling and session recovery in `SessionController` — the file whose
+guards exist because they were each bought with a real failure. Nothing here needs that: Health
+writes are permitted from the background, so only the authorization sheet needs the foreground.
+
+The rule for *whether* a session is worth recording — three minutes, judged on the pause-excluded
+`totalDuration` — lives in `OronzoCore.RecordableWorkout`, where `swift test` proves it. The I/O
+lives in `ios/Oronzo/Session/HealthWorkoutRecorder.swift`, and is the only file importing
+HealthKit.
+
+Two consequences worth stating plainly, because they are visible:
+
+- **Health's duration will not always equal Oronzo's.** HealthKit derives a workout's duration from
+  the dates it is given, adjusted by pause events; Oronzo's pauses are a running total rather than
+  a list of intervals, so they cannot be handed over. The workout therefore spans the real
+  wall-clock start and end, and a session with a long pause in it is recorded as longer than the
+  work it contained.
+- **No heart rate and no active energy.** Oronzo measures neither, and writing invented ones would
+  be worse than writing none. Whether a saved workout earns Exercise ring credit is therefore
+  *unverified* until it has been checked on the phone — see `docs/known-issues.md`.
 
 ## The Lock Screen surface: built, and removed
 

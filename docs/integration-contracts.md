@@ -135,10 +135,27 @@ The whole phone↔watch vocabulary is one file: `ios/OronzoCore/Sources/OronzoCo
 enum WatchMessage  { case session(SessionSnapshot), sessionEnded }   // phone → watch
 enum WatchControl  { case next, previous, togglePause, requestState, finish }  // watch → phone
 
-struct SessionSnapshot { planName, intervals: [Interval], startedAt, state: SessionState }
+struct SessionSnapshot { planName, intervals: [Interval], startedAt, state: SessionState,
+                         protocolVersion: Int? }
 struct SessionState    { currentIndex, isPaused, isFinished, intervalEnd: Date?,
                          remainingWhenPaused: TimeInterval?, finishedAt: Date? }
 ```
+
+**Every field added to these types must be `Optional`**, or hand-decoded with `decodeIfPresent`.
+The application context persists across launches and the two apps install separately, so a snapshot
+written by any build may be read by any other. An optional is tolerant in both directions for free;
+a *non-optional* field with a default is not, because the synthesised decoder emits
+`decodeIfPresent` only for an optional — the default never runs and the snapshot fails to decode,
+which is a silent "No workout" on the wrist. `Interval.intensity` and `SessionSnapshot.protocolVersion`
+are the two examples.
+
+**`protocolVersion` exists to make a mismatch legible, not to prevent one.** Prevention is the rule
+above; a non-optional addition breaks every older build whatever the version says, and no amount of
+negotiation saves it. What the version buys is naming the wreckage: `WireProtocol.mismatch(_:)`
+returns a direction, and each surface phrases it. A peer that reports **no** version is
+`.peerIsOlder`, not an error — that silence is what a build predating this field does, and it is
+the most likely mismatch in the field, because a weekly re-sign can replace one app and not the
+other. Nothing clears a screen over a mismatch; the workout is still drawable.
 
 **`SessionSnapshot` is always complete, and that is not a style choice.** The application context
 is a *single slot* — whatever is written last is all that survives. Sending a "start" and then an
@@ -155,8 +172,18 @@ how the watch knows to stop walking the list and wait to be told.
 
 `requestState` is the one control the phone answers itself rather than forwarding to the session,
 because it has to be answerable when **no session is running** — which is exactly when the watch
-asks. The reply is `PhoneConnectivity.answer()`: the live session's `currentMessage`, or
-`.sessionEnded` when there is none.
+asks. The reply is `PhoneConnectivity.currentWatchMessage`: the live session's `currentMessage` if
+there is one in memory, otherwise **the session record on disk**, otherwise `.sessionEnded`.
+
+That middle term is the whole of it. Answering from memory alone meant "no session in memory" was
+treated as "no session", and a relaunched app has no session in memory *by construction* — so the
+phone told the watch "nothing is running" on every cold launch, mid-workout included, and the
+wrist stayed cleared with dead controls behind it. See `docs/decisions.md`, *"The session is
+written down"*.
+
+**Every control is also a receipt.** `WatchLink.send` attaches its own `protocolVersion` to the
+payload, so the phone learns the watch's build without a message being invented to ask for it. The
+key is ignored by an older phone; an older watch sends no key at all, and that is the signal.
 
 It exists because the phone used to speak only when its own state changed, so anything the watch
 missed stayed missed. There is no error anywhere in that path: a write that landed before the
@@ -167,22 +194,34 @@ that never started a workout. The ask is what turns each of those from a permane
 into a sub-second recovery.
 
 The watch asks on becoming active and when activation completes — the two moments it can be *sure*
-it is awake, since a cold launch does not necessarily produce a `scenePhase` change. When the
-phone is out of range it only queues the ask if there is nothing on screen to lose; otherwise the
-phone's own push, or the stored context on the next wake, already covers it. **One message per
-wrist raise, not a stream** — the prohibition in `docs/decisions.md` is on per-second traffic.
+it is awake, since a cold launch does not necessarily produce a `scenePhase` change. It reads its
+stored context first, because that is local and free, and only then spends a message. **A bounded
+retry, not a stream**: at most four asks over about a minute (`AskSchedule`), cancelled the instant
+anything is applied, or when the wrist goes down. The prohibition in `docs/decisions.md` is on
+per-second traffic, and the worst case here — an hour of wrist raises with the phone never
+reachable — stays in the low hundreds of messages.
+
+An ask goes onto the **durable** `transferUserInfo` channel even when the phone looks reachable,
+which is not true of a button press. A dropped press is recoverable by pressing again; a dropped
+ask leaves the wrist wrong, and the failure being recovered from is exactly the one where the phone
+looked ready and was not.
 
 ### Transport
 
 | Direction | Primary | Also |
 |---|---|---|
 | Phone → Watch | `updateApplicationContext` (always) | `sendMessage` only if `isReachable`, to make a reachable watch update instantly |
-| Watch → Phone | `sendMessage` if `isReachable` | `transferUserInfo` otherwise — "Queued for when the phone is next awake, rather than dropped" |
+| Watch → Phone | `sendMessage` if `isReachable` | `transferUserInfo` otherwise — "Queued for when the phone is next awake, rather than dropped" — and **always** for a `requestState` ask |
 
-`SessionController.pushState(force:)` dedupes against `lastPushedState` so the 10 Hz engine tick
-does not spam the context; forces are used at start. `PhoneConnectivity.answer()` deliberately
-does **not** dedupe — what the watch asks for is the state *now*, built on demand from the live
-session rather than from a remembered snapshot.
+`SessionController.pushState(force:)` dedupes against `lastPushedState` so repeated ticks do not
+spam the context; forces are used at start and on re-assert. `PhoneConnectivity.answer()`
+deliberately does **not** dedupe — what the watch asks for is the state *now*, built on demand
+rather than from a remembered snapshot.
+
+Every push also writes `SessionRecordFile` in the same closed sequence, **above** the link's
+ownership guard, so a controller the link has refused still keeps the file current. `PhoneConnectivity`
+answers the watch from that file whenever there is no live session in memory, which is what makes a
+cold launch tell the truth.
 
 **Only the session holding the link may speak to the watch.** `SessionController` claims the link
 on `start` and resigns on `teardown`; `PhoneConnectivity.claim` refuses if another session already
@@ -191,33 +230,47 @@ holds it, `resign` refuses unless that controller is still the one holding it, a
 controller released without a `teardown` cannot leave the link believing a workout is still
 running.
 
-None of that is defensive padding — each refusal is a reported failure. `SessionRunner` builds its
-controller in `@State(initialValue:)`, which SwiftUI re-evaluates on every re-render of the view
-presenting it, and the previous copy is not released until the next one replaces it. So a workout
-always has a discarded controller alive, and if it can reach the link at all it will answer the
-watch from its own empty engine: the wrist jumps to the first exercise (`advance` passes its
-`!isFinished` check on an idle engine, does nothing, and pushes an index-0 snapshot anyway) and
+None of that is defensive padding — each refusal is a reported failure. `SessionRunner` **used to**
+build its controller in `@State(initialValue:)`, which SwiftUI re-evaluates on every re-render of
+the view presenting it, and the previous copy is not released until the next one replaces it. So a
+workout always had a discarded controller alive, and if it could reach the link at all it would
+answer the watch from its own empty engine: the wrist jumps to the first exercise (`advance` passes
+its `!isFinished` check on an idle engine, does nothing, and pushes an index-0 snapshot anyway) and
 then appears dead (the next press pushes the identical state, which `pushState`'s dedupe
-swallows). The phone is untouched throughout, because it is rendering the controller that is
-actually installed. Verified on a paired simulator, including the built/released interleaving.
+swallows). Verified on a paired simulator, including the built/released interleaving.
 
-Two guards exist purely because the application context has no expiry:
+**That cause is now retired rather than contained.** `SessionHost` owns the one controller and is
+created once by `OronzoApp`; `SessionRunner` takes it as a plain `let` and cannot build, replace or
+strand one. The guards above are kept — they cost nothing and they catch a regression — but nothing
+new should need them.
+
+Two guards exist because the application context has no expiry:
 
 - `PhoneConnectivity.clearIfIdle()` — a phone force-quit mid-workout would otherwise leave the
-  watch showing a session that no longer exists. `PhoneConnectivity.answer()` on activation is the
-  same truth sent on a hook that always runs, including a cold launch.
+  watch showing a session that no longer exists. It now clears only when there is **neither** a
+  live session **nor** a live record, so a relaunch mid-workout no longer reads as "nothing was
+  ever running". `PhoneConnectivity.answer()` on activation is the same truth sent on a hook that
+  always runs, including a cold launch.
 - `WatchLink.refreshFromContext()` — with the wrist down the watch is suspended, and a suspended
   app is *not* woken by WatchConnectivity. Raising the wrist **resumes** it rather than
   re-activating, so `activationDidComplete` does not fire again. This is the fix that made the
-  watch see workouts at all.
+  watch see workouts at all, and `askForState` now reads it first for the same reason: it is local
+  and it is free.
 
 ### Projection
 
 `WatchProjection.project(intervals:from:end:now:)` walks forward from the phone's anchor while
 `now >= boundary`, adding each next interval's duration, and **stops dead at a rep interval**
-(it has no length, so nothing can be assumed about when it finishes). The watch re-renders on a
-0.25 s `TimelineView` and fires its own haptics from the same projection — "a buzz is exactly what
-you need when you are not looking at either screen."
+(it has no length, so nothing can be assumed about when it finishes).
+
+It also has a property the recovery path depends on: **a stale anchor and a fresh one project to
+the same position**, so answering the watch from a record written minutes ago can correct the wrist
+but never rewind it. `WatchProjectionTests` pins it.
+
+The watch redraws its clock from a `TimelineView` at 1 Hz — 60 s while the display is dimmed — and
+fires its own haptics from the same projection, "a buzz is exactly what you need when you are not
+looking at either screen." **The phone now draws its clock the same way**, which is what lets its
+session sleep: see `SessionController.nextWake` and `SessionRunner.runner`.
 
 ## Changing the model safely
 

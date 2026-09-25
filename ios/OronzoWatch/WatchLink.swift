@@ -26,8 +26,19 @@ final class WatchLink: NSObject {
     /// time the screen redraws.
     private(set) var finishedAt: Date?
 
+    /// Something the wrist should be told about that is not the workout itself.
+    ///
+    /// **Held as observable state rather than written to the log, and that is the whole point.**
+    /// `Log.debug` is not merely unread in a release build — its `@autoclosure` is never evaluated
+    /// (`docs/patterns.md`), so anything whose only trace is a log call does not exist in the
+    /// field. A gym is not a console, and the failures this reports are ones a person can act on
+    /// in one glance: update one app or the other.
+    private(set) var note: String?
+
     private var session: WCSession?
     private var haptics: Task<Void, Never>?
+    /// The bounded retry in flight. See `askForState`.
+    private var ask: Task<Void, Never>?
     private var lastMoment: SessionMoment?
     private var lastCountdownSecond: Int?
 
@@ -86,35 +97,80 @@ final class WatchLink: NSObject {
         apply(data)
     }
 
-    /// Asks the phone what it is running.
+    /// Asks the phone what it is running, and keeps asking — **for a bounded while**.
     ///
-    /// The watch used to have no way to say "I have nothing" — it could only wait to be told —
-    /// so any push that never arrived left **"No workout"** on the wrist for the rest of the
-    /// session, looking exactly like a phone that never started one. The phone now answers with
-    /// the live session or with "nothing running", so the watch converges on the truth at every
-    /// wake instead of the two silently disagreeing.
+    /// The watch used to have no way to say "I have nothing" — it could only wait to be told — so
+    /// any push that never arrived left **"No workout"** on the wrist for the rest of the session,
+    /// looking exactly like a phone that never started one. Recovery was added once, as a single
+    /// best-effort shot per wrist raise, and a single shot is not a recovery: `sendMessage` is
+    /// called with no error handler, so a message the phone was not ready for is dropped in
+    /// silence, and there was nothing after it.
     ///
-    /// Not a stream: one message per activation — a wrist raise — which is a different thing
-    /// from the per-second traffic `docs/decisions.md` rules out. When the phone is out of
-    /// range the ask is only worth queueing if there is nothing on screen to lose; otherwise
-    /// the phone's own push, or the stored context on the next wake, already covers it.
-    func askForState() {
+    /// Three things changed, and each closes a different hole:
+    ///
+    /// - **The stored context is read first.** It is local, it is durable, and reading it costs
+    ///   nothing — so the cheapest possible recovery is tried before spending a message on one.
+    /// - **The retry is bounded by `AskSchedule`**: four attempts at most, over about a minute.
+    ///   `docs/decisions.md` rules out per-second traffic between these apps for reasons that cost
+    ///   a battery to learn, so the bound is the feature rather than a limitation.
+    /// - **The guard that suppressed the ask is gone.** It read
+    ///   `session.isReachable || intervals.isEmpty` — which discards the durable channel for a
+    ///   watch showing *stale non-empty intervals*, which is precisely the watch that needs to
+    ///   ask. It was inverted for the case that matters.
+    ///
+    /// Cancelled the moment anything is applied, so a healthy link still costs exactly one ask.
+    func askForState(reason: String) {
+        refreshFromContext()
+
         guard let session else { return }
-        guard session.isReachable || intervals.isEmpty else { return }
+        ask?.cancel()
+
         Log.debug(
-            "asking the phone for state "
-            + "(reachable=\(session.isReachable), showing \(intervals.count) intervals)"
+            "asking the phone for state (\(reason)); reachable=\(session.isReachable), "
+            + "showing \(intervals.count) intervals"
         )
-        send(.requestState)
+
+        let began = Date()
+        ask = Task { [weak self] in
+            for attempt in 1...AskSchedule.attemptCount {
+                guard let self, !Task.isCancelled else { return }
+                guard let due = AskSchedule.attempt(attempt, from: began) else { return }
+
+                let delay = due.timeIntervalSinceNow
+                if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
+                guard !Task.isCancelled else { return }
+
+                self.send(.requestState, asking: true)
+            }
+        }
     }
 
-    func send(_ control: WatchControl) {
+    /// The wrist went down, or the ask has been answered. Either way, stop.
+    func stopAsking() {
+        ask?.cancel()
+        ask = nil
+    }
+
+    /// Sends a control to the phone.
+    ///
+    /// - Parameter asking: an ask is worth putting on the **durable** channel even when the phone
+    ///   is in range, which is not true of a button press. A press that is dropped is recoverable
+    ///   by pressing again; an ask that is dropped leaves the wrist wrong, and the failure being
+    ///   covered is exactly the one where the phone looked ready and was not — its link not yet
+    ///   activated, so `sendMessage` failed with nobody listening for the error.
+    func send(_ control: WatchControl, asking: Bool = false) {
         guard let session else { return }
-        let payload: [String: Any] = ["control": control.rawValue]
+
+        var payload: [String: Any] = ["control": control.rawValue]
+        // Tells the phone which build this is, so a mismatch can be named rather than guessed at.
+        // An older phone ignores the key; an older *watch* never sends one, and that silence is
+        // itself the signal — see `WireProtocol`.
+        payload["protocolVersion"] = WireProtocol.current
 
         if session.isReachable {
             session.sendMessage(payload, replyHandler: nil, errorHandler: nil)
-        } else {
+        }
+        if asking || !session.isReachable {
             // Queued for when the phone is next awake, rather than dropped.
             session.transferUserInfo(payload)
         }
@@ -147,15 +203,17 @@ final class WatchLink: NSObject {
                 // compares against `lastMoment` and `lastCountdownSecond` before playing.
                 self.announce(now: .now)
 
-                // nil means nothing is due: a rep interval (only the phone can move it on), a
-                // paused session, a finished one, or no session at all. The loop ends; `apply`
-                // starts a new one when the phone says something new.
-                guard let next = self.nextWake() else { return }
+                // **`.rest` parks the loop; it never means "wait and look again".** A rep interval,
+                // a pause, a finished session and no session at all all land here, and parking is
+                // right for every one of them because each is moved on by something outside this
+                // loop that restarts it — `apply` on the next snapshot, or a wrist raise through
+                // `syncRuntimeAndCues`. See `SessionSchedule.Wake`.
+                guard case .at(let next) = self.nextWake() else { return }
 
-                // `nextEvent` and `nextSecond` are both strictly after the moment they were
-                // asked about, so this is normally positive. When it is not, the world moved in
-                // the gap: loop again, which re-reads the clock and recomputes — it cannot spin,
-                // because the next answer is always ahead of the newer `now`.
+                // Strictly after the moment it was asked about, so this is normally positive.
+                // When it is not, the world moved in the gap: loop again, which re-reads the clock
+                // and recomputes — it cannot spin, because the next answer is always ahead of the
+                // newer `now`.
                 let delay = next.timeIntervalSinceNow
                 guard delay > 0 else { continue }
                 try? await Task.sleep(for: .seconds(delay))
@@ -171,14 +229,19 @@ final class WatchLink: NSObject {
     }
 
     /// The next instant at which anything can happen, from wherever the session is now.
-    private func nextWake() -> Date? {
+    ///
+    /// There is no second term here, unlike the phone's: this surface draws its countdown from a
+    /// `TimelineView`, so nothing needs waking to repaint a clock. That is the arrangement the
+    /// *phone* adopted later, for the same reason — see `SessionRunner`'s timeline.
+    func nextWake() -> SessionSchedule.Wake {
         let now = Date()
         let (_, end) = position(at: now)
-        return SessionSchedule.nextEvent(
+        return SessionSchedule.wake(
             after: now,
             end: end,
             isPaused: state?.isPaused ?? false,
-            isFinished: state?.isFinished ?? false
+            isFinished: state?.isFinished ?? false,
+            hasSession: !intervals.isEmpty
         )
     }
 
@@ -338,7 +401,7 @@ extension WatchLink: WCSessionDelegate {
             // And if there was nothing stored — or it would not decode — ask outright. A cold
             // launch does not necessarily produce a `scenePhase` *change*, so the ask the view
             // makes cannot be relied on to happen here; activation always completes.
-            self.askForState()
+            self.askForState(reason: "the link just came up")
         }
     }
 
@@ -361,8 +424,34 @@ extension WatchLink: WCSessionDelegate {
             // that ambiguity has cost hours before: see the stale-watch-app row in
             // `docs/runbook.md`.
             Log.debug("could not decode an incoming message — are both apps the same build?")
+            // **And now said out loud.** This is the failure the runbook describes as the most
+            // expensive in the project: a healthy phone, a wrist reading "No workout", and no
+            // error message anywhere. A message this build cannot read means the phone is a
+            // different build, which is a thing the person holding it can fix in a minute.
+            note = "Can't read your iPhone — reinstall the Watch app"
             return
         }
+
+        // Readable, so compare what it says it speaks. A phone that predates versioning sends no
+        // version at all, and that is not an error to clear the screen over — the workout is still
+        // perfectly drawable — so this sets a note and nothing else.
+        if case .session(let snapshot) = message {
+            switch WireProtocol.mismatch(snapshot.protocolVersion) {
+            case .some(.peerIsOlder):
+                note = "Update the iPhone app"
+                Log.debug("the phone speaks an older wire protocol (\(snapshot.protocolVersion.map(String.init) ?? "none"))")
+            case .some(.peerIsNewer):
+                note = "Update the Watch app to match your iPhone"
+                Log.debug("the phone speaks a newer wire protocol (\(snapshot.protocolVersion.map(String.init) ?? "none"))")
+            case .none:
+                note = nil
+            }
+        }
+
+        // **Answered — stop asking.** This is the primary stopping condition of the retry, and the
+        // one that fires in the healthy case: the first ask gets an answer, so a session that is
+        // being pushed to costs exactly one extra message. See `askForState`.
+        stopAsking()
 
         switch message {
         case .session(let snapshot):

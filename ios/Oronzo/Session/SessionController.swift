@@ -18,20 +18,64 @@ final class SessionController {
     /// Set once the session ends — whether it ran its course or was stopped early.
     private(set) var completed: CompletedSession?
 
+    /// What became of this session's Apple Health write, for the summary to report.
+    ///
+    /// Observed rather than returned, because the write outlives the moment the session ends: the
+    /// summary is already on screen by the time Health answers, so this is what lets the line fill
+    /// in when it does.
+    private(set) var healthWrite: HealthWriteOutcome = .notAttempted
+
+    /// Whether this session writes itself down. False only for the `-demoSession` fixture, which
+    /// must never leave a record behind: a demo record would be picked up by the next real launch
+    /// and resume a workout nobody started, which is a new and worse flavour of the confusion this
+    /// whole file is trying to remove.
+    private let persistsRecord: Bool
+
+    /// Whether this session may leave a trace in **Apple Health**.
+    ///
+    /// Deliberately a second flag rather than a reuse of `persistsRecord`, because the two answers
+    /// differ for exactly one fixture. `-demoRecord` sets `persistsRecord` — it exists to exercise
+    /// *resume* — and it runs `DemoPlan.make()`, a full-length plan that clears the three-minute
+    /// bar comfortably. Under one flag, a debug launch would deposit a workout nobody did into
+    /// real Apple Health, where it outlives the phone and has to be deleted by hand.
+    ///
+    /// Read it as: *nobody did this workout, so nothing about it belongs in Health.*
+    private let recordsHealth: Bool
+
     private let audio: WorkoutAudio
+    private let health: HealthWorkoutRecorder
+
+    /// Whether this session's outcome has already been offered to Health.
+    ///
+    /// Both places `completed` is set are single-shot by construction — each sits behind a
+    /// `!isFinished` guard, and the engine emits `.finished` once. This is what makes that an
+    /// invariant rather than a fact about today's call sites, in the spirit of the file's other
+    /// cheap guards.
+    private var hasWrittenToHealth = false
+
     private let link = PhoneConnectivity.shared
     private var engine: ExecutionEngine
     private var ticker: Task<Void, Never>?
     private var lastCountdownSecond: Int?
     private var lastPushedState: SessionState?
 
-    init(plan: Plan, exercises: [UUID: ExerciseInfo], audio: WorkoutAudio = WorkoutAudio()) {
+    init(
+        plan: Plan,
+        exercises: [UUID: ExerciseInfo],
+        audio: WorkoutAudio = WorkoutAudio(),
+        health: HealthWorkoutRecorder = HealthWorkoutRecorder(),
+        persistsRecord: Bool = true,
+        recordsHealth: Bool = true
+    ) {
         self.planID = plan.id
         self.planName = plan.name
         self.audio = audio
+        self.health = health
         self.engine = ExecutionEngine(
             intervals: PlanFlattener.flatten(plan, exercises: exercises)
         )
+        self.persistsRecord = persistsRecord
+        self.recordsHealth = recordsHealth
         // Deliberately nothing here but construction.
         //
         // `SessionRunner` builds this as a `@State(initialValue:)`, and SwiftUI re-evaluates that
@@ -44,6 +88,39 @@ final class SessionController {
         // is what let one answer the watch's controls from its own empty engine — a wrist that
         // jumped back to the first exercise and then stopped responding, with the phone entirely
         // unaffected. See `pushState`'s guard and `PhoneConnectivity.claim`.
+    }
+
+    /// Picks up a workout the phone was already in the middle of.
+    ///
+    /// Fails when the record cannot describe a real session — see `ExecutionEngine.init?(restoring:)`,
+    /// which refuses rather than half-applying. A refused restore means the plan list, which is a
+    /// worse screen than a resumed runner and a far better one than a runner driving nonsense.
+    ///
+    /// **Nothing here starts anything.** The restored controller is handed to the runner, and its
+    /// `start()` finds the engine already running and takes the `reassert` path — which is the same
+    /// path a reappearing runner takes, and deliberately so: a resumed session and a re-asserted one
+    /// need exactly the same things done to them.
+    ///
+    /// Note what is **not** done here. Nothing claims the link, starts audio, or touches the watch:
+    /// this is a constructor, and `SessionController.init` has been side-effect-free since the
+    /// `@State(initialValue:)` trap — SwiftUI builds these on every re-render, so anything done here
+    /// is done to a copy that is about to be discarded.
+    init?(
+        restoring record: SessionRecord,
+        audio: WorkoutAudio = WorkoutAudio(),
+        health: HealthWorkoutRecorder = HealthWorkoutRecorder()
+    ) {
+        guard let engine = ExecutionEngine(restoring: record) else { return nil }
+        self.planID = record.planID
+        self.planName = record.planName
+        self.audio = audio
+        self.health = health
+        self.engine = engine
+        self.persistsRecord = true
+        // A record on disk is a real workout by definition — the demo fixtures are the only thing
+        // that writes one and `-demoRecord` is the only demo that does, but a *restored* session
+        // is one that was already running when the app went away, so it is always real.
+        self.recordsHealth = true
     }
 
     // MARK: - What the view reads
@@ -93,12 +170,28 @@ final class SessionController {
     // MARK: - Lifecycle
 
     func start() {
-        guard engine.phase == .idle, !isEmpty else { return }
-        // From here until `teardown`, this controller *is* what the watch is being told about —
-        // and it is refused if a live session already holds the link. A refused controller is
-        // inert on purpose: it is either a SwiftUI re-render's discarded copy or a genuine second
-        // runner, and in neither case may it move the wrist. Logged, because it means something
-        // upstream is building a runner it does not install.
+        guard !isEmpty else { return }
+
+        // **A runner reappearing onto a session already in flight is not a new workout.**
+        //
+        // This used to open with `guard engine.phase == .idle`, *before* the claim and before the
+        // push — and that ordering was a whole failure on its own. `teardown()` (which SwiftUI
+        // calls from `onDisappear`, on occasions that are not "the user left the workout") sends
+        // `.sessionEnded`; `onAppear` then calls this again on the *same* controller, whose phase
+        // is already `.running`. The guard returned, so nothing re-claimed the link, nothing
+        // restarted the ticker or the audio, and nothing ever told the watch again: the phone drew
+        // a perfect workout while the wrist read **"No workout"** with dead controls, for the rest
+        // of the session. It needs no crash, no relaunch and no stale build.
+        if engine.phase != .idle {
+            reassert()
+            return
+        }
+
+        // From here until the session ends, this controller *is* what the watch is being told
+        // about — and it is refused if a live session already holds the link. A refused controller
+        // is inert on purpose: it is either a SwiftUI re-render's discarded copy or a genuine
+        // second runner, and in neither case may it move the wrist. Logged, because it means
+        // something upstream is building a runner it does not install.
         guard link.claim(self) else {
             Log.debug("refused to start a second session while one is live")
             return
@@ -108,6 +201,9 @@ final class SessionController {
         // rather than by design, and from the outside they are indistinguishable.
         Log.debug("session: started by \(ObjectIdentifier(self))")
         audio.start()
+        // After the claim, so a controller the link refused — a SwiftUI re-render's discarded
+        // copy — never raises a permission sheet over a workout it is not running.
+        requestHealthAuthorization()
         // Deliberately ignoring the returned event: a beep the instant you press Start
         // would be noise, not information.
         _ = engine.start(at: .now)
@@ -119,17 +215,55 @@ final class SessionController {
         pushState(force: true)
     }
 
+    /// Takes the link back for a session that never stopped, and tells the watch where it is.
+    ///
+    /// Everything here is idempotent — the audio has its own guard, `rearmTicking` refuses when
+    /// the session is paused, and the push is forced so the dedupe cannot swallow it. That is the
+    /// point: this runs on a path SwiftUI can take at any time, so it has to be safe to run at
+    /// any time, including when nothing was actually wrong.
+    private func reassert() {
+        // A finished session has nothing to re-assert. The summary is on screen and the watch has
+        // its terminal snapshot; restarting the keep-alive here would hold the phone awake behind
+        // a workout that is over.
+        guard !isFinished else { return }
+
+        guard link.claim(self) else {
+            Log.debug("reassert refused: another session holds the link")
+            return
+        }
+        Log.debug("session: re-asserted by \(ObjectIdentifier(self))")
+        // The keep-alive is the phone's only claim on staying awake, and without it the phone is
+        // suspended and cannot hear the watch at all.
+        audio.start()
+        // A resumed session skipped `start()`'s opening path, so this is the other place a
+        // workout can begin without having been asked. Cheap: the ask is idempotent.
+        requestHealthAuthorization()
+        rearmTicking()
+        pushState(force: true)
+    }
+
     /// Called when the view goes away. Safe to call at any point.
+    ///
+    /// **A runner going away is not a workout ending**, and the difference is the whole of it:
+    /// this used to stop the audio, stop the clock and wipe the watch unconditionally, so any
+    /// spurious `onDisappear` took a live session apart. Now it acts only on a session that has
+    /// genuinely finished, and a live one is left exactly as it was — still ticking, still on the
+    /// wrist — for `start()` to re-assert if the runner comes back.
     func teardown() {
+        guard isFinished else {
+            Log.debug("teardown: the session is still live; the watch and the record are left alone")
+            return
+        }
+
         stopTicking()
         audio.stop()
+        // The workout is over and its history is written, so there is nothing left to be durable
+        // about. Clearing this is what stops a finished session from answering the watch forever.
+        SessionRecordFile.clear()
 
-        // Leaving the runner ends the session as far as the watch is concerned, even though
-        // nothing was "finished" — but **only if this runner is still the one the watch is
-        // hearing about**. `resign` refuses if a newer session has already advertised itself,
-        // which is the case that must not clear: a re-created runner would otherwise hand the
-        // watch a running session and then erase it, leaving the wrist on "No workout" while
-        // the workout carried on. Harmless if the session already ended.
+        // `resign` refuses if a newer session has already advertised itself, which is the case
+        // that must not clear: a re-created runner would otherwise hand the watch a session and
+        // then erase it. Harmless if the session already ended.
         if link.resign(self) {
             link.send(.sessionEnded)
         }
@@ -174,7 +308,7 @@ final class SessionController {
     /// Ends the session early. Everything not reached is recorded as such.
     func finishEarly() {
         guard !isFinished else { return }
-        completed = engine.abandon(at: .now)
+        complete(with: engine.abandon(at: .now))
         stopTicking()
         audio.stop()
         // The final snapshot **replaces** `.sessionEnded` rather than preceding it. The
@@ -211,7 +345,12 @@ final class SessionController {
         ticker = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
-                guard let next = self.nextWake() else { return }
+
+                // **`.rest` parks the loop; it never means "wait and look again".** See
+                // `SessionSchedule.Wake` for why that distinction is written down rather than left
+                // to the shape of a `guard`. Reaching `.rest` is not an error and needs no log —
+                // it is the ordinary state of a rep set, a pause, or a session that has finished.
+                guard case .at(let next) = self.nextWake() else { return }
 
                 // Positive by construction, but the world can move between the two reads; looping
                 // re-reads the clock, and the next answer is always ahead of it, so it cannot spin.
@@ -225,25 +364,24 @@ final class SessionController {
         }
     }
 
-    /// The next instant worth waking for, or `nil` when nothing is due and the loop can rest.
-    private func nextWake() -> Date? {
-        guard isRunning else { return nil }
-        let now = Date()
-        let event = SessionSchedule.nextEvent(
-            after: now,
+    /// The next instant worth waking for, or `.rest` when nothing is due.
+    ///
+    /// **Four wakes per timed interval, and no more.** This used to also wake once a second for
+    /// the whole of every timed interval, purely to repaint the on-screen clock from a stored
+    /// remainder — because that was how the view drew it. The view draws its clock from a
+    /// `TimelineView` now, so the clock costs no wakes at all, and the only instants left are the
+    /// ones the session can actually change at. See `SessionRunner.runner` for the other half, and
+    /// note what that half buys: a `TimelineView` stops when it is not on screen, so a phone
+    /// locked in a pocket does *nothing* between those four instants instead of ticking ten
+    /// thousand times an hour for a screen nobody is reading.
+    private func nextWake() -> SessionSchedule.Wake {
+        SessionSchedule.wake(
+            after: .now,
             end: engine.intervalEnd,
             isPaused: isPaused,
-            isFinished: isFinished
+            isFinished: isFinished,
+            hasSession: !isEmpty
         )
-
-        // A rep interval has no clock to repaint and no deadline of its own — only the user or the
-        // watch can move it on — so a real event is the only thing worth waking for.
-        guard engine.intervalEnd != nil else { return event }
-
-        // A timed interval needs a wake per second to repaint its clock, because this surface draws
-        // its countdown from a stored remainder rather than letting the system render it.
-        let second = SessionSchedule.nextSecond(after: now)
-        return event.map { min($0, second) } ?? second
     }
 
     private func stopTicking() {
@@ -284,19 +422,28 @@ final class SessionController {
         // below swallowed — so the button then appeared dead. Both halves, one cause: a session
         // that was not the session writing to the wrist.
         let state = currentState
-        let moved = force || state != lastPushedState
+        guard force || state != lastPushedState else { return }
+
+        // **Written down before the link is consulted, and deliberately outside its guard.**
+        //
+        // The point of the record is that the phone knows what it is running. A controller the
+        // link has refused is still running a real workout — it is the copy SwiftUI built and
+        // discarded, or a second runner — and if the record were written only by the session that
+        // holds the link, then the file would be silent in exactly the case it exists to cover.
+        // Written here, the file follows the engine, and the link follows the file.
+        if persistsRecord {
+            SessionRecordFile.save(
+                SessionRecord(engine: engine, planID: planID, planName: planName, savedAt: .now)
+            )
+        }
 
         guard link.isAdvertising(self) else {
-            // Worth a line only when something had moved, and worth one at all because this is
-            // invisible from the outside: the wrist carries on looking right whether it is being
-            // told or not.
-            if moved {
-                Log.debug("session: \(ObjectIdentifier(self)) is not the live session; the watch was not told")
-            }
+            // Worth a line, because this is invisible from the outside: the wrist carries on
+            // looking right whether it is being told or not.
+            Log.debug("session: \(ObjectIdentifier(self)) is not the live session; the watch was not told")
             return
         }
 
-        guard moved else { return }
         lastPushedState = state
         link.send(currentMessage)
     }
@@ -360,7 +507,7 @@ final class SessionController {
 
             case .finished:
                 audio.playFinish()
-                completed = engine.snapshot(status: .completed)
+                complete(with: engine.snapshot(status: .completed))
                 stopTicking()
                 audio.stop()
                 // See `finishEarly`: this final snapshot is the terminal state, and sending
@@ -368,6 +515,68 @@ final class SessionController {
                 pushState(force: true)
             }
         }
+    }
+
+    // MARK: - Apple Health
+
+    /// **The one place a session ends**, so a write that hangs off completion cannot be missed by
+    /// a path added later.
+    ///
+    /// Both callers — `finishEarly` and the engine's `.finished` — go through here, and that is
+    /// load-bearing rather than tidy. `SessionRunner.persist` has a **"Try again" button**
+    /// (`SessionRunner.swift:473`) that re-runs itself whenever the Supabase write fails, so a
+    /// Health write living beside it would post a second workout on every retry. Completing a
+    /// session is engine-driven and happens exactly once; this is where that is made true.
+    ///
+    /// A session that finishes while the phone is in a pocket arrives here like any other, which
+    /// is the point — only the authorization *sheet* needs the foreground, not the write.
+    private func complete(with session: CompletedSession) {
+        completed = session
+        writeToHealth(session)
+    }
+
+    /// Hands a finished session to Apple Health, if it was a workout.
+    ///
+    /// Guarded on `recordsHealth` so no fixture ever reaches the store, and on
+    /// `hasWrittenToHealth` so this is single-shot whatever calls it.
+    private func writeToHealth(_ session: CompletedSession) {
+        guard recordsHealth, !hasWrittenToHealth else { return }
+        hasWrittenToHealth = true
+
+        guard let workout = RecordableWorkout(completed: session) else {
+            // A mis-tap, or a plan tapped through faster than three minutes. Reported rather than
+            // hidden: the summary explains the absence, instead of leaving it to be guessed at.
+            healthWrite = .tooShort
+            Log.debug(
+                "health: not recorded — \(Int(session.totalDuration.rounded()))s is under the \(Int(RecordableWorkout.minimumDuration))s minimum"
+            )
+            return
+        }
+
+        // Unstructured on purpose. The write has to outlive the screen that shows the summary —
+        // the runner can be dismissed while it is still in flight — so this cannot be awaited by
+        // whoever set `completed`. `healthWrite` is observed, so the line fills in when Health
+        // answers, whenever that is.
+        Task {
+            do {
+                try await health.record(workout)
+                healthWrite = .written
+            } catch {
+                // The one state that means something went wrong on the phone rather than in the
+                // rule, so it carries the reason rather than a bare failure.
+                healthWrite = .failed(error.localizedDescription)
+                Log.debug("health: could not write the workout — \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// Asks for permission to write workouts, the first time a real one starts.
+    ///
+    /// Idempotent at both ends — `hasAsked` in the recorder, and the store's own
+    /// `statusForAuthorizationRequest` — which is what lets `reassert` call it unconditionally.
+    private func requestHealthAuthorization() {
+        guard recordsHealth else { return }
+        Task { await health.prepare() }
     }
 }
 

@@ -175,6 +175,75 @@ final class LinkTests: XCTestCase {
         XCTAssertEqual(back.intervals.first?.name, "Burpee", "the rest of the interval survives")
     }
 
+    // MARK: - Versioning
+
+    /// **The assumption the entire compatibility story rests on, and the one nothing pinned.**
+    ///
+    /// Every tolerance test above *removes* a key an older build would not have sent. None of
+    /// them proves the converse — that an older build, whose struct has no such property, ignores
+    /// a key a newer one *added*. That is the direction that matters for `protocolVersion`: a
+    /// watch built before the field existed has to skip it rather than fail.
+    ///
+    /// If this test ever fails, versioning on the wire is unsafe in the new-phone/old-watch
+    /// direction and the field has to move somewhere else entirely.
+    func testAnUnknownKeyInASnapshotIsIgnored() throws {
+        let encoded = try WireCodec.encode(snapshot(runningState()))
+        let withExtra = try JSONSerialization.data(
+            withJSONObject: dict(adding: ["somethingFromAFutureBuild": 42],
+                                 to: try JSONSerialization.jsonObject(with: encoded))
+        )
+
+        guard case .session(let back) = try WireCodec.decode(WatchMessage.self, from: withExtra) else {
+            return XCTFail("a snapshot carrying an unknown key came back as something else")
+        }
+        XCTAssertEqual(back.intervals.count, 2, "a key from the future does not break the message")
+    }
+
+    /// A phone that predates versioning sends no version, and that must **not** be read as an
+    /// unreadable message. The watch shows a screen and a note; it does not clear.
+    func testASnapshotWithoutAProtocolVersionStillDecodes() throws {
+        let encoded = try WireCodec.encode(snapshot(runningState()))
+        let stripped = try JSONSerialization.data(
+            withJSONObject: removing("protocolVersion", from: try JSONSerialization.jsonObject(with: encoded))
+        )
+
+        guard case .session(let back) = try WireCodec.decode(WatchMessage.self, from: stripped) else {
+            return XCTFail("a snapshot from an older phone came back as something else")
+        }
+        XCTAssertNil(back.protocolVersion)
+        XCTAssertEqual(back.intervals.count, 2, "and the workout it describes survives")
+    }
+
+    /// Absent when nil, so a message from this build is byte-for-byte what an older watch already
+    /// receives — the same property `Interval.intensity` has.
+    func testTheProtocolVersionIsAbsentWhenNilAndReadableWhenPresent() throws {
+        let versioned = try WireCodec.encode(snapshot(runningState()))
+        XCTAssertTrue(
+            String(decoding: versioned, as: UTF8.self).contains("protocolVersion"),
+            "this build stamps what it speaks"
+        )
+
+        let plain = WatchMessage.session(
+            SessionSnapshot(planName: "P", intervals: [timed(0, 60)], startedAt: t0,
+                            state: runningState(), protocolVersion: nil)
+        )
+        XCTAssertFalse(
+            String(decoding: try WireCodec.encode(plain), as: UTF8.self).contains("protocolVersion"),
+            "and says nothing at all when it has nothing to say"
+        )
+    }
+
+    /// The mismatch rule. `nil` means the peer predates versioning entirely — which is not an
+    /// error but is exactly what a stale build looks like, and is the most likely mismatch in the
+    /// field because a re-sign can replace one app and not the other.
+    func testAMismatchNamesItsDirection() {
+        XCTAssertNil(WireProtocol.mismatch(WireProtocol.current))
+
+        XCTAssertEqual(WireProtocol.mismatch(nil), .peerIsOlder, "an unversioned build is an old build")
+        XCTAssertEqual(WireProtocol.mismatch(WireProtocol.minimum - 1), .peerIsOlder)
+        XCTAssertEqual(WireProtocol.mismatch(WireProtocol.current + 1), .peerIsNewer)
+    }
+
     /// Drops a key wherever it appears in a JSON tree.
     private func removing(_ key: String, from value: Any) -> Any {
         if var object = value as? [String: Any] {
@@ -185,5 +254,12 @@ final class LinkTests: XCTestCase {
             return array.map { removing(key, from: $0) }
         }
         return value
+    }
+
+    /// Adds keys at the top level only — the position a future build's new field would occupy.
+    private func dict(adding additions: [String: Any], to value: Any) -> Any {
+        guard var object = value as? [String: Any] else { return value }
+        for (key, newValue) in additions { object[key] = newValue }
+        return object
     }
 }

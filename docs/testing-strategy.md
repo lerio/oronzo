@@ -2,7 +2,7 @@
 
 ## Where the tests are
 
-**All 151 tests live in `ios/OronzoCore/Tests/OronzoCoreTests/`.** Nothing else in the repository
+**All 192 tests live in `ios/OronzoCore/Tests/OronzoCoreTests/`.** Nothing else in the repository
 has a single automated test — not the iOS app target, not the watch app, not the web app.
 
 ```bash
@@ -12,14 +12,16 @@ cd ios/OronzoCore && swift test     # ~1 second, no simulator, no signing, no de
 | File | Tests | Covers |
 |---|---|---|
 | `PlanFlattenerTests.swift` | 30 | The flattening contract — sets, rounds, two-sided exercises, both rest mechanisms, naming, formatting |
-| `ExecutionEngineTests.swift` | 25 | The session state machine — start/tick/pause/resume/advance/goBack/finish/abandon/snapshot |
+| `ExecutionEngineTests.swift` | 27 | The session state machine — start/tick/pause/resume/advance/goBack/finish/abandon/snapshot |
 | `SessionScreenTests.swift` | 35 | The presentation model both screens draw from — state words, `LAST`, what a rep interval shows |
+| `SessionRecordTests.swift` | 17 | The written-down session — the disk format, decode tolerance, what a restore refuses, and that a stale anchor cannot rewind |
 | `PlanSummaryTests.swift` | 16 | What the plan summary says about a plan, including the spoken meta line |
+| `SessionScheduleTests.swift` | 13 | When a surface may next wake — the rule that replaced polling, and the wake counts that prove it |
+| `LinkTests.swift` | 12 | The phone↔watch wire format — the control vocabulary, a whole snapshot, decode tolerance, and the version handshake |
 | `DesignTokenTests.swift` | 11 | The token scale — every role resolves, on both surfaces |
 | `HapticLanguageTests.swift` | 10 | Which transitions earn a cue, and which stay silent |
-| `SessionScheduleTests.swift` | 8 | When a surface may next wake — the rule that replaced polling |
 | `WatchProjectionTests.swift` | 8 | Walking the interval list forward from an absolute anchor |
-| `LinkTests.swift` | 8 | The phone↔watch wire format — the control vocabulary, a whole snapshot, and decode tolerance |
+| `AskScheduleTests.swift` | 5 | That the watch's recovery stays bounded — four attempts, never closer than five seconds |
 
 This is possible because `OronzoCore` is a **plain SwiftPM package** rather than a folder of shared
 sources inside the app target. That decision is stated in `ios/project.yml`: *"so that it can be
@@ -50,8 +52,12 @@ Two other testable-by-construction choices worth preserving:
 Be explicit about this rather than implying coverage that does not exist:
 
 - **Anything touching a device.** Signing, WatchConnectivity, haptics, the extended runtime
-  session, and the audio keep-alive cannot be tested here at all. If a change touches
-  `ios/Oronzo/Session/` or `ios/OronzoWatch/`, say plainly that a device run is still needed.
+  session, the audio keep-alive, and the **HealthKit write** cannot be tested here at all. If a
+  change touches `ios/Oronzo/Session/` or `ios/OronzoWatch/`, say plainly that a device run is
+  still needed. The HealthKit *decision* is the deliberate exception, and is exactly why it lives
+  in `OronzoCore`: `RecordableWorkout` is a pure function and fully covered by
+  `RecordableWorkoutTests`, so only the write itself needs the phone. (Signing the entitlement
+  *can* be checked from a desk — `codesign -d --entitlements` on a device build — and was.)
 - **Every SwiftUI view.** No view has a test. `SessionRunner`, `PlanEditor`, `PlanListView` and
   friends are verified by looking at them.
 - **The entire web app.** There is no test framework in `web/package.json` — no Vitest, no Jest,

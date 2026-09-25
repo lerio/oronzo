@@ -23,13 +23,77 @@ public struct SessionSnapshot: Codable, Sendable {
     public let intervals: [Interval]
     public let startedAt: Date
     public let state: SessionState
+    /// Which build wrote this, so a mismatch can *say so* instead of being silent.
+    ///
+    /// **Optional, and that is what makes it safe in both directions.** This struct's decoder is
+    /// synthesised, so an optional is `decodeIfPresent` by construction: a watch built before
+    /// this field existed skips the key it does not know, and a watch built after it reads `nil`
+    /// from a phone that predates it. Same mechanism, and the same rule, as
+    /// `Interval.intensity` — see the argument written out there.
+    ///
+    /// **The version's job is to make a mismatch legible, not to prevent one.** Prevention is the
+    /// optional-field rule above; a non-optional addition breaks every older build regardless of
+    /// what this number says, and no amount of version negotiation will save it. All this can do
+    /// is narrate the wreckage — which is worth having, because the wreckage is otherwise a watch
+    /// reading "No workout" with nothing anywhere to explain why
+    /// (`docs/runbook.md:241`, "cost several hours to find once").
+    public let protocolVersion: Int?
 
-    public init(planName: String, intervals: [Interval], startedAt: Date, state: SessionState) {
+    public init(
+        planName: String,
+        intervals: [Interval],
+        startedAt: Date,
+        state: SessionState,
+        protocolVersion: Int? = WireProtocol.current
+    ) {
         self.planName = planName
         self.intervals = intervals
         self.startedAt = startedAt
         self.state = state
+        self.protocolVersion = protocolVersion
     }
+}
+
+/// What the two apps are speaking, and what to say when they are not speaking the same thing.
+///
+/// Exists because the two apps are **installed separately and updated separately**, and there is
+/// no App Group, no shared bundle, and no way for either to see the other's version except by
+/// asking. `docs/runbook.md` records the cost of not having this: a stale watch app, a healthy
+/// phone, no error message anywhere, and hours spent finding it.
+public enum WireProtocol {
+
+    /// What this build speaks. Absent on the wire means "built before versioning existed".
+    public static let current = 1
+
+    /// The oldest build this one can still work with. Bumping this is a promise that everything
+    /// older is genuinely unusable, which is a much stronger claim than adding a field.
+    public static let minimum = 1
+
+    /// How the peer differs from us, or `nil` when it does not.
+    ///
+    /// Returns a *direction* rather than a sentence, because the two surfaces have to phrase this
+    /// differently and one of them is a watch face: the phone names a scheme to run, the watch
+    /// names an app to update. Deciding the direction is the rule and belongs here; writing the
+    /// words is the app's job.
+    public static func mismatch(_ peerVersion: Int?) -> ProtocolMismatch? {
+        guard let peerVersion else {
+            // Never reported a version at all. That is not an error — it is exactly what a build
+            // from before this field existed does, and it is the single most likely mismatch in
+            // the field, because it is what happens after a re-sign that replaced one app and not
+            // the other.
+            return .peerIsOlder
+        }
+        if peerVersion < minimum { return .peerIsOlder }
+        if peerVersion > current { return .peerIsNewer }
+        return nil
+    }
+}
+
+public enum ProtocolMismatch: Equatable, Sendable {
+    /// The other app is older than this build, or predates versioning entirely.
+    case peerIsOlder
+    /// The other app is newer than this build, so this one is the one that needs updating.
+    case peerIsNewer
 }
 
 public struct SessionState: Codable, Equatable, Sendable {

@@ -185,6 +185,33 @@ final class ExecutionEngineTests: XCTestCase {
         XCTAssertEqual(engine.elapsed(at: t0.addingTimeInterval(100)), 70, accuracy: 0.001)
     }
 
+    /// A pause that has not ended yet is time not spent exercising, exactly like one that has.
+    ///
+    /// It was excluded only once `resume` folded it into `pausedTotal`, so anything that read
+    /// `elapsed` *during* a pause was told the pause was work. The reading corrects itself on
+    /// resume, which is why it survived: the number was right whenever anyone looked at the end.
+    func testElapsedExcludesAPauseThatIsStillInProgress() {
+        var engine = ExecutionEngine(intervals: [timed(0, 60), timed(1, 60)])
+        _ = engine.start(at: t0)
+        _ = engine.pause(at: t0.addingTimeInterval(10))
+
+        XCTAssertEqual(engine.elapsed(at: t0.addingTimeInterval(100)), 10, accuracy: 0.001,
+                       "ninety seconds of standing still is not ninety seconds of work")
+    }
+
+    /// The same fact at the moment it becomes permanent: ending a session **while paused** must
+    /// not write the final pause into `totalDuration`, which is the number that goes to history.
+    func testEndingWhilePausedExcludesTheFinalPauseFromTheTotal() {
+        var engine = ExecutionEngine(intervals: [timed(0, 60), timed(1, 60)])
+        _ = engine.start(at: t0)
+        _ = engine.pause(at: t0.addingTimeInterval(10))
+
+        let completed = engine.abandon(at: t0.addingTimeInterval(300))
+
+        XCTAssertEqual(completed.totalDuration, 10, accuracy: 0.001,
+                       "five minutes of paused phone is not five minutes of training")
+    }
+
     // MARK: - Manual control
 
     func testAdvanceCompletesTheCurrentInterval() {

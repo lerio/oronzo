@@ -28,8 +28,12 @@
 	<key>WKRunsIndependentlyOfCompanionApp</key>
 	<false/>
 	<!--
-	  The ONLY way to keep a watch app alive through a workout on a free personal team.
-	  HealthKit is unavailable to us, so there is no HKWorkoutSession. 1-hour hard cap.
+	  Keeps the watch app alive through a workout, at a hard 1-hour cap — `physical-therapy` is the
+	  longest-lived mode that allows background execution.
+
+	  This is a choice, not the only option. The comment here used to say HealthKit was unavailable
+	  on a free personal team, which was never true; the phone records workouts to Apple Health.
+	  See docs/decisions.md.
 	-->
 	<key>WKBackgroundModes</key>
 	<array>

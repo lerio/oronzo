@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  HealthKit, and only HealthKit.
+
+	  **This was believed impossible on this project for a long time, and that was wrong.**
+	  `docs/decisions.md` recorded "No HealthKit (signing fails on a personal team)" as a hard
+	  constraint, and every surface that mentioned it repeated the claim. It was never tested: the
+	  repository contains no `import HealthKit` before this change.
+
+	  Verified by probing rather than by argument — a throwaway target signed with the same free
+	  Personal Team and produced a profile carrying `com.apple.developer.healthkit`,
+	  `…healthkit.background-delivery` and `…healthkit.access`. So this key alone is enough, and a
+	  paid account is not required for it.
+
+	  No `com.apple.developer.healthkit.background-delivery` here: that is for `HKObserverQuery`
+	  background delivery, which Oronzo does not use — it writes one workout when a session ends
+	  and never reads anything back.
+
+	  The Watch target deliberately has no entitlement and no entry here. It renders the session;
+	  the phone owns it, and the phone is what writes to Health.
+	-->
+	<key>com.apple.developer.healthkit</key>
+	<true/>
+</dict>
+</plist>

@@ -23,7 +23,7 @@ struct PlanDetailView: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
-    @State private var isRunning = false
+    @Environment(SessionHost.self) private var session
 
     /// Measured, not guessed: the button's height grows with Dynamic Type, and the content has
     /// to clear whatever it turns out to be.
@@ -77,9 +77,6 @@ struct PlanDetailView: View {
         // The title is the first thing in the content rather than a bar title that scrolls
         // away: with no `navigationTitle`, the back button still reads "Plans".
         .navigationBarTitleDisplayMode(.inline)
-        .fullScreenCover(isPresented: $isRunning) {
-            SessionRunner(plan: plan, exercises: store.exercises)
-        }
     }
 
     // MARK: - Header
@@ -273,7 +270,10 @@ struct PlanDetailView: View {
     /// legible without a surface that would read as a card the list is not.
     private var startBar: some View {
         Button {
-            isRunning = true
+            // Hands the session to the host rather than to a cover of this screen's own. The
+            // runner is presented at the root, so starting a workout no longer ties its lifetime
+            // to this view — and nothing this view does can end one.
+            session.begin(plan: plan, exercises: store.exercises)
         } label: {
             Text("Start")
                 .font(.system(size: labelSize, weight: .semibold))

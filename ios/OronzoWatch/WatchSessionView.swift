@@ -77,10 +77,15 @@ struct WatchSessionView: View {
                 link.refreshFromContext()
                 // And ask outright, rather than wait to be told again. The stored context is
                 // what the phone sent *last*, which is no help when a push went missing — the
-                // failure that reads as "No workout" for a whole workout. `askForState` is a
-                // no-op when there is nothing worth asking about.
-                link.askForState()
+                // failure that reads as "No workout" for a whole workout. The ask retries itself
+                // for about a minute and stops when answered; see `WatchLink.askForState`.
+                link.askForState(reason: "the wrist came up")
                 syncRuntimeAndCues()
+            } else {
+                // The wrist went down, so stop the retry: a wrist raise re-arms it from the start,
+                // and a retry that survives the app being suspended is a message stream by another
+                // name. This is also the second of `AskSchedule`'s three stopping conditions.
+                link.stopAsking()
             }
         }
         // Only keep the app alive when there is something to keep it alive for.
@@ -186,9 +191,12 @@ struct WatchSessionView: View {
         VStack(spacing: SpacingStep.tight.points) {
             info(screen)
 
-            // Only ever set when watchOS ended the runtime session itself. Without this
-            // the workout just stops advancing and nothing says why.
-            if let note = runtime.note {
+            // Two sources, and both exist for the same reason: a failure that leaves no trace on
+            // the wrist is indistinguishable from a phone that never started a workout. The
+            // runtime's own note is set when watchOS ended the session itself; the link's is set
+            // when this watch cannot read what the phone is sending — which is the stale-build
+            // case `docs/runbook.md` records as costing hours, finally saying so for itself.
+            if let note = link.note ?? runtime.note {
                 Text(note)
                     .font(.system(size: captionSize, weight: .medium))
                     .foregroundStyle(ColorRole.danger.color(colorScheme))

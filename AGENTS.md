@@ -132,15 +132,28 @@ Each of these cost real time. They are not hypothetical.
   When the phone is the thing that is wrong, the watch asking is the only thing that fixes it.
   Re-read `docs/integration-contracts.md` before changing either half.
 - **A SwiftUI view's initializer is re-run on every re-render — and what it builds outlives the
-  build.** `SessionRunner` constructs its `SessionController` in `@State(initialValue:)`, and the
-  view presenting it re-evaluates that expression whenever it redraws, so a workout builds fresh
-  controllers repeatedly. Measured on a simulator session: the previous one is **not released
-  until the next build replaces it**, so there is always a discarded controller alive. Anything
-  with a side effect in `SessionController.init` therefore happens to a copy that SwiftUI is about
-  to throw away — binding the watch link from there is what produced a wrist that jumped back to
-  the first exercise and then stopped responding while the phone was untouched. Side effects go in
-  `onAppear`/`start()`, and anything that can *act* must check it is still the live session
-  (`SessionController.pushState`, `PhoneConnectivity.claim`).
+  build.** Measured on a simulator session: the previous controller is **not released until the
+  next build replaces it**, so there is always a discarded one alive. Anything with a side effect
+  in `SessionController.init` therefore happens to a copy SwiftUI is about to throw away. That is
+  why `init` is empty and why side effects live in `start()` — and it is why **the session is no
+  longer built by a view at all**: `SessionHost` owns the one controller, `OronzoApp` creates it,
+  and `SessionRunner` takes it as a plain `let`. The guards that contained this
+  (`PhoneConnectivity.claim`/`resign`, `pushState`'s `isAdvertising` check) are kept as cheap
+  assertions, but do not write new code that depends on them — and never *destroy* state from
+  `onDisappear`, which is not a reliable signal that the user left.
+- **A runner going away is not a workout ending.** `SessionController.teardown()` acts only on a
+  session that has finished; a live one is left ticking and on the wrist. Treating `onDisappear`
+  as an ending is what let a spurious one take a session apart — and, with `start()`'s old
+  `guard engine.phase == .idle` sitting *before* the claim and the push, a runner that reappeared
+  onto its own live session returned at that guard and never told the watch anything again. That
+  is a wrist reading **"No workout"** with dead controls, with no crash and no relaunch needed.
+  `start()` is idempotent and re-asserts; keep it that way.
+- **`advertised != nil` is not the same question as "is a workout running".** The phone's link
+  answers the watch from the live session **or from `SessionRecordFile` on disk**, and
+  `SessionRecord.isLive` is the single rule both the link and `SessionHost.restore` use — so the
+  phone cannot tell the watch "running" about a session it would refuse to resume. Answering from
+  memory alone is what made every cold launch tell the watch "nothing is running" mid-workout.
+  `docs/runbook.md` has the desk reproduction.
 - **Adding a field to `Interval` breaks decoding of snapshots already in flight.** `Interval` is
   `Codable` with no version field, and the application context persists across launches — so a
   snapshot written by an older build fails to decode and the watch silently shows nothing.
@@ -164,10 +177,20 @@ Each of these cost real time. They are not hypothetical.
   are **append-only**: never edit an applied migration's logic — write a new one. `save_plan` has
   been redefined in six of them, so check the newest definition before changing that function.
 - **Free personal team:** provisioning profiles expire every 7 days (the apps stop launching until
-  rebuilt from Xcode), HealthKit will not sign, and there are no App Groups. The Watch stays alive
-  via `WKExtendedRuntimeSession` with `WKBackgroundModes = [physical-therapy]` — a one-hour cap and
-  no Activity ring credit. The iPhone stays alive via `UIBackgroundModes = [audio]` and a silent
-  looping tone.
+  rebuilt from Xcode), and there are no App Groups. **HealthKit signs** — see the next bullet. The
+  Watch stays alive via `WKExtendedRuntimeSession` with `WKBackgroundModes = [physical-therapy]` — a
+  one-hour cap and no Activity ring credit. The iPhone stays alive via `UIBackgroundModes = [audio]`
+  and a silent looping tone.
+- **HealthKit signs on this free personal team, and every doc here said it could not.** The claim
+  "HealthKit will not sign" was recorded as a hard constraint in `AGENTS.md`, `README.md`,
+  `docs/decisions.md`, `ios/OronzoWatch/Info.plist` and `WatchRuntime.swift` — and repeated, because
+  it read as authoritative. **It was never tested**, and it is false: a throwaway target signed with
+  this team produced a profile carrying `com.apple.developer.healthkit`, and `com.lerio.oronzo`
+  followed. So the phone now records a finished workout to Apple Health
+  (`ios/Oronzo/Session/HealthWorkoutRecorder.swift`). This is a trap of a particular kind — a
+  constraint that was *assumed* rather than bought — so when a doc here says something is
+  impossible, ask which failure taught it that. Note what is *not* reopened: no `HKWorkoutSession`,
+  so the Watch's one-hour cap and the missing Activity ring credit are unchanged, deliberately.
 - **Xcode needs an Apple ID signed in and the licence accepted**, or every `xcodebuild` and
   `devicectl` invocation fails with errors that never mention accounts.
 - **The Watch must be registered with Xcode** (Devices and Simulators → prepare it), or install

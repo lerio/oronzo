@@ -40,12 +40,76 @@ final class PhoneConnectivity: NSObject {
 
     static let shared = PhoneConnectivity()
 
-    /// Whether a workout is running, as the link sees it — *derived from a live session*
-    /// rather than remembered, which is what stops it from ever being stale.
-    var hasActiveSession: Bool { advertised != nil }
+    /// Whether there is something the watch should be showing.
+    ///
+    /// **Not "do I hold a live session"** — that was the bug. A relaunched app holds nothing, and
+    /// answered accordingly: see `currentWatchMessage`, which reaches for the record the phone
+    /// wrote down before falling back to "nothing is running".
+    var hasActiveSession: Bool { currentWatchMessage != nil }
+
+    /// What the watch should be showing, from the best source available — or `nil` when there is
+    /// genuinely nothing.
+    ///
+    /// Two sources, in order. A session **in memory** is authoritative: it is the one actually
+    /// ticking, and its message is built fresh on every call so an answer can never be stale.
+    /// Failing that, the **record on disk** — which is the case that used to be answered wrongly,
+    /// because "no session in memory" is not the same fact as "no session", and the app had no way
+    /// to tell them apart.
+    ///
+    /// The record is advanced through the engine before it is sent, so answering from a file
+    /// written minutes ago puts the watch where it should *be*, not where it was. That is safe
+    /// rather than clever: the projection from a stale anchor and a fresh one agree, which
+    /// `WatchProjectionTests` pins — so this can correct the wrist and can never rewind it.
+    var currentWatchMessage: WatchMessage? {
+        if let advertised { return advertised.currentMessage }
+
+        guard let record = SessionRecordFile.load(), record.isPresentable(at: .now) else { return nil }
+        return (record.advanced(to: .now) ?? record).message
+    }
 
     /// The live session. `@ObservationIgnored` because it is a back-reference, not UI state.
     @ObservationIgnored private weak var advertised: (any AdvertisedSession)?
+
+    /// What the watch has told us about itself, from the controls it sends.
+    ///
+    /// **Observable, because a mismatch has to be shown and a log is not a place.** `Log.debug`'s
+    /// autoclosure is never evaluated in a release build (`docs/patterns.md`), so a diagnostic that
+    /// lives only in the log does not exist on the phone this actually ships to.
+    ///
+    /// The two fields are deliberately separate. "We have never heard from the watch" and "the
+    /// watch told us nothing about its version" look the same if you only keep the version — and
+    /// they mean opposite things: the first must say nothing at all, the second is the stale-build
+    /// signal, because a watch built before versioning existed announces itself by its silence.
+    private(set) var hasHeardFromWatch = false
+    private(set) var watchProtocolVersion: Int?
+
+    /// What to tell the person holding the phone, if anything.
+    ///
+    /// `nil` until the watch has actually spoken. That matters: a banner on every workout that
+    /// simply has not had a wrist raise yet would be noise, and noise is how a real warning gets
+    /// ignored.
+    ///
+    /// **It fires on a version difference, which is broader than "the watch is broken", and that
+    /// is a deliberate trade rather than an oversight.** A build from before versioning existed
+    /// cannot describe itself, so its silence is the only signal there is — and silence cannot
+    /// distinguish a stale watch that happens to still work (the wire has been compatible so far)
+    /// from one that cannot read the phone at all, which is the failure `docs/runbook.md` records
+    /// as costing hours. Warning on the broader condition costs a red line on the phone until the
+    /// watch is rebuilt, once; missing it costs the failure the line exists to prevent. The copy is
+    /// therefore a maintenance instruction rather than an alarm — it says what to do, not that the
+    /// workout is in trouble, because it is not: the countdown on this phone is unaffected either
+    /// way.
+    var watchNote: String? {
+        guard hasHeardFromWatch else { return nil }
+        switch WireProtocol.mismatch(watchProtocolVersion) {
+        case .some(.peerIsOlder):
+            return "Your Watch app is out of date — run the OronzoWatch scheme"
+        case .some(.peerIsNewer):
+            return "Update the Oronzo app to match your Watch"
+        case .none:
+            return nil
+        }
+    }
 
     private var session: WCSession?
 
@@ -109,15 +173,24 @@ final class PhoneConnectivity: NSObject {
         send(.sessionEnded)
     }
 
-    /// Answers the watch with the truth: the live session's own message, or "nothing is
-    /// running". Called when the watch asks, and when the link comes up.
+    /// Answers the watch with the truth: the session's own message, or "nothing is running".
+    /// Called when the watch asks, and when the link comes up.
     ///
-    /// This is what makes the link recoverable. The phone used to speak only when its state
-    /// changed, so anything the watch missed stayed missed; now the watch can ask, and the
-    /// answer is built from whatever is *actually* running rather than from a remembered flag.
+    /// **This used to clear the watch on every cold launch.** It is called from
+    /// `activationDidCompleteWith`, and a fresh process has no session in memory *by
+    /// construction* — so the phone told the watch "nothing is running" every time it started,
+    /// whether or not a workout was going. Reproduced on paired simulators: start a session, kill
+    /// the phone, relaunch it, and the wrist goes from a counting-down workout to **"No workout"**
+    /// inside a second, with the watch's controls dead behind it.
+    ///
+    /// Reaching for the record as well is the whole fix. The answer is now built from whatever the
+    /// phone *knows* is running rather than from whatever it happens to be holding.
     func answer() {
-        Log.debug("answer: \(hasActiveSession ? "live session" : "nothing running")")
-        send(advertised?.currentMessage ?? .sessionEnded)
+        // Read once: `currentWatchMessage` touches the disk when there is no live session, and
+        // the log line and the send must not be able to disagree about what was found.
+        let message = currentWatchMessage
+        Log.debug("answer: \(message == nil ? "nothing running" : "a session")")
+        send(message ?? .sessionEnded)
     }
 
     func send(_ message: WatchMessage) {
@@ -208,7 +281,18 @@ extension PhoneConnectivity: WCSessionDelegate {
               let control = WatchControl(rawValue: raw)
         else { return }
 
-        Task { @MainActor in self.deliver(control) }
+        // **Every control is also a receipt**, so the watch's build is learnt without inventing a
+        // message to ask for it. An older watch sends `requestState` — that control has existed
+        // since the recovery was first written — but no version key, and arriving without one *is*
+        // the stale-build signal. A newer watch sends its version alongside.
+        let version = payload["protocolVersion"] as? Int
+
+        Task { @MainActor in
+            self.hasHeardFromWatch = true
+            self.watchProtocolVersion = version
+            if let note = self.watchNote { Log.debug("watch build mismatch: \(note)") }
+            self.deliver(control)
+        }
     }
 
     /// Routes a control from the watch.

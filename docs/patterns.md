@@ -139,7 +139,17 @@ entirely on this: the watch used to wake four times a second for the whole worko
 times, and neither needed to — a minute-long interval has four instants at which anything can
 happen. `SessionScheduleTests` counts the wakes a session costs, so a regression to polling fails
 the suite rather than the battery. The display cadences (`TimelineView`) are separate from this and
-are stated where they are set.
+are stated where they are set — and **both surfaces now draw their clock from one**, so no wake
+exists purely to repaint a countdown. A timeline also stops when it is not on screen, which is the
+half that matters for a phone locked in a pocket.
+
+**`.rest` parks the loop; it never means "wait and look again".** `SessionSchedule.wake` returns
+either `.at(instant)` or `.rest`, and the second covers a rep interval, a pause, a finished session
+and no session at all. Parking is right for all four because each is moved on by something *outside*
+the loop that restarts it. The alternative — treating "nothing due" as a reason to check again
+shortly — reads like an obvious improvement and would put a finished workout's `DONE` screen on a
+timer for as long as it stayed up. That is why the rule is a named, tested function rather than a
+`guard` in each loop: battery failures do not announce themselves.
 
 **Web has no state library.** `useState` + `useEffect`, one `Plan` object per editor, nested
 arrays, and a single `mutate()` funnel that runs `normalize()` on every change.

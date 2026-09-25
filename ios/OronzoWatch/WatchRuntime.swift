@@ -3,11 +3,15 @@ import WatchKit
 
 /// Keeps the watch app running through a session.
 ///
-/// This is the *only* mechanism available to us. HealthKit's workout session would be the
-/// documented choice, but it cannot be signed by a free personal team, so an extended
-/// runtime session is what stops the app being suspended when the wrist goes down.
-/// `physical-therapy` is the longest-lived type that allows background execution, which
-/// puts a hard one-hour ceiling on a session — see `docs/decisions.md`.
+/// This is a **chosen** mechanism, not a forced one. HealthKit's `HKWorkoutSession` is the
+/// documented choice for a workout app, and the reason once given here for not using it — that a
+/// free personal team cannot sign HealthKit — **was wrong, and was never tested.** HealthKit signs
+/// fine, and the phone records finished workouts to Apple Health.
+///
+/// The extended runtime session stays because it is what stops the app being suspended when the
+/// wrist goes down, and replacing it is a large rewrite of the most failure-prone part of the
+/// system. The cost is a hard one-hour ceiling: `physical-therapy` is the longest-lived type that
+/// allows background execution. See `docs/decisions.md`.
 @MainActor
 @Observable
 final class WatchRuntime: NSObject {

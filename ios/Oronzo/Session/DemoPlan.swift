@@ -13,8 +13,25 @@ enum DemoPlan {
     static var launchArgumentPlan: Plan? {
         let arguments = ProcessInfo.processInfo.arguments
         if arguments.contains("-demoSession") { return make() }
+        if arguments.contains("-demoRecord") { return make() }
         if arguments.contains("-demoFinish") { return short() }
         return nil
+    }
+
+    /// Whether this launch's demo should be **written down** like a real session.
+    ///
+    /// `-demoSession` deliberately is not: it is a fixture for looking at the runner, and a record
+    /// it left behind would be resumed by the next ordinary launch as a workout nobody started.
+    ///
+    /// `-demoRecord` is the same session with the record left on — which is the only way to
+    /// exercise **resume** without an account and a backend, and resume is the mechanism most worth
+    /// exercising. Terminate the app mid-workout and launch it again with no arguments: the runner
+    /// comes back at the interval it should be at.
+    ///
+    /// Delete the record afterwards if you care: launch once more with `-demoSession`, which
+    /// clears any record it finds before starting.
+    static var persistsRecord: Bool {
+        ProcessInfo.processInfo.arguments.contains("-demoRecord")
     }
 
     /// `-demoSummary` shows the plan summary rather than the runner. See `RootView`.
@@ -112,6 +129,10 @@ enum DemoPlan {
 }
 
 #Preview("Session runner") {
-    SessionRunner(plan: DemoPlan.make(), exercises: DemoPlan.builderExercises)
+    // Built here rather than by `SessionHost`, because a preview has no app lifetime to hang a
+    // session on — and nothing in the runner needs one, now that it does not own its controller.
+    SessionRunner(
+        controller: SessionController(plan: DemoPlan.make(), exercises: DemoPlan.builderExercises)
+    )
 }
 #endif

@@ -11,6 +11,10 @@ final class WorkoutAudio {
     private var transitionCue: AVAudioPlayer?
     private var tickCue: AVAudioPlayer?
 
+    /// Whether the silent loop is up. The licence for `start` to be idempotent, and for `stop` to
+    /// be safe to call on an object that never started.
+    private var isRunning = false
+
     private let notification = UINotificationFeedbackGenerator()
     private let impact = UIImpactFeedbackGenerator(style: .light)
 
@@ -23,7 +27,16 @@ final class WorkoutAudio {
     ///
     /// `.playback` is deliberate: it ignores the ring/silent switch, which is what you want
     /// from a workout timer. `.mixWithOthers` keeps it from stopping your music.
+    ///
+    /// **Idempotent, and that is load-bearing rather than tidy.** A runner that reappears
+    /// re-asserts its session (`SessionController.start`), and building a second set of players
+    /// without stopping the first would leave the old silent loop running: two audio sessions
+    /// fighting over the same category, and a keep-alive nobody can turn off because nothing
+    /// holds a reference to it any more.
     func start() {
+        guard !isRunning else { return }
+        isRunning = true
+
         let session = AVAudioSession.sharedInstance()
         try? session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
         try? session.setActive(true)
@@ -39,6 +52,9 @@ final class WorkoutAudio {
     }
 
     func stop() {
+        guard isRunning else { return }
+        isRunning = false
+
         keepAlive?.stop()
         keepAlive = nil
         try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])

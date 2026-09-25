@@ -39,6 +39,14 @@ The Watch is the one that usually needs the second step.
 
 ## The permanent fix
 
-A paid Apple Developer account ($99/yr) removes this entirely, along with the one-hour extended
-runtime cap and the missing Activity ring credit. `docs/decisions.md` records what else it
-unlocks — it is the single highest-value upgrade available to this project.
+A paid Apple Developer account ($99/yr) removes **the weekly re-sign** — which is the whole of this
+document — and unlocks TestFlight and App Groups.
+
+**It does not buy the two things this section used to promise.** The one-hour extended runtime cap
+and the missing Activity ring credit both follow from having no `HKWorkoutSession`, and that is a
+**code change, not a purchase.** HealthKit itself signs fine on the free personal team, which this
+project believed otherwise about for a long time — see `docs/decisions.md`.
+
+So the upgrade is worth costing on the re-sign alone: a weekly chore removed, and a convenience
+gained, with no new capability attached. The highest-value change available to this project is not
+a purchase at all — it is replacing the Watch's runtime with a workout session.

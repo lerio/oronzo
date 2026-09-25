@@ -76,6 +76,8 @@ and the code that looks unintended.
 
 ## Constraints we build around
 
-This project targets a **free Apple personal team**, which rules out HealthKit, App Groups, and
-TestFlight, and expires provisioning profiles every 7 days. See `docs/decisions.md` for the full
-reasoning and `docs/runbook.md` for the weekly re-sign ritual.
+This project targets a **free Apple personal team**, which rules out App Groups and TestFlight, and
+expires provisioning profiles every 7 days. HealthKit is **not** among them — the phone records
+finished workouts to Apple Health — though this project believed otherwise for a long time, and
+`docs/decisions.md` records how that belief turned out to be untested. That file also has the rest
+of the reasoning, and `docs/runbook.md` the weekly re-sign ritual.

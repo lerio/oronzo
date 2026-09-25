@@ -42,6 +42,11 @@ targets:
     platform: iOS
     sources:
       - path: Oronzo
+        # The entitlements file is referenced by the build setting below, never by a build phase.
+        # Without this XcodeGen treats it as a resource and copies it into the bundle, which ships
+        # a description of the app's capabilities to anyone who downloads it for no reason.
+        excludes:
+          - "Oronzo.entitlements"
       # One copy of the SwiftUI token mapping, compiled into every surface — see the file's
       # header. It cannot live in OronzoCore, which has no SwiftUI dependency on purpose.
       - path: Shared
@@ -62,6 +67,9 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.lerio.oronzo
         PRODUCT_NAME: Oronzo
         INFOPLIST_FILE: Oronzo/Info.plist
+        # HealthKit, so a finished workout can be written to Apple Health. The Watch target has
+        # none: the phone owns the session and the phone is what records it.
+        CODE_SIGN_ENTITLEMENTS: Oronzo/Oronzo.entitlements
         TARGETED_DEVICE_FAMILY: "1"
         SUPPORTS_MACCATALYST: NO
         SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO

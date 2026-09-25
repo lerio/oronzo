@@ -187,6 +187,11 @@ now two:
   `ExercisePicker`. The dead rule beside it, `.step-row > input`, has been deleted: every numeric
   input is wrapped in a `label.inline-field` and `ExercisePicker` renders its own input inside a
   `div`, so the selector could never match anything.
+- **Fixed.** `WatchLink.startHaptics` explained its positive delay by saying *"`nextEvent` and
+  `nextSecond` are both strictly after the moment they were asked about"* — but the watch has never
+  called `nextSecond`, and it no longer exists at all: the phone's clock moved to a `TimelineView`,
+  so nothing schedules a per-second wake any more. The comment was doubly wrong by the time anyone
+  read it, which is the cost this entry is about.
 
 Still open:
 
@@ -216,3 +221,68 @@ that a future table needs no policy as long as it carries no grant. It does. Thi
 exactly the database activity that keeps the free project from pausing.
 
 **Question.** Correct the comment to say RLS is the control, and keep the grants as belt-and-braces?
+
+---
+
+## 12. The HealthKit write is proven to build, and not proven to work
+
+**What the code does.** `ios/Oronzo/Session/HealthWorkoutRecorder.swift` writes one
+`HKWorkout` (`.traditionalStrengthTraining`) for any session that ends after three minutes,
+via `HKWorkoutBuilder`. `OronzoCore.RecordableWorkout` decides *whether*, and is covered by
+`RecordableWorkoutTests` in `swift test`.
+
+**What has actually been measured — and what has not.** This is the entry to read before trusting
+the feature, because the gap is wider than usual here:
+
+- **Verified.** HealthKit signs on this free personal team, and `com.lerio.oronzo` itself signs with
+  `com.apple.developer.healthkit` in both its entitlements and its embedded profile — inspected on
+  the built device artifact with `codesign -d --entitlements` and `security cms -D`, not inferred
+  from a green build. Both targets compile with no warnings. The three-minute rule is unit-tested.
+- **Verified, and a trap worth knowing.** HealthKit *validates* `NSHealthUpdateUsageDescription`
+  and crashes with `NSInvalidArgumentException` if the string is not a real sentence. A probe app
+  using `"Probe"` as a placeholder died at the authorization call; the same shape with a proper
+  sentence raised the sheet normally. The string in `ios/Oronzo/Info.plist` is a real sentence.
+- **Not verified.** The save itself. The authorization sheet was reached on an iOS Simulator, but
+  this machine has no `Simulator.app` — only the headless CoreSimulator runtime — so the sheet could
+  not be tapped and the write could not complete. **No workout has been observed in Apple Health.**
+
+**Why it matters.** Two things follow from the unverified part, and neither can be settled by
+reading the code. First, whether a workout that is saved *without* a live `HKWorkoutSession`, and
+with no heart-rate or energy samples, earns **Exercise ring credit** — `docs/decisions.md` claims
+workouts do not close the rings, and that claim rests on the same untested part. Second, whether a
+workout written from a phone that is locked and in a pocket is delivered at all; HealthKit permits
+background writes, but that has not been seen here.
+
+A failure is **not silent**: the summary reports the outcome beside the history line
+(`Added to Apple Health` / `Not added to Apple Health — …`), so a denied permission is visible
+rather than showing up as a workout that never appears. That is also why there is no "Try again" on
+that line, unlike the history one — a retry after a write that failed is the one path that could
+double-post if the failure landed after the store had already committed.
+
+**Question.** Do a real workout of more than three minutes on the phone, then check the Fitness app
+for the entry and the Activity rings for credit? If the summary says `Added to Apple Health` but the
+ring does not move, the escalation is a live `HKWorkoutSession` — a scoped follow-up, not a fix to
+this code.
+
+---
+
+## 13. The history write has no demo guard, and a fixture can reach production
+
+**What the code does.** `SessionRunner.persist` (`ios/Oronzo/Views/SessionRunner.swift:482`) calls
+`SessionLogger().log(...)`, which inserts into Supabase `sessions` + `session_steps`. It consults
+nothing about whether this launch is a fixture. `SessionController.persistsRecord` — the flag that
+does distinguish them — is `private`, so the view cannot read it.
+
+**Why it matters.** `-demoSession` runs `DemoPlan.make()`, a realistic full-length plan, and it
+reaches the summary screen like any other. Today a demo run is kept out of history only
+*incidentally*: either the app is signed out, so `auth.session.user.id` throws, or `plan_id` is a
+fresh random UUID that violates the foreign key to `public.plans`. Neither is a guard. A demo run
+with a live keychain session inserts a row named `"Demo — Upper Body A"` into real history, where
+it is indistinguishable from a workout that was done.
+
+This is pre-existing, and was found while adding the HealthKit write next to it — **which does have
+a guard**, via `recordsHealth`, precisely because the same reasoning was applied there. The two
+paths should not differ in whether they can be reached by a fixture.
+
+**Question.** Guard `persist` the way `writeToHealth` is guarded — expose the flag the controller
+already holds and skip the write for a fixture — rather than leaving the FK to catch it by luck?

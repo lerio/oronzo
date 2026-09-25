@@ -56,13 +56,63 @@ public enum SessionSchedule {
         return nil
     }
 
-    /// The next whole second after `now` — the instants an `M:SS` clock changes.
+    // Removed: `nextSecond(after:)`, which returned the next whole second so the phone could be
+    // woken to repaint its clock. The phone draws its countdown from a `TimelineView` now, so
+    // nothing calls it and there is no second term in the phone's schedule any more. Deleted
+    // rather than left in place, like the Lock Screen surface before it (`docs/decisions.md`): a
+    // helper with no caller is an invitation to reintroduce the wake it was written for, and the
+    // whole point of this file is that the wakes are counted.
+
+    // MARK: - Whether to sleep, and for how long
+
+    /// What a surface's wake loop should do next.
     ///
-    /// The phone draws its countdown from a stored remainder rather than a `TimelineView`, so it
-    /// is the one surface that has to be woken to repaint a clock. This is what keeps that to once
-    /// a second instead of ten times, which is what it was.
-    public static func nextSecond(after now: Date) -> Date {
-        let seconds = now.timeIntervalSince1970
-        return Date(timeIntervalSince1970: seconds.rounded(.down) + 1)
+    /// **This is a rule rather than an `if`, because the failure it prevents is a battery one and
+    /// battery failures do not announce themselves.** Both loops used to end by falling out of a
+    /// `guard let … else { return }`: "nothing is due" and "nothing will ever be due again" reached
+    /// the same answer by the same route. That happens to be correct today — every thing that moves
+    /// a session on also restarts its loop — and it stops being correct the moment anyone makes
+    /// "nothing is due" mean *wait a bit and look again*. That reads like an obvious improvement
+    /// and it would put a finished workout's `DONE` screen on a timer for as long as it stayed up,
+    /// on the largest battery cost the watch has.
+    ///
+    /// There are two answers, and the second one covers strictly more than it looks like it does:
+    ///
+    /// - `.at` — something can happen at this instant. Sleep until then.
+    /// - `.rest` — **nothing more will be due from this session's own clock. Park the loop, and do
+    ///   not wake again to check.** A rep interval is the obvious case: it has no length, so
+    ///   nothing about it can be predicted and only a tap moves it on. But a paused session, a
+    ///   *finished* session and no session at all land here too, and that is the important part —
+    ///   a finished session must be as silent as an idle one, and the only thing that distinguishes
+    ///   them is intent. Parking is right for all four because every one of them is moved on by
+    ///   something outside the loop, and that thing restarts it: `WatchLink.apply` on every
+    ///   snapshot, `SessionController.resume`/`advance`/`goBack`, `syncRuntimeAndCues` on a wrist
+    ///   raise.
+    ///
+    /// A periodic re-check would therefore buy nothing even in principle: every deadline in a
+    /// session is an absolute date, so a wake could only ever learn what the anchor already said.
+    public enum Wake: Equatable, Sendable {
+        /// Something can happen at this instant.
+        case at(Date)
+        /// Nothing is due, and nothing will be until something external moves the session.
+        case rest
+    }
+
+    /// What the loop should do next, from wherever the session is.
+    ///
+    /// - Parameters:
+    ///   - hasSession: whether there is a session at all. Without one nothing is ever due — this
+    ///     is the watch before the phone has said anything, and the phone before it has started.
+    public static func wake(
+        after now: Date,
+        end: Date?,
+        isPaused: Bool,
+        isFinished: Bool,
+        hasSession: Bool
+    ) -> Wake {
+        guard hasSession, !isFinished else { return .rest }
+        guard let next = nextEvent(after: now, end: end, isPaused: isPaused, isFinished: isFinished)
+        else { return .rest }
+        return .at(next)
     }
 }

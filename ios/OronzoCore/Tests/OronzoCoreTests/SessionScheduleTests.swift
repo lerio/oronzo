@@ -79,24 +79,9 @@ final class SessionScheduleTests: XCTestCase {
         )
     }
 
-    // MARK: - The whole-second clock
-
-    func testTheNextSecondIsStrictlyAheadOfNow() {
-        XCTAssertEqual(
-            SessionSchedule.nextSecond(after: t0).timeIntervalSince1970,
-            1_700_000_001
-        )
-        // Mid-second, the next whole second is the one after it.
-        XCTAssertEqual(
-            SessionSchedule.nextSecond(after: t0.addingTimeInterval(0.4)).timeIntervalSince1970,
-            1_700_000_001
-        )
-        // Exactly on a boundary, it must advance rather than return where it already is.
-        XCTAssertEqual(
-            SessionSchedule.nextSecond(after: t0.addingTimeInterval(1)).timeIntervalSince1970,
-            1_700_000_002
-        )
-    }
+    // Removed with `nextSecond`: three tests pinning the next-whole-second helper the phone used
+    // to be woken by. The phone's clock is a `TimelineView` now, so there is no such helper and
+    // nothing to pin. The four instants above are the whole of the schedule.
 
     // MARK: - What the change is worth
 
@@ -144,6 +129,91 @@ final class SessionScheduleTests: XCTestCase {
             wakes * 40, pollingAtFourHertz,
             "\(wakes) wakes against \(pollingAtFourHertz) for a 4 Hz poll — the ratio is the win"
         )
+    }
+
+    /// **The phone's twin of the eighty-wakes measurement**, and the guard on the change that took
+    /// its clock off the wake loop.
+    ///
+    /// It is the same number as the watch's *per interval* for the same reason — four instants —
+    /// but it is asserted separately, because the two surfaces reached it by different routes and
+    /// the phone's had a second term (`nextSecond`) for a while. Anyone tempted to give the phone
+    /// back its per-second wake for a smoother clock has to delete this test to do it.
+    func testATimedIntervalWakesThePhoneExactlyFourTimes() {
+        let end = t0.addingTimeInterval(60)
+        var wakes = 0
+        var cursor = t0
+
+        while case .at(let next) = SessionSchedule.wake(
+            after: cursor, end: end, isPaused: false, isFinished: false, hasSession: true
+        ) {
+            wakes += 1
+            cursor = next
+            XCTAssertLessThanOrEqual(wakes, 10, "the walk should terminate well before this")
+        }
+
+        XCTAssertEqual(wakes, 4, "the three countdown steps and the boundary — and nothing for the clock")
+    }
+
+    // MARK: - Whether to sleep, and for how long
+
+    /// These four are the battery guard, and they are the reason `Wake` is a rule rather than an
+    /// `if` in each loop. A loop that cannot tell "nothing is due" from "nothing will ever be due
+    /// again" is one refactor away from polling — and the obvious-looking refactor ("nothing due?
+    /// wait a bit and look again") is exactly the one that would put a finished workout's `DONE`
+    /// screen on a timer.
+
+    func testATimedIntervalIsWokenAtItsNextInstant() {
+        let end = t0.addingTimeInterval(60)
+
+        let wake = SessionSchedule.wake(
+            after: t0, end: end, isPaused: false, isFinished: false, hasSession: true
+        )
+
+        XCTAssertEqual(wake, .at(t0.addingTimeInterval(57)), "the first countdown step")
+    }
+
+    /// A rep interval has no length, so nothing about it can be predicted and only a tap — or a
+    /// control from the watch — moves it on. The loop parks, and the thing that moves it on is
+    /// what restarts it.
+    func testARepIntervalRestsRatherThanStopping() {
+        let wake = SessionSchedule.wake(
+            after: t0, end: nil, isPaused: false, isFinished: false, hasSession: true
+        )
+
+        XCTAssertEqual(wake, .rest)
+    }
+
+    func testAPausedSessionRests() {
+        let wake = SessionSchedule.wake(
+            after: t0, end: t0.addingTimeInterval(60), isPaused: true, isFinished: false, hasSession: true
+        )
+
+        XCTAssertEqual(wake, .rest)
+    }
+
+    /// **A finished session rests, and must not be given a wake at all — not even a late one.**
+    ///
+    /// This is the assertion that keeps the `DONE` fix from becoming a battery bug, and it is
+    /// written against the specific mistake rather than the enum: `WatchLink.apply` calls
+    /// `startHaptics()` unconditionally, *including* for the terminal snapshot, so anything other
+    /// than a park here leaves the watch waking for as long as the `DONE` screen is up.
+    func testAFinishedSessionIsGivenNoWakeEvenALateOne() {
+        let end = t0.addingTimeInterval(60)
+        let wake = SessionSchedule.wake(
+            after: t0, end: end, isPaused: false, isFinished: true, hasSession: true
+        )
+
+        XCTAssertEqual(wake, .rest)
+        XCTAssertNotEqual(wake, .at(end), "the interval's own boundary must not be offered")
+        XCTAssertNotEqual(wake, .at(t0.addingTimeInterval(1)), "nor any other instant")
+    }
+
+    func testASessionWithNoIntervalsRests() {
+        let wake = SessionSchedule.wake(
+            after: t0, end: nil, isPaused: false, isFinished: false, hasSession: false
+        )
+
+        XCTAssertEqual(wake, .rest, "nothing was ever started; nothing will ever be due")
     }
 
     // MARK: - Helpers

@@ -34,6 +34,15 @@
 	<string>$(SUPABASE_PROJECT_REF)</string>
 	<key>SupabasePublishableKey</key>
 	<string>$(SUPABASE_PUBLISHABLE_KEY)</string>
+	<!--
+	  Required for any HealthKit *write* request, and its absence is a hard crash rather than a
+	  silent failure — so this string is load-bearing, not documentation. There is deliberately no
+	  NSHealthShareUsageDescription: Oronzo requests write access to workouts and reads nothing
+	  back, and a usage string for a permission that is never asked for is a lie in the app's own
+	  metadata. See ios/Oronzo/Oronzo.entitlements.
+	-->
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>Oronzo adds your finished workouts to Apple Health so they appear in the Fitness app.</string>
 	<!-- Keeps the session engine alive while the phone is in a pocket. See docs/decisions.md. -->
 	<key>UIBackgroundModes</key>
 	<array>

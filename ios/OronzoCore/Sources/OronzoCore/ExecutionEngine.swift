@@ -17,7 +17,10 @@ public enum OutcomeStatus: String, Codable, Sendable {
 /// What happened on one interval. Only the *duration* is recorded — the engine measures it
 /// itself. How many reps you actually did, and at what load, is not tracked: the runner has
 /// no way to enter it, so those columns would only ever be null.
-public struct IntervalOutcome: Equatable, Sendable {
+/// `Codable` since `SessionRecord` persists it. It never crosses the Watch wire — the watch is
+/// told the session's *shape*, not how it was scored — so this conformance is free to be added
+/// and cannot invalidate an application context sitting on a device.
+public struct IntervalOutcome: Equatable, Sendable, Codable {
     public var status: OutcomeStatus
     public var duration: TimeInterval?
 
@@ -27,7 +30,11 @@ public struct IntervalOutcome: Equatable, Sendable {
     }
 }
 
-public enum Phase: Equatable, Sendable {
+/// Raw values are spelled out because this is **written to disk** in a `SessionRecord`, and a
+/// record has to be readable by the build that wrote it. They are the case names rather than
+/// numbers so that a record is legible when someone is staring at one at 7am wondering why the
+/// phone forgot a workout.
+public enum Phase: String, Equatable, Sendable, Codable {
     case idle
     case running
     case paused
@@ -67,11 +74,57 @@ public struct ExecutionEngine: Sendable {
     public private(set) var pausedTotal: TimeInterval = 0
     public private(set) var outcomes: [Int: IntervalOutcome]
 
-    private var pausedAt: Date?
+    /// When the pause in progress began. Readable so `SessionRecord` can write it down — see
+    /// `elapsed` for what goes wrong without it. Deliberately **not** cleared by `close`: a
+    /// session ended while paused still has that pause to exclude, and clearing it here is what
+    /// would put the final pause into `totalDuration`.
+    public private(set) var pausedAt: Date?
 
     public init(intervals: [Interval]) {
         self.intervals = intervals
         self.outcomes = Dictionary(uniqueKeysWithValues: intervals.map { ($0.index, IntervalOutcome()) })
+    }
+
+    /// Rebuilds an engine that was written down mid-session — the phone relaunching onto a
+    /// workout it was already running.
+    ///
+    /// **Failable, and deliberately strict.** A record is the only thing standing between a
+    /// workout and being lost, so every way it could describe something impossible is refused
+    /// rather than half-applied: an empty interval list, a session that never started, an index
+    /// past the end of the plan, or an outcome filed against an interval that does not exist.
+    /// The caller shows the plan list instead, which is a worse screen than a resumed runner and
+    /// a much better one than a runner driving an engine that cannot mean anything.
+    ///
+    /// **No clock.** Everything the engine needs is in the record, including when a pause began —
+    /// so a restore is a pure function of the file, which is what makes it testable without
+    /// pretending about time and what stops a wrong number from depending on when the app was
+    /// opened. Anything the record cannot supply falls back to `savedAt`, which is the latest
+    /// instant the writer is known to have agreed with.
+    public init?(restoring record: SessionRecord) {
+        guard !record.intervals.isEmpty,
+              record.phase != .idle,
+              record.intervals.indices.contains(record.currentIndex),
+              record.outcomes.keys.allSatisfy({ record.intervals.indices.contains($0) })
+        else { return nil }
+
+        self.intervals = record.intervals
+        self.currentIndex = record.currentIndex
+        self.phase = record.phase
+        self.intervalEnd = record.intervalEnd
+        self.remainingWhenPaused = record.remainingWhenPaused
+        self.startedAt = record.startedAt
+        self.finishedAt = record.finishedAt
+        self.pausedTotal = record.pausedTotal
+        self.outcomes = record.outcomes
+        // Only a paused session has a pause in progress to measure. A running one has none, and
+        // setting it would charge the session for time it spent working.
+        //
+        // Measured from when the pause *began*, not from the restore: a phone that died ten
+        // minutes into a pause must not have those ten minutes counted as exercise when it comes
+        // back. A record written before this field existed has nothing to go on, so it falls back
+        // to the last instant the writer agreed with the state — which over-counts that gap, and
+        // is the best that can honestly be said about a file that does not know.
+        self.pausedAt = record.phase == .paused ? (record.pausedAt ?? record.savedAt) : nil
     }
 
     // MARK: - Derived state
@@ -91,10 +144,18 @@ public struct ExecutionEngine: Sendable {
     }
 
     /// Elapsed wall-clock time of the session, excluding pauses.
+    ///
+    /// **A pause still in progress counts as excluded, exactly like one that has ended.** It used
+    /// to be excluded only once `resume` had added it to `pausedTotal`, which meant a session
+    /// paused and then checked reported the pause as time spent exercising — and, worse, a
+    /// session ended *while* paused wrote the final pause into `totalDuration` and into history.
+    /// Resuming later corrected any reading taken before it, which is why this went unnoticed:
+    /// the number was right whenever anyone looked at the end.
     public func elapsed(at now: Date) -> TimeInterval {
         guard let startedAt else { return 0 }
         let end = finishedAt ?? now
-        return max(0, end.timeIntervalSince(startedAt) - pausedTotal)
+        let ongoingPause = pausedAt.map { max(0, end.timeIntervalSince($0)) } ?? 0
+        return max(0, end.timeIntervalSince(startedAt) - pausedTotal - ongoingPause)
     }
 
     // MARK: - Transitions
