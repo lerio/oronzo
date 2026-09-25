@@ -259,9 +259,12 @@ public enum SessionPresentation {
     ///
     /// A sighted user can ignore a small label; a VoiceOver user has to sit through it. "Main"
     /// tells them nothing they need, so the announcement carries "Set 2 of 4" and stays silent
-    /// about the block.
+    /// about the block. Effort is progress in the same sense and is spoken the same way, in the
+    /// same order as `Interval.contextLabel` — the two must not disagree about what a given
+    /// interval says.
     private static func progress(of interval: Interval) -> String? {
         if interval.setCount > 1 { return "Set \(interval.setIndex) of \(interval.setCount)" }
+        if let intensity = interval.intensity { return intensity.rawValue }
         if interval.blockRoundCount > 1 { return "Round \(interval.blockRound) of \(interval.blockRoundCount)" }
         return nil
     }

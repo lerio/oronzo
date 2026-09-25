@@ -16,7 +16,7 @@ Following the rule to reuse before adding.
 |---|---|---|
 | `MeasurementFormat.clock(remaining:)` | `OronzoCore/Models.swift` | The clock text. Already rounds **up**, so it only reads 0:00 when time is genuinely over. |
 | `MeasurementFormat.reps` / `.weight` | same | Rep and load text. |
-| `Interval.contextLabel` | same | "Set 2 of 4" / "Round 1 of 3" / block name — the existing precedence is correct, keep it. |
+| `Interval.contextLabel` | same | "Set 2 of 4" / intensity / "Round 1 of 3" / block name — the precedence is correct, keep it. Effort (`0013`) sits **between** the set count and the round count: a set number is progress, and effort only displaces progress you need less — see `Models.swift`. |
 | `PlanFlattener.restLabel` = `"Break"` | `PlanFlattener.swift` | The rest interval's name. |
 | Runtime notes | `WatchRuntime.describe` | "Approaching the one-hour limit", "Paused by the watch (low power)", "Another app took over" — already good copy. |
 | Save status copy | `SessionRunner.saveStatus` | "Not saved — …" and "Try again". |

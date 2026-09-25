@@ -28,15 +28,20 @@ enum DemoPlan {
         ProcessInfo.processInfo.arguments.contains("-demoSummary")
     }
 
-    /// Stable ids, because the plan and the names it resolves against are built separately.
+    /// Stable ids, because the plan and the info it resolves against are built separately.
     private static let benchID = UUID(uuidString: "00000000-0000-0000-0000-00000000B001")!
     private static let pulldownID = UUID(uuidString: "00000000-0000-0000-0000-00000000B002")!
     private static let squatID = UUID(uuidString: "00000000-0000-0000-0000-00000000B003")!
+    private static let rowID = UUID(uuidString: "00000000-0000-0000-0000-00000000B004")!
 
-    static let builderExerciseNames: [UUID: String] = [
-        benchID: "Flat Dumbbell Bench Press",
-        pulldownID: "Neutral-Grip Lat Pulldown",
-        squatID: "Goblet Squat",
+    /// The exercise table as far as a demo needs it. The row is the one flagged two-sided, which
+    /// is what lets a launch-argument session show the left/right pair on a simulator with no
+    /// account, no backend and no migration applied.
+    static let builderExercises: [UUID: ExerciseInfo] = [
+        benchID: ExerciseInfo(name: "Flat Dumbbell Bench Press"),
+        pulldownID: ExerciseInfo(name: "Neutral-Grip Lat Pulldown"),
+        squatID: ExerciseInfo(name: "Goblet Squat"),
+        rowID: ExerciseInfo(name: "One-Arm Dumbbell Row", hasTwoSides: true),
     ]
 
     /// Shaped the way `save_plan` writes a plan: `exercise_id` set, `label` null throughout.
@@ -83,17 +88,23 @@ enum DemoPlan {
             blocks: [
                 // Leads with a timed step so the countdown is the first thing shown.
                 PlanBlock(name: "Warm-up", steps: [
-                    PlanStep(label: "Easy — 2 min", mode: .time, duration: 120),
+                    PlanStep(label: "Warm-up", mode: .time, duration: 120, intensity: .low),
                 ]),
                 PlanBlock(name: "Main work", steps: [
                     PlanStep(label: "Flat Dumbbell Bench Press", sets: 4, mode: .reps,
                              reps: 8, targetWeightKg: 20, restAfter: 90),
                     PlanStep(label: "Neutral-Grip Lat Pulldown", sets: 4, mode: .reps,
                              reps: 6, targetWeightKg: 50, restAfter: 90),
+                    // The one step carrying an exercise id rather than a label, so the session
+                    // runs the two-sided path — left, right, rest — with no backend behind it.
+                    PlanStep(exerciseID: rowID, sets: 3, mode: .reps,
+                             reps: 10, targetWeightKg: 22, restAfter: 60),
                 ]),
+                // The effort used to be spelled into the labels ("Hard — 20 sec"), which was the
+                // only place it could live. It is a field now, and the label names the movement.
                 PlanBlock(name: "HIIT", rounds: 6, steps: [
-                    PlanStep(label: "Hard — 20 sec", mode: .time, duration: 20),
-                    PlanStep(label: "Easy — 40 sec", mode: .time, duration: 40),
+                    PlanStep(label: "Sprint", mode: .time, duration: 20, intensity: .hard),
+                    PlanStep(label: "Recover", mode: .time, duration: 40, intensity: .low),
                 ]),
             ]
         )
@@ -101,6 +112,6 @@ enum DemoPlan {
 }
 
 #Preview("Session runner") {
-    SessionRunner(plan: DemoPlan.make(), exerciseNames: [:])
+    SessionRunner(plan: DemoPlan.make(), exercises: DemoPlan.builderExercises)
 }
 #endif

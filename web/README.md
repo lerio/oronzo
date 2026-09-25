@@ -21,7 +21,8 @@ building a structured workout on a phone is miserable, and on a watch worse.
 
 `src/lib/types.ts` holds the domain model *and* `flattenPlan`, the contract it shares with
 `ios/OronzoCore/` and the `save_plan` SQL function. If you change the flattening rule, change
-it in all three.
+it in all three. It also holds `sideSuffixes` — the twin of `PlanFlattener.sideSuffixes` in the
+Swift package — which is what makes an exercise flagged *2 sides* emit left, then right.
 
 See the [root README](../README.md) for the whole system, `docs/decisions.md` for why it is
 shaped this way, and `docs/runbook.md` for deployment.

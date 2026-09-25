@@ -299,7 +299,7 @@ final class ExecutionEngineTests: XCTestCase {
                 PlanStep(exerciseID: squat, sets: 3, mode: .reps, reps: 12, restAfter: 90),
             ]),
         ])
-        let intervals = PlanFlattener.flatten(plan, exerciseNames: [squat: "Back Squat"])
+        let intervals = PlanFlattener.flatten(plan, exercises: [squat: ExerciseInfo(name: "Back Squat")])
         var engine = ExecutionEngine(intervals: intervals)
 
         _ = engine.start(at: t0)
@@ -329,7 +329,7 @@ final class ExecutionEngineTests: XCTestCase {
                 PlanStep(label: "Easy", mode: .time, duration: 40),
             ]),
         ])
-        var engine = ExecutionEngine(intervals: PlanFlattener.flatten(plan))
+        var engine = ExecutionEngine(intervals: PlanFlattener.flatten(plan, exercises: [:]))
         _ = engine.start(at: t0)
 
         // 3 rounds x 60s. Tick once past the end and expect a single coalesced event.

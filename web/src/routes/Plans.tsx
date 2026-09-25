@@ -42,20 +42,20 @@ export default function Plans() {
   // plan inside the loop — so a list of eight plans re-derived the same eight arrays each time
   // anything on the page re-rendered, including a delete's confirmation state. The work is a
   // function of the plans and the exercise names, and neither changes while you are looking at it.
-  const names = useMemo(() => new Map(exercises.map((e) => [e.id, e.name])), [exercises]);
+  const exercisesById = useMemo(() => new Map(exercises.map((e) => [e.id, e])), [exercises]);
 
   const rows = useMemo(
     () =>
       plans.map((plan) => {
-        const intervals = flattenPlan(plan, names);
+        const intervals = flattenPlan(plan, exercisesById);
         return {
           plan,
           blocks: plan.blocks.length,
           steps: intervals.length,
-          duration: estimatePlanDuration(plan, intervals),
+          duration: estimatePlanDuration(plan, intervals, exercisesById),
         };
       }),
-    [plans, names],
+    [plans, exercisesById],
   );
 
   if (loading) return <p className="muted">Loading plans…</p>;

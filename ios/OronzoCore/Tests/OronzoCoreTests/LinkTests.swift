@@ -133,6 +133,48 @@ final class LinkTests: XCTestCase {
         XCTAssertEqual(back.intervals.count, 2, "the plan survives a field it never knew about")
     }
 
+    /// `intensity` is the first field added to `Interval` since the wire existed, and this is the
+    /// property that makes it safe: an *optional* field is decoded with `decodeIfPresent`, so a
+    /// snapshot written before it existed still decodes, and a nil one is omitted from the JSON
+    /// entirely — an older watch receives exactly the bytes it used to.
+    func testAnIntervalWithNoIntensityDecodesAndEncodesAsItAlwaysDid() throws {
+        let plain = WatchMessage.session(
+            SessionSnapshot(planName: "P", intervals: [timed(0, 60)], startedAt: t0, state: runningState())
+        )
+        let encoded = try WireCodec.encode(plain)
+        XCTAssertFalse(
+            String(decoding: encoded, as: UTF8.self).contains("intensity"),
+            "a nil intensity must not appear on the wire at all"
+        )
+
+        // And the tolerance in the other direction: a snapshot that *does* carry one, with the
+        // key stripped, is what a phone running this build would send to an older watch.
+        let withEffort = WatchMessage.session(
+            SessionSnapshot(
+                planName: "P",
+                intervals: [Interval(
+                    index: 0, kind: .exercise, name: "Burpee", mode: .time, duration: 20,
+                    reps: nil, targetWeightKg: nil, setIndex: 1, setCount: 1,
+                    blockRound: 1, blockRoundCount: 6, blockName: "HIIT", exerciseID: nil,
+                    intensity: .hard
+                )],
+                startedAt: t0,
+                state: runningState()
+            )
+        )
+        let stripped = try JSONSerialization.data(
+            withJSONObject: removing("intensity", from: try JSONSerialization.jsonObject(
+                with: try WireCodec.encode(withEffort)
+            ))
+        )
+
+        guard case .session(let back) = try WireCodec.decode(WatchMessage.self, from: stripped) else {
+            return XCTFail("a snapshot without intensity came back as something else")
+        }
+        XCTAssertNil(back.intervals.first?.intensity)
+        XCTAssertEqual(back.intervals.first?.name, "Burpee", "the rest of the interval survives")
+    }
+
     /// Drops a key wherever it appears in a JSON tree.
     private func removing(_ key: String, from value: Any) -> Any {
         if var object = value as? [String: Any] {

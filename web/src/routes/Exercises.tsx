@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { createExercise, deleteExercise, listExercises } from '../lib/api';
-import { EQUIPMENT, MUSCLE_GROUPS, type Exercise, type StepMode } from '../lib/types';
+import { MUSCLE_GROUPS, exerciseSummary, type Exercise, type StepMode } from '../lib/types';
 
 export default function Exercises() {
   const [exercises, setExercises] = useState<Exercise[]>([]);
@@ -10,8 +10,8 @@ export default function Exercises() {
 
   const [name, setName] = useState('');
   const [muscleGroup, setMuscleGroup] = useState<string>('chest');
-  const [equipment, setEquipment] = useState<string>('barbell');
   const [mode, setMode] = useState<StepMode>('reps');
+  const [twoSides, setTwoSides] = useState(false);
 
   useEffect(() => {
     listExercises()
@@ -27,13 +27,12 @@ export default function Exercises() {
       const created = await createExercise({
         name: name.trim(),
         muscle_group: muscleGroup,
-        equipment,
         default_mode: mode,
-        default_duration_seconds: mode === 'time' ? 45 : null,
-        default_reps: mode === 'reps' ? 10 : null,
+        has_two_sides: twoSides,
       });
       setExercises((current) => [...current, created].sort((a, b) => a.name.localeCompare(b.name)));
       setName('');
+      setTwoSides(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not create exercise');
     }
@@ -60,15 +59,13 @@ export default function Exercises() {
 
   // Memoised because the filter box drives this on every keystroke, and the old form also
   // lower-cased every exercise's name once per element per render to test it.
-  const { seeded, custom } = useMemo(() => {
+  //
+  // There is no seeded/custom split any more: the library was deleted in `0010`, so every row
+  // here is the user's own.
+  const filtered = useMemo(() => {
     const needle = filter.trim().toLowerCase();
-    const matched = needle
-      ? exercises.filter((e) => e.name.toLowerCase().includes(needle))
-      : exercises;
-    return {
-      seeded: matched.filter((e) => e.user_id === null),
-      custom: matched.filter((e) => e.user_id !== null),
-    };
+    if (!needle) return exercises;
+    return exercises.filter((e) => e.name.toLowerCase().includes(needle));
   }, [exercises, filter]);
 
   if (loading) return <p className="muted">Loading exercises…</p>;
@@ -97,35 +94,37 @@ export default function Exercises() {
             </option>
           ))}
         </select>
-        <select value={equipment} onChange={(e) => setEquipment(e.target.value)}>
-          {EQUIPMENT.map((g) => (
-            <option key={g} value={g}>
-              {g}
-            </option>
-          ))}
-        </select>
         <select value={mode} onChange={(e) => setMode(e.target.value as StepMode)}>
           <option value="reps">reps</option>
           <option value="time">time</option>
         </select>
+        <label className="inline-field" title="Performed once per side — left, then right">
+          <input
+            type="checkbox"
+            checked={twoSides}
+            onChange={(e) => setTwoSides(e.target.checked)}
+          />
+          <span>2 sides</span>
+        </label>
         <button className="primary" type="submit">
           Add
         </button>
       </form>
 
-      <h2 className="section-title">Yours ({custom.length})</h2>
-      {custom.length === 0 ? (
-        <p className="muted small">Nothing custom yet — the seeded library below covers the basics.</p>
+      <h2 className="section-title">Your exercises ({filtered.length})</h2>
+      {filtered.length === 0 ? (
+        <p className="muted small">
+          {exercises.length === 0
+            ? 'Nothing here yet — add your first exercise above.'
+            : `No exercise matches “${filter.trim()}”.`}
+        </p>
       ) : (
         <ul className="plan-list">
-          {custom.map((exercise) => (
+          {filtered.map((exercise) => (
             <li key={exercise.id} className="card plan-row">
               <div className="plan-main">
                 <span className="plan-name">{exercise.name}</span>
-                <span className="muted small">
-                  {exercise.muscle_group.replace('_', ' ')} · {exercise.equipment} ·{' '}
-                  {exercise.default_mode}
-                </span>
+                <span className="muted small">{exerciseSummary(exercise)}</span>
               </div>
               <button className="link-btn danger" onClick={() => void onDelete(exercise)}>
                 Delete
@@ -134,22 +133,6 @@ export default function Exercises() {
           ))}
         </ul>
       )}
-
-      <h2 className="section-title">Library ({seeded.length})</h2>
-      <ul className="plan-list compact">
-        {seeded.map((exercise) => (
-          <li key={exercise.id} className="card plan-row">
-            <div className="plan-main">
-              <span className="plan-name">{exercise.name}</span>
-              <span className="muted small">
-                {exercise.muscle_group.replace('_', ' ')} · {exercise.equipment} ·{' '}
-                {exercise.default_mode}
-              </span>
-            </div>
-            <span className="pill">built-in</span>
-          </li>
-        ))}
-      </ul>
     </section>
   );
 }

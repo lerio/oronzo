@@ -5,7 +5,7 @@ import type { Exercise, Plan, PlanBlock, PlanStep, StepMode } from './types';
 const PLAN_SELECT =
   'id,name,updated_at,plan_blocks(id,position,name,rounds,rest_between_rounds_seconds,' +
   'plan_steps(id,position,exercise_id,label,sets,mode,duration_seconds,reps,' +
-  'target_weight_kg,rest_after_seconds))';
+  'target_weight_kg,rest_after_seconds,intensity))';
 
 type PlanRow = {
   id: string;
@@ -61,6 +61,7 @@ export async function savePlan(plan: Plan): Promise<string> {
         reps: step.reps,
         target_weight_kg: step.target_weight_kg,
         rest_after_seconds: step.rest_after_seconds,
+        intensity: step.intensity,
         position: stepIndex,
       })),
       position: blockIndex,
@@ -87,20 +88,37 @@ export async function listExercises(): Promise<Exercise[]> {
   return data as Exercise[];
 }
 
+/**
+ * Creates one of the user's own exercises.
+ *
+ * Takes only what a person chooses. The per-mode defaults are filled in here, beside the
+ * constraint that makes them necessary — `exercises_mode_shape` rejects a timed exercise with no
+ * duration, and the plan editor pre-fills a new step from all of them. Two forms create
+ * exercises now (the Exercises page and the plan editor's picker), so this is the one place that
+ * decides what a new one looks like.
+ *
+ * `has_two_sides` is sent explicitly rather than left to the column's default: it is the one
+ * thing here a checkbox decides. Note this needs `0012` applied — an insert naming a column the
+ * database does not have is a `400`, unlike the reads, which tolerate new columns.
+ */
 export async function createExercise(input: {
   name: string;
   muscle_group: string;
-  equipment: string;
   default_mode: StepMode;
-  default_duration_seconds: number | null;
-  default_reps: number | null;
+  has_two_sides: boolean;
 }): Promise<Exercise> {
   const { data: userData, error: userError } = await supabase.auth.getUser();
   if (userError) throw userError;
 
   const { data, error } = await supabase
     .from('exercises')
-    .insert({ ...input, user_id: userData.user.id, slug: null })
+    .insert({
+      ...input,
+      user_id: userData.user.id,
+      slug: null,
+      default_duration_seconds: input.default_mode === 'time' ? 45 : null,
+      default_reps: input.default_mode === 'reps' ? 10 : null,
+    })
     .select('*')
     .single();
   if (error) throw error;
@@ -141,4 +159,13 @@ export async function listSessions(limit = 100): Promise<SessionSummary[]> {
       step_count: row.session_steps?.[0]?.count ?? 0,
     }),
   );
+}
+
+/**
+ * Deletes a session. Its `session_steps` go with it: that FK is ON DELETE CASCADE, and both
+ * tables carry owner-scoped `for all` policies, so nothing else has to be deleted by hand.
+ */
+export async function deleteSession(id: string): Promise<void> {
+  const { error } = await supabase.from('sessions').delete().eq('id', id);
+  if (error) throw error;
 }

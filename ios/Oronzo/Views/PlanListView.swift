@@ -10,6 +10,19 @@ struct PlanListView: View {
             Group {
                 if store.plans.isEmpty && store.isLoading {
                     ProgressView("Loading plans…")
+                } else if store.plans.isEmpty, let error = store.error {
+                    // An empty list caused by a *failed fetch* is not an empty account, and
+                    // saying "build one in the web app" to someone whose plans are sitting in the
+                    // database is worse than saying nothing (`docs/known-issues.md` §3). The
+                    // fetch now has a second attempt built in, so reaching here means it is
+                    // genuinely unreachable — say that, and offer the one thing that helps.
+                    ContentUnavailableView {
+                        Label("Can't reach your plans", systemImage: "wifi.exclamationmark")
+                    } description: {
+                        Text(error)
+                    } actions: {
+                        Button("Try again") { Task { await store.refresh() } }
+                    }
                 } else if store.plans.isEmpty {
                     ContentUnavailableView {
                         Label("No plans yet", systemImage: "list.bullet.rectangle")
@@ -33,7 +46,11 @@ struct PlanListView: View {
 
                         ForEach(store.plans) { plan in
                             NavigationLink(value: plan.id) {
-                                PlanRowView(plan: plan, intervals: store.intervals(for: plan))
+                                PlanRowView(
+                                    plan: plan,
+                                    intervals: store.intervals(for: plan),
+                                    exercises: store.exercises
+                                )
                             }
                         }
                     }
@@ -68,6 +85,7 @@ struct PlanListView: View {
 private struct PlanRowView: View {
     let plan: Plan
     let intervals: [Interval]
+    let exercises: [UUID: ExerciseInfo]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -83,6 +101,6 @@ private struct PlanRowView: View {
     /// Defined once, in `OronzoCore`, and shared with the plan summary — a row that disagreed
     /// with the screen it opens would be worse than either one being slightly wrong.
     private var summary: String {
-        PlanSummary(plan: plan, intervals: intervals).metaLine
+        PlanSummary(plan: plan, intervals: intervals, exercises: exercises).metaLine
     }
 }

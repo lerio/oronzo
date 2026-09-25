@@ -9,16 +9,28 @@
 export type StepKind = 'exercise' | 'rest';
 export type StepMode = 'time' | 'reps';
 
+/**
+ * How hard a timed step is meant to be — the effort, where the duration is the extent.
+ *
+ * Three words, and three only: `plan_steps.intensity` carries a check constraint on the same
+ * three, so a fourth cannot exist in the database. Optional everywhere — a strength hold is just
+ * a hold — and only offered in the builder for a timed step.
+ */
+export type Intensity = 'low' | 'medium' | 'hard';
+
+export const INTENSITIES: Intensity[] = ['low', 'medium', 'hard'];
+
 export interface Exercise {
   id: string;
   user_id: string | null;
   slug: string | null;
   name: string;
   muscle_group: string;
-  equipment: string;
   default_mode: StepMode;
   default_duration_seconds: number | null;
   default_reps: number | null;
+  /** Performed once per side — left, then right. Doubles the intervals a step emits. */
+  has_two_sides: boolean;
 }
 
 /**
@@ -42,6 +54,8 @@ export interface PlanStep {
   reps: number | null;
   target_weight_kg: number | null;
   rest_after_seconds: number | null;
+  /** How hard this step is meant to be, for a timed one. Null means nobody said. */
+  intensity: Intensity | null;
 }
 
 export interface PlanBlock {
@@ -78,6 +92,8 @@ export interface Interval {
   block_round: number;
   /** How many rounds that block has. */
   block_round_count: number;
+  /** The step's word for the effort, carried through untouched. Null for most intervals. */
+  intensity: Intensity | null;
 }
 
 /** "10 reps", or null for a timed interval. */
@@ -97,15 +113,32 @@ export function weightDisplay(interval: Interval): string | null {
   return `${formatNumber(interval.target_weight_kg)} kg`;
 }
 
+/**
+ * The one-line description of an exercise: its muscle group, and a duration for a timed one.
+ *
+ * No rep count. A rep-based exercise's `default_reps` is a constant nothing asks for — 10, set
+ * when the row is created and only ever edited per plan step — so printing it made every line
+ * identical and none of them informative. A duration is the other way round: a timed exercise
+ * cannot exist without one, and it is the number its step will actually run.
+ *
+ * Written once because the exercises list and the plan editor's picker show the same line, and
+ * two copies of a formatting rule drift.
+ */
+export function exerciseSummary(exercise: Exercise): string {
+  const parts = [exercise.muscle_group.replace('_', ' ')];
+  if (exercise.default_mode === 'time') {
+    parts.push(formatDuration(exercise.default_duration_seconds ?? 0));
+  }
+  // Unlike the rep count this replaced, it belongs on some rows and not others: it changes what
+  // the workout does. It also lands in the picker's filter string, so "sides" finds these.
+  if (exercise.has_two_sides) parts.push('2 sides');
+  return parts.join(' · ');
+}
+
 export const MUSCLE_GROUPS = [
   'chest', 'back', 'shoulders', 'biceps', 'triceps', 'forearms',
   'quads', 'hamstrings', 'glutes', 'calves', 'core',
   'full_body', 'cardio', 'mobility',
-] as const;
-
-export const EQUIPMENT = [
-  'barbell', 'dumbbell', 'kettlebell', 'machine', 'cable',
-  'bodyweight', 'band', 'other',
 ] as const;
 
 const REST_LABEL = 'Break';
@@ -117,18 +150,25 @@ const REST_LABEL = 'Break';
  *     for blockRound in 1..block.rounds:
  *       for step in steps ordered by position:
  *         for setIndex in 1..step.sets:
- *           emit step; if step.rest_after_seconds: emit rest
+ *           for side in sideSuffixes(step):        // [null], or [left, right]
+ *             emit step, named "… (left)" / "… (right)" when there is a side
+ *           if step.rest_after_seconds: emit rest  // once per set, after the pair
  *       if blockRound < block.rounds and block.rest_between_rounds_seconds: emit rest
  *
  * Both an exercise and a block can repeat, and the two words mean different things: a step's
  * `sets` is its set count ("4 x 8 bench press"), while a block's `rounds` repeats a whole
- * group ("6 x (20s hard, 40s easy)").
+ * group ("6 x (20s hard, 40s easy)"). A two-sided exercise is neither — it doubles *within* a
+ * set, and both halves carry the same set number.
  *
  * The two rest mechanisms differ deliberately: `rest_after_seconds` fires after EVERY set
  * including the last, so an exercise's rest carries you into the next exercise, whereas
  * `rest_between_rounds_seconds` fires only BETWEEN a block's rounds.
+ *
+ * `exercises` carries the name *and* whether the exercise is done per side, which is why it is a
+ * map of `Exercise` rather than of strings. No default: a missing map here is not a visible
+ * degradation like a missing name — it is a step that quietly runs once instead of twice.
  */
-export function flattenPlan(plan: Plan, exerciseNames: Map<string, string>): Interval[] {
+export function flattenPlan(plan: Plan, exercises: Map<string, Exercise>): Interval[] {
   const intervals: Interval[] = [];
   const blocks = [...plan.blocks].sort((a, b) => a.position - b.position);
 
@@ -142,9 +182,13 @@ export function flattenPlan(plan: Plan, exerciseNames: Map<string, string>): Int
 
       for (const step of steps) {
         for (let setIndex = 1; setIndex <= Math.max(1, step.sets); setIndex++) {
-          intervals.push(
-            toInterval(step, intervals.length, setIndex, blockRound, blockRounds, exerciseNames),
-          );
+          // A two-sided exercise emits both sides here, so the rest below still falls once per
+          // set — after the pair, which is what "a set of lunges" means when you are doing them.
+          for (const side of sideSuffixes(step, exercises)) {
+            intervals.push(
+              toInterval(step, intervals.length, setIndex, side, blockRound, blockRounds, exercises),
+            );
+          }
 
           if (step.rest_after_seconds && step.rest_after_seconds > 0) {
             intervals.push(
@@ -171,15 +215,35 @@ export function flattenPlan(plan: Plan, exerciseNames: Map<string, string>): Int
   return intervals;
 }
 
+/**
+ * The name suffixes a step is performed with, in order: one entry — `null`, meaning no suffix —
+ * when the exercise is done once, two when it is done per side.
+ *
+ * This is the whole of "has two sides" as the preview sees it, and the twin of
+ * `PlanFlattener.sideSuffixes` in `ios/OronzoCore/` — the same rule, and the same two strings.
+ * `estimatePlanDuration` reads `.length` from it rather than working the rule out again.
+ */
+function sideSuffixes(step: PlanStep, exercises: Map<string, Exercise>): (string | null)[] {
+  const exercise = step.exercise_id ? exercises.get(step.exercise_id) : undefined;
+  return exercise?.has_two_sides ? ['left', 'right'] : [null];
+}
+
 function toInterval(
   step: PlanStep,
   index: number,
   setIndex: number,
+  side: string | null,
   blockRound: number,
   blockRoundCount: number,
-  exerciseNames: Map<string, string>,
+  exercises: Map<string, Exercise>,
 ): Interval {
-  const name = step.label || (step.exercise_id ? exerciseNames.get(step.exercise_id) : null) || 'Exercise';
+  // The base name resolves exactly as `PlanFlattener.name(for:)` does — label, then the exercise,
+  // then a placeholder — so the plan detail screen (which lists a plan as authored) and this
+  // (which lists what will actually run) differ only by the suffix appended below. An explicit
+  // label takes the side too: it names the exercise, and the exercise is what has two sides.
+  const base =
+    step.label || (step.exercise_id ? exercises.get(step.exercise_id)?.name : null) || 'Exercise';
+  const name = side ? `${base} (${side})` : base;
 
   return {
     index,
@@ -192,6 +256,9 @@ function toInterval(
     set_count: Math.max(1, step.sets),
     block_round: blockRound,
     block_round_count: blockRoundCount,
+    // Carried straight through: it is the step's own word, and the side above is the only thing
+    // this function decides.
+    intensity: step.intensity,
   };
 }
 
@@ -214,6 +281,7 @@ function restInterval(
     set_count: setCount,
     block_round: blockRound,
     block_round_count: blockRoundCount,
+    intensity: null,
   };
 }
 
@@ -247,11 +315,23 @@ export interface DurationEstimate {
  * counting only what the data can prove gives a floor for a workout that is half reps, which is a
  * confidently wrong answer rather than a cautious one.
  *
- * Measured over the *steps*, not the flattened intervals, so it matches `PlanSummary` exactly: the
- * flattener emits one interval per set per round, and counting those would silently multiply the
- * estimate by the block's round count.
+ * The two halves are counted differently, and deliberately so — `PlanSummary` in `OronzoCore`
+ * does exactly the same, which is the property that matters:
+ *
+ *  * **timed** work comes off the flattened intervals, so it counts every round of a block;
+ *  * **rep** work comes off the authored steps, so a step in a three-round circuit is counted
+ *    once, and its estimate is short by two rounds' worth.
+ *
+ * That second one is a known under-count rather than an oversight — it predates this function —
+ * and it is left alone because changing it moves the calibrated numbers in `PlanSummaryTests`.
+ * What is *not* allowed is the two surfaces disagreeing, which is why both read the side count
+ * from the same rule above.
  */
-export function estimatePlanDuration(plan: Plan, intervals: Interval[]): DurationEstimate {
+export function estimatePlanDuration(
+  plan: Plan,
+  intervals: Interval[],
+  exercises: Map<string, Exercise>,
+): DurationEstimate {
   const timed = intervals.reduce((total, i) => total + (i.duration_seconds ?? 0), 0);
 
   let reps = 0;
@@ -259,7 +339,13 @@ export function estimatePlanDuration(plan: Plan, intervals: Interval[]): Duratio
   for (const block of plan.blocks) {
     for (const step of block.steps) {
       if (step.mode === 'reps') {
-        reps += step.sets * (step.reps ?? 0) * SECONDS_PER_REP;
+        // A two-sided exercise is performed twice per set, so its reps count twice. The count
+        // comes from the flattener's own rule rather than a second reading of `has_two_sides`:
+        // the timed half above already doubles, because it sums the doubled interval stream, and
+        // one total with two opinions in it is worse than either. The same split, and the same
+        // fix, as `PlanSummary` in `OronzoCore`.
+        const sides = sideSuffixes(step, exercises).length;
+        reps += sides * step.sets * (step.reps ?? 0) * SECONDS_PER_REP;
         isEstimate = true;
       } else if (step.duration_seconds == null) {
         isEstimate = true;

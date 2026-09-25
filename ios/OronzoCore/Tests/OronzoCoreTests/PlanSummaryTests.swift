@@ -9,12 +9,24 @@ import XCTest
 /// one real session rather than derived, and so is worth pinning down where it can be seen.
 final class PlanSummaryTests: XCTestCase {
 
+    /// Every test here summarises a plan it built itself, and only the two-sided ones need
+    /// exercise info at all. One helper keeps each test about what it asserts — the default is
+    /// test-local on purpose, unlike the production initialiser, which requires the map so no
+    /// call site can quietly under-count.
+    private func summary(of plan: Plan, exercises: [UUID: ExerciseInfo] = [:]) -> PlanSummary {
+        PlanSummary(
+            plan: plan,
+            intervals: PlanFlattener.flatten(plan, exercises: exercises),
+            exercises: exercises
+        )
+    }
+
     // MARK: - Counting
 
     func testEmptyPlanSumsToNothingAndSaysSo() {
         let plan = Plan(name: "Empty")
 
-        let summary = PlanSummary(plan: plan, intervals: PlanFlattener.flatten(plan))
+        let summary = summary(of: plan)
 
         XCTAssertEqual(summary.blockCount, 0)
         XCTAssertEqual(summary.exerciseCount, 0)
@@ -33,7 +45,7 @@ final class PlanSummaryTests: XCTestCase {
             ]),
         ])
 
-        let summary = PlanSummary(plan: plan, intervals: PlanFlattener.flatten(plan))
+        let summary = summary(of: plan)
 
         XCTAssertEqual(summary.blockCount, 1)
         XCTAssertEqual(summary.exerciseCount, 1, "one step is listed once, not once per round")
@@ -49,7 +61,7 @@ final class PlanSummaryTests: XCTestCase {
             ]),
         ])
 
-        let summary = PlanSummary(plan: plan, intervals: PlanFlattener.flatten(plan))
+        let summary = summary(of: plan)
 
         XCTAssertEqual(summary.timedSeconds, 180, "4 x (30s work + 15s rest)")
     }
@@ -65,7 +77,7 @@ final class PlanSummaryTests: XCTestCase {
             ]),
         ])
 
-        let summary = PlanSummary(plan: plan, intervals: PlanFlattener.flatten(plan))
+        let summary = summary(of: plan)
 
         XCTAssertEqual(summary.timedSeconds, 360, accuracy: 0.001, "four 90s rests, and no work")
         XCTAssertEqual(summary.repSeconds, 4 * 6 * PlanSummary.secondsPerRep, accuracy: 0.001)
@@ -81,7 +93,7 @@ final class PlanSummaryTests: XCTestCase {
             PlanBlock(name: "Main", steps: [PlanStep(label: "Hard", mode: .time, duration: 480)]),
         ])
 
-        let summary = PlanSummary(plan: plan, intervals: PlanFlattener.flatten(plan))
+        let summary = summary(of: plan)
 
         XCTAssertFalse(summary.hasEstimatedWork)
         XCTAssertEqual(summary.durationText, "10 min")
@@ -95,7 +107,7 @@ final class PlanSummaryTests: XCTestCase {
             PlanBlock(name: "Main", steps: [PlanStep(label: "Bench", mode: .reps, reps: 8)]),
         ])
 
-        let summary = PlanSummary(plan: plan, intervals: PlanFlattener.flatten(plan))
+        let summary = summary(of: plan)
 
         XCTAssertTrue(summary.hasEstimatedWork)
         XCTAssertEqual(summary.durationText, "~2 min", "120s timed plus 8 reps at the pace")
@@ -109,7 +121,7 @@ final class PlanSummaryTests: XCTestCase {
             PlanBlock(steps: [PlanStep(label: "Bench", sets: 3, mode: .reps, reps: 8)]),
         ])
 
-        let summary = PlanSummary(plan: plan, intervals: PlanFlattener.flatten(plan))
+        let summary = summary(of: plan)
 
         XCTAssertEqual(summary.timedSeconds, 0)
         XCTAssertTrue(summary.hasEstimatedWork)
@@ -123,7 +135,7 @@ final class PlanSummaryTests: XCTestCase {
             PlanBlock(steps: [PlanStep(label: "Sprint", mode: .time, duration: 45)]),
         ])
 
-        let summary = PlanSummary(plan: plan, intervals: PlanFlattener.flatten(plan))
+        let summary = summary(of: plan)
 
         XCTAssertEqual(summary.durationText, "45s")
         XCTAssertEqual(summary.metaLine, "45s · 1 block · 1 exercise")
@@ -139,10 +151,49 @@ final class PlanSummaryTests: XCTestCase {
             ]),
         ])
 
-        let summary = PlanSummary(plan: plan, intervals: PlanFlattener.flatten(plan))
+        let summary = summary(of: plan)
 
         XCTAssertTrue(summary.hasEstimatedWork)
         XCTAssertEqual(summary.durationText, "~2 min")
+    }
+
+    // MARK: - Two-sided exercises
+
+    /// A two-sided *timed* exercise doubles its work and leaves the rests alone: the duration is
+    /// held per side, and the rest still falls once per set.
+    func testATwoSidedTimedExerciseDoublesItsWorkButNotItsRests() {
+        let plank = UUID()
+        let plan = Plan(name: "P", blocks: [
+            PlanBlock(steps: [
+                PlanStep(exerciseID: plank, sets: 2, mode: .time, duration: 45, restAfter: 30),
+            ]),
+        ])
+
+        let oneSided = summary(of: plan, exercises: [plank: ExerciseInfo(name: "Side Plank")])
+        let twoSided = summary(of: plan, exercises: [plank: ExerciseInfo(name: "Side Plank", hasTwoSides: true)])
+
+        XCTAssertEqual(oneSided.timedSeconds, 45 * 2 + 30 * 2)
+        XCTAssertEqual(twoSided.timedSeconds, 45 * 2 * 2 + 30 * 2, "two holds per set, one rest per set")
+    }
+
+    /// The rep half is estimated from the *plan* rather than from the emitted intervals, so it has
+    /// to be told about the sides. Otherwise the two halves of one number would disagree about the
+    /// same step, and every two-sided rep exercise would read short by half its work.
+    func testATwoSidedRepExerciseDoublesTheRepHalfOfTheEstimate() {
+        let lunge = UUID()
+        let plan = Plan(name: "P", blocks: [
+            PlanBlock(steps: [
+                PlanStep(exerciseID: lunge, sets: 3, mode: .reps, reps: 8, restAfter: 60),
+            ]),
+        ])
+
+        let oneSided = summary(of: plan, exercises: [lunge: ExerciseInfo(name: "Reverse Lunge")])
+        let twoSided = summary(of: plan, exercises: [lunge: ExerciseInfo(name: "Reverse Lunge", hasTwoSides: true)])
+
+        XCTAssertEqual(oneSided.repSeconds, Double(3 * 8) * PlanSummary.secondsPerRep)
+        XCTAssertEqual(twoSided.repSeconds, Double(3 * 8 * 2) * PlanSummary.secondsPerRep)
+        XCTAssertEqual(oneSided.timedSeconds, twoSided.timedSeconds, "the rest is once per set either way")
+        XCTAssertEqual(twoSided.exerciseCount, 1, "still one exercise as authored, not two")
     }
 
     // MARK: - The calibration
@@ -164,7 +215,7 @@ final class PlanSummaryTests: XCTestCase {
             ]),
         ])
 
-        let summary = PlanSummary(plan: plan, intervals: PlanFlattener.flatten(plan))
+        let summary = summary(of: plan)
 
         XCTAssertEqual(summary.timedSeconds, 1950, accuracy: 0.001)
         XCTAssertEqual(summary.repSeconds, 747.4, accuracy: 0.001)
@@ -178,7 +229,7 @@ final class PlanSummaryTests: XCTestCase {
             PlanBlock(steps: [PlanStep(label: "Squat", mode: .time, duration: 60)]),
         ])
 
-        let summary = PlanSummary(plan: plan, intervals: PlanFlattener.flatten(plan))
+        let summary = summary(of: plan)
 
         XCTAssertEqual(summary.metaLine, "1 min · 1 block · 1 exercise")
     }
@@ -195,7 +246,7 @@ final class PlanSummaryTests: XCTestCase {
         ])
 
         XCTAssertEqual(
-            PlanSummary(plan: mixed, intervals: PlanFlattener.flatten(mixed)).spokenMetaLine,
+            summary(of: mixed).spokenMetaLine,
             "about 2 minutes, 2 blocks, 2 exercises"
         )
 
@@ -204,7 +255,7 @@ final class PlanSummaryTests: XCTestCase {
         ])
 
         XCTAssertEqual(
-            PlanSummary(plan: exact, intervals: PlanFlattener.flatten(exact)).spokenMetaLine,
+            summary(of: exact).spokenMetaLine,
             "1 minute, 1 block, 1 exercise",
             "no hedge when the total is the whole plan"
         )
@@ -217,7 +268,7 @@ final class PlanSummaryTests: XCTestCase {
             let plan = Plan(name: "P", blocks: [
                 PlanBlock(steps: [PlanStep(label: "Hold", mode: .time, duration: seconds)]),
             ])
-            let summary = PlanSummary(plan: plan, intervals: PlanFlattener.flatten(plan))
+            let summary = summary(of: plan)
 
             guard let written = summary.durationText else {
                 return XCTFail("\(seconds)s is fully timed and should state a duration")
@@ -240,17 +291,17 @@ final class PlanSummaryTests: XCTestCase {
         let id = UUID()
 
         XCTAssertEqual(
-            PlanFlattener.name(for: PlanStep(exerciseID: id, label: "Warm-up squats"), exerciseNames: [id: "Back Squat"]),
+            PlanFlattener.name(for: PlanStep(exerciseID: id, label: "Warm-up squats"), exercises: [id: ExerciseInfo(name: "Back Squat")]),
             "Warm-up squats",
             "an explicit label wins"
         )
         XCTAssertEqual(
-            PlanFlattener.name(for: PlanStep(exerciseID: id), exerciseNames: [id: "Back Squat"]),
+            PlanFlattener.name(for: PlanStep(exerciseID: id), exercises: [id: ExerciseInfo(name: "Back Squat")]),
             "Back Squat",
             "the exercise table is the branch that actually runs — the builder never sets label"
         )
         XCTAssertEqual(
-            PlanFlattener.name(for: PlanStep(exerciseID: UUID()), exerciseNames: [:]),
+            PlanFlattener.name(for: PlanStep(exerciseID: UUID()), exercises: [:]),
             "Exercise",
             "a deleted exercise still lets the workout run"
         )

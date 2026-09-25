@@ -34,11 +34,16 @@ private struct StepRow: Decodable {
     let reps: Int?
     let target_weight_kg: Double?
     let rest_after_seconds: Int?
+    /// The three words live in the database's check constraint; an unknown one decodes to nil
+    /// rather than failing the whole step, because a plan that will not load is worse than a plan
+    /// whose effort is missing.
+    let intensity: String?
 }
 
 private struct ExerciseRow: Decodable {
     let id: UUID
     let name: String
+    let has_two_sides: Bool
 }
 
 // MARK: - Mapping
@@ -66,7 +71,8 @@ private extension PlanRow {
                                     duration: step.duration_seconds.map(TimeInterval.init),
                                     reps: step.reps,
                                     targetWeightKg: step.target_weight_kg,
-                                    restAfter: step.rest_after_seconds.map(TimeInterval.init)
+                                    restAfter: step.rest_after_seconds.map(TimeInterval.init),
+                                    intensity: step.intensity.flatMap(Intensity.init(rawValue:))
                                 )
                             }
                     )
@@ -84,7 +90,7 @@ struct PlanRepository: Sendable {
     private static let planSelect =
         "id,name,plan_blocks(id,position,name,rounds,rest_between_rounds_seconds,"
         + "plan_steps(id,position,exercise_id,label,sets,mode,duration_seconds,reps,"
-        + "target_weight_kg,rest_after_seconds))"
+        + "target_weight_kg,rest_after_seconds,intensity))"
 
     func fetchPlans() async throws -> [Plan] {
         let rows: [PlanRow] = try await Backend.client
@@ -96,12 +102,17 @@ struct PlanRepository: Sendable {
         return rows.map { $0.toDomain() }
     }
 
-    func fetchExerciseNames() async throws -> [UUID: String] {
+    /// Kept on one line: PostgREST parses this as a query string, and embedded newlines break it.
+    /// A column named here that the database does not have is a runtime `400` on a device, not a
+    /// compile error — `has_two_sides` arrives with `0012`.
+    func fetchExercises() async throws -> [UUID: ExerciseInfo] {
         let rows: [ExerciseRow] = try await Backend.client
             .from("exercises")
-            .select("id,name")
+            .select("id,name,has_two_sides")
             .execute()
             .value
-        return Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0.name) })
+        return Dictionary(uniqueKeysWithValues: rows.map {
+            ($0.id, ExerciseInfo(name: $0.name, hasTwoSides: $0.has_two_sides))
+        })
     }
 }

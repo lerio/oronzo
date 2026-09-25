@@ -41,8 +41,9 @@ for block in blocks ordered by position:
   for blockRound in 1...block.rounds:
     for step in steps ordered by position:
       for setIndex in 1...step.sets:
-        emit step
-        if step.restAfter: emit rest
+        for side in sideSuffixes(step):     # [null], or [left, right]
+          emit step, named "… (left)" / "… (right)" when there is a side
+        if step.restAfter: emit rest        # once per set, after the pair
     if blockRound < block.rounds and block.restBetweenRounds: emit rest
 ```
 
@@ -55,9 +56,14 @@ It lives in **three places that must change together**:
 | Plan persistence | `supabase/migrations/*.sql` — `save_plan` re-encodes the same tree shape |
 
 A step is **always an exercise**; rest is synthetic, never a step. A step's `sets` is its set
-count; a block's `rounds` repeats the whole group — different words on purpose. The two rest
-mechanisms are deliberately asymmetric: `restAfter` fires after **every** set including the last,
-`restBetweenRounds` only **between** rounds. `docs/decisions.md` explains why.
+count; a block's `rounds` repeats the whole group — different words on purpose. A third thing
+doubles the stream without being either: an exercise flagged `has_two_sides` is performed left,
+then right, and the pair **is** one set, so both halves carry the same set number and the rest
+still falls once. `PlanFlattener.name(for:)` stays side-free — the side belongs to an interval
+being done, not to the step being planned, and the plan detail screen lists a plan as authored.
+
+The two rest mechanisms are deliberately asymmetric: `restAfter` fires after **every** set
+including the last, `restBetweenRounds` only **between** rounds. `docs/decisions.md` explains why.
 
 Run the `contract-auditor` agent after changing anything about blocks, steps, sets, rounds, rest,
 or the plan/session schema.
@@ -87,7 +93,7 @@ Full detail in `docs/patterns.md`. The short version:
 ## Commands
 
 ```bash
-cd ios/OronzoCore && swift test      # 140 tests, no simulator or signing — run this first
+cd ios/OronzoCore && swift test      # 151 tests, no simulator or signing — run this first
 cd ios && xcodegen generate          # after editing ios/project.yml or adding files
 cd web && npm run dev                # localhost:5173
 cd web && npm run build              # tsc -b is what catches stale field references
@@ -136,12 +142,22 @@ Each of these cost real time. They are not hypothetical.
   `onAppear`/`start()`, and anything that can *act* must check it is still the live session
   (`SessionController.pushState`, `PhoneConnectivity.claim`).
 - **Adding a field to `Interval` breaks decoding of snapshots already in flight.** `Interval` is
-  `Codable` with no defaults and no version field, and the application context persists across
-  launches — so a snapshot written by an older build fails to decode and the watch silently shows
-  nothing. Add fields only with a default, or accept that the watch needs a fresh send.
+  `Codable` with no version field, and the application context persists across launches — so a
+  snapshot written by an older build fails to decode and the watch silently shows nothing.
+  **Add fields as optionals, not "with a default":** the synthesised decoder emits
+  `decodeIfPresent` only for an optional property, so a *non-optional* field with a default still
+  requires the key and still fails. An optional one is readable in both directions. `Interval`
+  itself is the wrong place for anything but new keys — a new interval concept belongs in the
+  stream, and `0012` carried the exercise's side in `name` rather than adding a field.
 - **`PlanCache` is unversioned.** It encodes `Plan`/`Interval` directly to JSON with no version
-  key, and `load()` swallows failures via `try?` with no logging. Renaming a Codable property in
-  `Models.swift` silently invalidates every existing cache.
+  key, so renaming a Codable property in `Models.swift` invalidates every existing cache. That
+  failure is no longer silent — `PlanCache.load()` logs it and `docs/known-issues.md` §4 records
+  the fix — but it still *degrades* to an empty plan list until the next fetch, which offline is
+  the difference between a workout and none. So: prefer adding a field over renaming one, and ask
+  what a *missing* field would do before making it optional. A field whose absence changes the
+  workout — the two-sided ids in `0012` — is required, so an older file is discarded rather than
+  silently flattening every exercise once. A field whose absence only costs a display name can be
+  optional. `twoSidedExerciseIDs` in `PlanStore.swift` carries the reasoning.
 - **`.gitignore` needs `.build/`, not `build/`.** Patterns match the exact name, so the `build/`
   line does not cover SwiftPM's directory. This exact mistake committed ~2,300 build files.
 - **Migrations are applied by hand**, pasted into the Supabase SQL Editor in filename order. They

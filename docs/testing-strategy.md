@@ -2,7 +2,7 @@
 
 ## Where the tests are
 
-**All 140 tests live in `ios/OronzoCore/Tests/OronzoCoreTests/`.** Nothing else in the repository
+**All 151 tests live in `ios/OronzoCore/Tests/OronzoCoreTests/`.** Nothing else in the repository
 has a single automated test — not the iOS app target, not the watch app, not the web app.
 
 ```bash
@@ -11,15 +11,15 @@ cd ios/OronzoCore && swift test     # ~1 second, no simulator, no signing, no de
 
 | File | Tests | Covers |
 |---|---|---|
-| `PlanFlattenerTests.swift` | 23 | The flattening contract — sets, rounds, both rest mechanisms, naming, formatting |
+| `PlanFlattenerTests.swift` | 30 | The flattening contract — sets, rounds, two-sided exercises, both rest mechanisms, naming, formatting |
 | `ExecutionEngineTests.swift` | 25 | The session state machine — start/tick/pause/resume/advance/goBack/finish/abandon/snapshot |
-| `SessionScreenTests.swift` | 34 | The presentation model both screens draw from — state words, `LAST`, what a rep interval shows |
-| `PlanSummaryTests.swift` | 14 | What the plan summary says about a plan, including the spoken meta line |
+| `SessionScreenTests.swift` | 35 | The presentation model both screens draw from — state words, `LAST`, what a rep interval shows |
+| `PlanSummaryTests.swift` | 16 | What the plan summary says about a plan, including the spoken meta line |
 | `DesignTokenTests.swift` | 11 | The token scale — every role resolves, on both surfaces |
 | `HapticLanguageTests.swift` | 10 | Which transitions earn a cue, and which stay silent |
 | `SessionScheduleTests.swift` | 8 | When a surface may next wake — the rule that replaced polling |
 | `WatchProjectionTests.swift` | 8 | Walking the interval list forward from an absolute anchor |
-| `LinkTests.swift` | 7 | The phone↔watch wire format — the control vocabulary, a whole snapshot, and decode tolerance |
+| `LinkTests.swift` | 8 | The phone↔watch wire format — the control vocabulary, a whole snapshot, and decode tolerance |
 
 This is possible because `OronzoCore` is a **plain SwiftPM package** rather than a folder of shared
 sources inside the app target. That decision is stated in `ios/project.yml`: *"so that it can be

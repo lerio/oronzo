@@ -17,6 +17,7 @@ agree:
 | Concern | Swift | TypeScript | SQL |
 |---|---|---|---|
 | Flattening rule | `ios/OronzoCore/Sources/OronzoCore/PlanFlattener.swift` | `flattenPlan` in `web/src/lib/types.ts` | `save_plan` in `supabase/migrations/` |
+| Exercise facts it resolves against | `ExerciseInfo` in `Models.swift` | the `Exercise` record | `exercises.name`, `exercises.has_two_sides` |
 | Plan shape | `Models.swift` | `types.ts` (`Plan`, `PlanBlock`, `PlanStep`) | `plan_blocks`, `plan_steps` |
 | Reading a plan | `PlanRepository.swift` row types | `api.ts` (`PLAN_SELECT`, `PlanRow`) | the column names themselves |
 | Writing a session | `SessionLogger.swift` row types | — | `sessions`, `session_steps` |

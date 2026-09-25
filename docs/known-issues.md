@@ -27,6 +27,10 @@ surface, which was deleted rather than fixed.
 covered by `testLabelOverridesTheExerciseName`. But the builder sets `label: null` and **no input
 in `PlanEditor.tsx` ever updates it** — so the field is unreachable from the UI.
 
+One thing labels used to be carrying has since found a home: an interval's *effort*, which the
+seeded plans spell into the label ("Hard — 20 sec"), is `plan_steps.intensity` as of `0013`. That
+leaves the label with only a rename/alias job, which is what the question below is about.
+
 **Why it may be wrong.** This is exactly the pattern migration `0008` set out to remove: *"Half-
 supporting a field is worse than not having it."* Step notes were dropped for precisely this
 reason — editable in the builder, silently discarded on iOS.
@@ -46,7 +50,7 @@ reasonably start populating on the assumption that it was kept on purpose.
 **Question.** Drop it in a migration, or is it reserved for a post-session note that was never
 built?
 
-## 3. A failed plan fetch is indistinguishable from an empty account
+## 3. A failed plan fetch is indistinguishable from an empty account — closed, kept for the reasoning
 
 **What the code does.** In `PlanListView.swift:11-32` the error banner lives in the `else` branch
 of `plans.isEmpty`, so it can only render when a *cached* list exists. On a cold start with no
@@ -55,6 +59,16 @@ cache and no network, `plans.isEmpty` matches the empty-state branch first and t
 > "No plans yet — Build one in the web app, then pull to refresh here."
 
 `store.error` is set and never shown.
+
+**Closed.** `PlanListView` now branches on `plans.isEmpty` *and* `store.error` before the empty
+state, so an unreachable server shows "Can't reach your plans" with the reason and a **Try again**
+button instead of telling you to go and build one. The second path below is closed with it.
+
+Since `0012`, one more path lands here: a cache file written before that migration lacks
+`twoSidedExerciseIDs`, which is required, so `PlanCache.load()` discards it — deliberately (a file
+that decoded would flatten every two-sided exercise once, silently), and with no network the first
+launch after updating shows a *genuinely* empty list. That is now the "No plans yet" branch, which
+is correct: there really is nothing cached to show.
 
 **Why it may be wrong.** The one case the banner was written for — offline with nothing cached —
 is the one case it cannot cover. The copy actively misdirects: it sends the user to build a plan

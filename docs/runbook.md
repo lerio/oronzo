@@ -125,6 +125,55 @@ the value lives as an encrypted Worker secret, so it is never in this repository
 disabled and the single user account is created by hand in the dashboard rather than
 through a sign-up flow.
 
+### Is the database in step with the code?
+
+There are three moving parts — the database, the deployed web bundle, and the app on the
+phone — and they are updated by hand, separately. A mismatch does not announce itself: it
+arrives as a `400` from one client, or as a plan list that quietly came from the cache.
+
+**Ask the database, do not remember.** Each migration that changes the schema leaves a
+footprint, and a missing column is a `400` while a present one is a `200` — the same failure
+the client would hit, which is what makes this a proof rather than a guess:
+
+```bash
+cd web && K=$(grep VITE_SUPABASE_PUBLISHABLE_KEY .env.local | cut -d= -f2) \
+        U=$(grep VITE_SUPABASE_URL .env.local | cut -d= -f2)
+curl -s -o /dev/null -w "0011 dropped equipment:   %{http_code}\n" "$U/rest/v1/exercises?select=equipment&limit=1" -H "apikey: $K"
+curl -s -o /dev/null -w "0012 has_two_sides:       %{http_code}\n" "$U/rest/v1/exercises?select=has_two_sides&limit=1" -H "apikey: $K"
+curl -s -o /dev/null -w "0013 step intensity:      %{http_code}\n" "$U/rest/v1/plans?select=id,plan_blocks(plan_steps(intensity))&limit=1" -H "apikey: $K"
+```
+
+`0011` expects **400** (the column is gone); `0012` and `0013` expect **200**.
+
+**`0010` cannot be probed this way** — it only deletes rows, and RLS means an anonymous
+caller sees nothing either way. Ask the SQL editor instead, where the answer is a number:
+
+```sql
+select count(*) from exercises where user_id is null;   -- 0 once 0010 has run
+```
+
+**Which client breaks which way**, because the two directions are opposites:
+
+| If the database is… | then the web app | and the phone |
+|---|---|---|
+| ahead of the code (a column was added) | its insert names a column that is not there → `400` on create | a named select over that column → every fetch `400`s, plan list falls back to the cache |
+| behind the code (a column was dropped) | it still writes the dropped column → `400` on create | unaffected: it selects by name and ignores what it does not ask for |
+
+So the rule is **migrations first, clients second**, and the client-side half is manual:
+`cd web && npm run deploy` publishes the web bundle (there is no git integration), and the
+phone takes a rebuild from Xcode (`cd ios && xcodegen generate && open Oronzo.xcodeproj`).
+The watch has no backend of its own — it is whatever the phone sends it.
+
+**To check the deployed bundle against the source**, ask the live site for its own build:
+
+```bash
+curl -s https://oronzo.valerio-donati.workers.dev/ | grep -o 'assets/index-[^"]*\.js'
+```
+
+then fetch that file and grep it for a string literal only the newest code contains — for
+example `rest_after_seconds,intensity` (the plan select, `0013`), or `2 sides`. Zero hits
+means the live bundle predates that change, whatever is in the working tree.
+
 ## Seeing the session runner without a backend
 
 Debug builds accept two launch arguments that skip sign-in entirely:

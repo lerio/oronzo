@@ -25,12 +25,12 @@ final class SessionController {
     private var lastCountdownSecond: Int?
     private var lastPushedState: SessionState?
 
-    init(plan: Plan, exerciseNames: [UUID: String], audio: WorkoutAudio = WorkoutAudio()) {
+    init(plan: Plan, exercises: [UUID: ExerciseInfo], audio: WorkoutAudio = WorkoutAudio()) {
         self.planID = plan.id
         self.planName = plan.name
         self.audio = audio
         self.engine = ExecutionEngine(
-            intervals: PlanFlattener.flatten(plan, exerciseNames: exerciseNames)
+            intervals: PlanFlattener.flatten(plan, exercises: exercises)
         )
         // Deliberately nothing here but construction.
         //

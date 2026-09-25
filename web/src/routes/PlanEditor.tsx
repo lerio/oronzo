@@ -3,21 +3,22 @@ import { useNavigate, useParams } from 'react-router-dom';
 import ExercisePicker from '../components/ExercisePicker';
 import { getPlan, listExercises, savePlan } from '../lib/api';
 import {
+  INTENSITIES,
   estimatePlanDuration,
   flattenPlan,
   formatDuration,
   repsDisplay,
   weightDisplay,
   type Exercise,
+  type Intensity,
   type Plan,
   type PlanBlock,
   type PlanStep,
-  type StepMode,
 } from '../lib/types';
 
 const blankPlan = (): Plan => ({ id: '', name: '', blocks: [] });
 
-function stepFromExercise(exercise: Exercise | undefined): PlanStep {
+function stepFromExercise(exercise?: Exercise): PlanStep {
   const isTime = exercise?.default_mode === 'time';
   return {
     exercise_id: exercise?.id ?? null,
@@ -29,6 +30,10 @@ function stepFromExercise(exercise: Exercise | undefined): PlanStep {
     reps: isTime ? null : (exercise?.default_reps ?? 10),
     target_weight_kg: null,
     rest_after_seconds: null,
+    // Optional, so a freshly-picked timed step starts with none and the row offers "—". The
+    // builder is where the effort is chosen; an exercise cannot dictate it, because a HIIT block
+    // runs the same movement hard and easy.
+    intensity: null,
   };
 }
 
@@ -89,19 +94,24 @@ export default function PlanEditor() {
     };
   }, [id, isNew]);
 
-  const exerciseNames = useMemo(
-    () => new Map(exercises.map((exercise) => [exercise.id, exercise.name])),
+  // The exercises themselves, not just their names: flattening reads whether each one is done
+  // per side as well, which is what decides how many intervals a step becomes.
+  const exercisesById = useMemo(
+    () => new Map(exercises.map((exercise) => [exercise.id, exercise])),
     [exercises],
   );
 
   const preview = useMemo(
-    () => (plan ? flattenPlan(plan, exerciseNames) : []),
-    [plan, exerciseNames],
+    () => (plan ? flattenPlan(plan, exercisesById) : []),
+    [plan, exercisesById],
   );
 
+  // `exercisesById` is listed as well as `preview`, rather than relied on through it: the rep
+  // half of the estimate reads the map directly, so a changed map with an unchanged preview
+  // would otherwise leave the total stale.
   const duration = useMemo(
-    () => (plan ? estimatePlanDuration(plan, preview) : { seconds: 0, isEstimate: false }),
-    [plan, preview],
+    () => (plan ? estimatePlanDuration(plan, preview, exercisesById) : { seconds: 0, isEstimate: false }),
+    [plan, preview, exercisesById],
   );
 
   // Per step, in the plan's own shape, so each row below can index straight into it. Flattened it
@@ -169,6 +179,14 @@ export default function PlanEditor() {
       blocks: draft.blocks.map((block, i) => (i === blockIndex ? { ...block, steps: [...block.steps, step] } : block)),
     }));
 
+  /**
+   * An exercise created from inside the picker. It has to land in `exercises`, because that is
+   * what the flatten preview resolves names against and what the picker looks its selection up
+   * in — without it a step would point at an exercise nothing could name.
+   */
+  const addExercise = (exercise: Exercise) =>
+    setExercises((current) => [...current, exercise]);
+
   const removeStep = (blockIndex: number, stepIndex: number) =>
     mutate((draft) => ({
       ...draft,
@@ -190,17 +208,13 @@ export default function PlanEditor() {
       }),
     }));
 
-  function changeExercise(blockIndex: number, stepIndex: number, exerciseId: string) {
-    const exercise = exercises.find((candidate) => candidate.id === exerciseId);
+  /**
+   * The picker hands back the exercise itself, not an id to look up. That matters for one it
+   * just created: `exercises` is state, so in this same handler the new row is not in it yet —
+   * looking it up by id would find nothing and quietly leave the step unpicked.
+   */
+  function changeExercise(blockIndex: number, stepIndex: number, exercise: Exercise) {
     updateStep(blockIndex, stepIndex, stepFromExercise(exercise));
-  }
-
-  function changeMode(blockIndex: number, stepIndex: number, mode: StepMode, current: PlanStep) {
-    updateStep(blockIndex, stepIndex, {
-      mode,
-      duration_seconds: mode === 'time' ? (current.duration_seconds ?? 45) : null,
-      reps: mode === 'reps' ? (current.reps ?? 10) : null,
-    });
   }
 
   async function onSave() {
@@ -332,94 +346,128 @@ export default function PlanEditor() {
                 <ExercisePicker
                   exercises={exercises}
                   value={step.exercise_id}
-                  onChange={(exerciseId) => changeExercise(blockIndex, stepIndex, exerciseId)}
+                  onChange={(exercise) => changeExercise(blockIndex, stepIndex, exercise)}
+                  onCreated={addExercise}
                 />
 
-                <label className="inline-field" title="How many times this exercise repeats — its set count">
-                  <span>sets</span>
-                  <input
-                    className="w-digits-2"
-                    type="number"
-                    min={1}
-                    value={step.sets}
-                    onChange={(e) =>
-                      updateStep(blockIndex, stepIndex, { sets: Math.max(1, Number(e.target.value) || 1) })
-                    }
-                  />
-                </label>
+                {/* Nothing belongs to a step until it has an exercise. Which fields apply — a
+                    rep target and a load, or a duration — is the exercise's mode, so before one
+                    is picked there is nothing here that would not be a guess. The row says
+                    "Pick an exercise" below and waits. */}
+                {step.exercise_id && (
+                  <>
+                    <label className="inline-field" title="How many times this exercise repeats — its set count">
+                      <span>sets</span>
+                      <input
+                        className="w-digits-2"
+                        type="number"
+                        min={1}
+                        value={step.sets}
+                        onChange={(e) =>
+                          updateStep(blockIndex, stepIndex, { sets: Math.max(1, Number(e.target.value) || 1) })
+                        }
+                      />
+                    </label>
 
-                <select
-                  className="w-mode"
-                  value={step.mode}
-                  onChange={(e) => changeMode(blockIndex, stepIndex, e.target.value as StepMode, step)}
-                >
-                  <option value="reps">reps</option>
-                  <option value="time">time</option>
-                </select>
+                    {/* The step's mode is the exercise's — there is no select for it any more.
+                        Picking an exercise re-derives the whole step through `stepFromExercise`,
+                        so what this row shows is whatever that mode actually has: a rep target
+                        and a load, or a duration. */}
+                    {step.mode === 'time' ? (
+                      <>
+                        <label className="inline-field">
+                          <span>sec</span>
+                          <input
+                            className="w-digits-3"
+                            type="number"
+                            min={1}
+                            value={step.duration_seconds ?? ''}
+                            onChange={(e) =>
+                              updateStep(blockIndex, stepIndex, { duration_seconds: Number(e.target.value) || null })
+                            }
+                          />
+                        </label>
 
-                {step.mode === 'time' ? (
-                  <label className="inline-field">
-                    <span>sec</span>
-                    <input
-                      className="w-digits-3"
-                      type="number"
-                      min={1}
-                      value={step.duration_seconds ?? ''}
-                      onChange={(e) =>
-                        updateStep(blockIndex, stepIndex, { duration_seconds: Number(e.target.value) || null })
-                      }
-                    />
-                  </label>
-                ) : (
-                  <label className="inline-field">
-                    <span>reps</span>
-                    <input
-                      className="w-digits-2"
-                      type="number"
-                      min={1}
-                      value={step.reps ?? ''}
-                      onChange={(e) =>
-                        updateStep(blockIndex, stepIndex, { reps: Number(e.target.value) || null })
-                      }
-                    />
-                  </label>
+                        {/* Offered for a timed step only, and optional within one: the effort is
+                            what a HIIT interval is prescribed as, while a strength hold is just a
+                            hold. "—" is the same empty placeholder the numeric fields use, and it
+                            means the interval says nothing about effort while it runs. */}
+                        <label
+                          className="inline-field"
+                          title="How hard this interval is meant to be — shown while it runs"
+                        >
+                          <span>intensity</span>
+                          <select
+                            value={step.intensity ?? ''}
+                            onChange={(e) =>
+                              updateStep(blockIndex, stepIndex, {
+                                intensity: e.target.value === '' ? null : (e.target.value as Intensity),
+                              })
+                            }
+                          >
+                            <option value="">—</option>
+                            {INTENSITIES.map((level) => (
+                              <option key={level} value={level}>
+                                {level}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </>
+                    ) : (
+                      <>
+                        <label className="inline-field">
+                          <span>reps</span>
+                          <input
+                            className="w-digits-2"
+                            type="number"
+                            min={1}
+                            value={step.reps ?? ''}
+                            onChange={(e) =>
+                              updateStep(blockIndex, stepIndex, { reps: Number(e.target.value) || null })
+                            }
+                          />
+                        </label>
+
+                        <label className="inline-field">
+                          <span>kg</span>
+                          <input
+                            className="w-weight"
+                            type="number"
+                            min={0}
+                            step="0.5"
+                            placeholder="—"
+                            value={step.target_weight_kg ?? ''}
+                            onChange={(e) =>
+                              updateStep(blockIndex, stepIndex, {
+                                target_weight_kg: e.target.value === '' ? null : Number(e.target.value),
+                              })
+                            }
+                          />
+                        </label>
+                      </>
+                    )}
+
+                    <label
+                      className="inline-field"
+                      title="Rest after each set of this exercise, including the last — so it carries you into the next exercise"
+                    >
+                      <span>rest between sets (s)</span>
+                      <input
+                        className="w-digits-3"
+                        type="number"
+                        min={0}
+                        placeholder="—"
+                        value={step.rest_after_seconds ?? ''}
+                        onChange={(e) =>
+                          updateStep(blockIndex, stepIndex, {
+                            rest_after_seconds: e.target.value === '' ? null : Number(e.target.value),
+                          })
+                        }
+                      />
+                    </label>
+                  </>
                 )}
-
-                <label className="inline-field">
-                  <span>kg</span>
-                  <input
-                    className="w-weight"
-                    type="number"
-                    min={0}
-                    step="0.5"
-                    placeholder="—"
-                    value={step.target_weight_kg ?? ''}
-                    onChange={(e) =>
-                      updateStep(blockIndex, stepIndex, {
-                        target_weight_kg: e.target.value === '' ? null : Number(e.target.value),
-                      })
-                    }
-                  />
-                </label>
-
-                <label
-                  className="inline-field"
-                  title="Rest after each set of this exercise, including the last — so it carries you into the next exercise"
-                >
-                  <span>rest between sets (s)</span>
-                  <input
-                    className="w-digits-3"
-                    type="number"
-                    min={0}
-                    placeholder="—"
-                    value={step.rest_after_seconds ?? ''}
-                    onChange={(e) =>
-                      updateStep(blockIndex, stepIndex, {
-                        rest_after_seconds: e.target.value === '' ? null : Number(e.target.value),
-                      })
-                    }
-                  />
-                </label>
 
                 <div className="row-actions">
                   <button className="icon-btn" onClick={() => moveStep(blockIndex, stepIndex, -1)}>
@@ -442,7 +490,9 @@ export default function PlanEditor() {
           })}
 
           <div className="step-add">
-            <button className="link-btn" onClick={() => addStep(blockIndex, stepFromExercise(exercises[0]))}>
+            {/* Deliberately no exercise: the row opens as just a picker and grows its fields
+                once the exercise — and so the mode those fields belong to — is chosen. */}
+            <button className="link-btn" onClick={() => addStep(blockIndex, stepFromExercise())}>
               + exercise
             </button>
           </div>
@@ -464,6 +514,7 @@ export default function PlanEditor() {
                   {interval.duration_seconds != null
                     ? `${interval.duration_seconds}s`
                     : repsDisplay(interval)}
+                  {interval.intensity && ` · ${interval.intensity}`}
                   {weightDisplay(interval) && ` @ ${weightDisplay(interval)}`}
                   {interval.set_count > 1 && ` · set ${interval.set_index} of ${interval.set_count}`}
                   {interval.block_round_count > 1 &&

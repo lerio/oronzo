@@ -13,23 +13,28 @@ schema. Then run the `contract-auditor` agent.
 | Concern | Swift | TypeScript | SQL |
 |---|---|---|---|
 | Flattening rule | `OronzoCore/PlanFlattener.swift` | `flattenPlan`, `web/src/lib/types.ts` | `save_plan` in `supabase/migrations/` |
-| Plan shape | `OronzoCore/Models.swift` | `types.ts` (`Plan`/`PlanBlock`/`PlanStep`) | `plans`, `plan_blocks`, `plan_steps` |
+| Exercise facts the flattener needs | `OronzoCore/Models.swift` (`ExerciseInfo`) | the `Exercise` record itself | `exercises.name`, `exercises.has_two_sides` |
+| Plan shape | `OronzoCore/Models.swift` (`Intensity`) | `types.ts` (`Plan`/`PlanBlock`/`PlanStep`, `INTENSITIES`) | `plans`, `plan_blocks`, `plan_steps` |
 | Reading a plan | `PlanRepository.swift` select string | `api.ts` `PLAN_SELECT` | the column names themselves |
 | Writing a session | `SessionLogger.swift` wire types | — | `sessions`, `session_steps` |
 
 The flattening rule itself is stated in full in `AGENTS.md`. What follows is the field-level and
 wire-level detail that the pseudocode does not carry.
 
-## Current schema (post-`0008`)
+## Current schema (post-`0013`)
 
 Migrations are **cumulative and append-only**, so `0001` is not the current shape. This is the
-shape as of `0008_drop_notes_and_actuals.sql`; check the newest file before assuming.
+shape as of `0013_step_intensity.sql`; check the newest file before assuming.
 
 ```
+exercises      id, user_id, slug, name, muscle_group, default_mode,
+               default_duration_seconds, default_reps, has_two_sides, notes, created_at, updated_at
+
 plans          id, user_id, name, created_at, updated_at
 plan_blocks    id, plan_id, position, name, rounds, rest_between_rounds_seconds, created_at, updated_at
 plan_steps     id, block_id, exercise_id NOT NULL, position, label, sets, mode,
-               duration_seconds, reps, target_weight_kg, rest_after_seconds, created_at, updated_at
+               duration_seconds, reps, target_weight_kg, rest_after_seconds,
+               intensity, created_at, updated_at
 
 sessions       id, user_id, plan_id, plan_name, started_at, finished_at, status,
                total_duration_seconds, notes, created_at, updated_at
@@ -38,10 +43,36 @@ session_steps  id, session_id, position, set_index, block_round, block_name, kin
                planned_reps, planned_weight_kg, actual_duration_seconds, status, created_at
 ```
 
+`plan_steps.intensity` (`0013`) is the one column whose **values** are a closed set — `low`,
+`medium` or `hard`, enforced by a check constraint on the same three words `Intensity` and
+`INTENSITIES` declare. It is nullable, and it rides to the screens as an *optional* field on
+`Interval`: an older snapshot decodes without it and a nil one is omitted from the JSON entirely,
+which is what `docs/decisions.md` records as the rule for adding anything to that type.
+
+One column changed meaning with `0012`: `session_steps.exercise_name` is now the *interval's*
+name, so a two-sided exercise logs two rows per set as `Reverse Lunge (left)` and `Reverse Lunge
+(right)`, sharing a `set_index`. Nothing groups or joins on it, and the alternative — stripping
+the side before logging — would lose which side the row was. It is a display string, deliberately.
+
 Columns that **no longer exist**, and must not reappear in a select string or a model:
 `plan_steps.kind` and `plan_steps.notes` (dropped in `0006`/`0008`), `plans.notes` (`0008`),
 `plan_steps.reps_max` / `target_weight_max_kg` (`0004`), `session_steps.actual_reps` /
-`actual_weight_kg` (`0008`), `session_steps.round_index` (renamed `set_index` in `0005`).
+`actual_weight_kg` (`0008`), `session_steps.round_index` (renamed `set_index` in `0005`), `exercises.equipment` (`0011`).
+
+`exercises` is in this list for the first time because the flattener reads two of its columns —
+`name` and `has_two_sides` — which is why the phone's exercise fetch is a hand-written select
+string and not a `select('*')`. **The iOS app is the only surface that reads a named column set**,
+so it is the only one a missing column can `400`:
+
+```
+GET /rest/v1/exercises?select=id,name,has_two_sides
+```
+
+The side suffix the flattener writes is spelled `"… (left)"` / `"… (right)"` in both mirrors —
+`PlanFlattener.sideSuffixes` and `sideSuffixes` in `types.ts` — and it goes into `Interval.name`,
+never into `PlanFlattener.name(for:)`, which the plan detail screen uses to list a plan as
+authored. A two-sided exercise therefore doubles an interval stream and *not* a step list, and
+`PlanSummary`'s rep estimate reads the same `sideSuffixes` rather than its own copy of the rule.
 
 `sessions.notes` still exists but nothing reads or writes it — see `known-issues.md`.
 

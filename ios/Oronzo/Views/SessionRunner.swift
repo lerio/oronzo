@@ -43,8 +43,8 @@ struct SessionRunner: View {
     private let primarySize = TypeScale.size(.primary, on: .phone)
 
     @MainActor
-    init(plan: Plan, exerciseNames: [UUID: String]) {
-        _controller = State(initialValue: SessionController(plan: plan, exerciseNames: exerciseNames))
+    init(plan: Plan, exercises: [UUID: ExerciseInfo]) {
+        _controller = State(initialValue: SessionController(plan: plan, exercises: exercises))
     }
 
     var body: some View {

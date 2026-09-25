@@ -1,48 +1,89 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import type { Exercise } from '../lib/types';
+import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { createExercise } from '../lib/api';
+import { MUSCLE_GROUPS, exerciseSummary, type Exercise, type StepMode } from '../lib/types';
 
 interface ExercisePickerProps {
   exercises: Exercise[];
   value: string | null;
-  onChange: (exerciseId: string) => void;
+  /**
+   * Fired with the chosen exercise — the object, not its id. The caller has no way to resolve a
+   * just-created one by id: it was made inside this component, and reaches the caller's list in
+   * the same batch of state updates that this callback is part of.
+   */
+  onChange: (exercise: Exercise) => void;
+  /**
+   * Called with an exercise created from inside the picker. The caller has to fold it into the
+   * list it renders from, or the step that now points at it would read as unpicked.
+   */
+  onCreated?: (exercise: Exercise) => void;
 }
 
 /**
- * A searchable replacement for a plain `<select>`.
+ * A searchable replacement for a plain `<select>`, which can also create what it cannot find.
  *
- * With ~115 seeded exercises plus whatever you add, scrolling a native dropdown to find
- * one is tedious — and on a narrow field the names are truncated anyway. This filters as
- * you type and matches on muscle group and equipment too, so "cable back" finds the cable
- * rows without knowing what any of them are called.
+ * A native dropdown is tedious to scroll to a name, and on a narrow field it truncates the
+ * names anyway. This filters as you type and matches on muscle group and the exercise's own
+ * default too, so "back" finds the back rows without knowing what any of them are called.
+ *
+ * When nothing matches, the dead end is where the authoring actually is: you are naming an
+ * exercise that does not exist yet. So instead of sending you to another tab, the panel offers
+ * to create it — the search text becomes the name, and the same three fields the Exercises page
+ * asks for are the whole form. Saving selects it, which is what makes the step's own fields
+ * appear.
  *
  * Deliberately hand-rolled rather than pulling in a combobox library: it is the only
- * control of its kind here, and it is ~120 lines.
+ * control of its kind here, and it is ~190 lines.
  */
-export default function ExercisePicker({ exercises, value, onChange }: ExercisePickerProps) {
+export default function ExercisePicker({
+  exercises,
+  value,
+  onChange,
+  onCreated,
+}: ExercisePickerProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [highlight, setHighlight] = useState(0);
+
+  // The create form, swapped in over the results when the search comes up empty.
+  const [creating, setCreating] = useState(false);
+  const [name, setName] = useState('');
+  const [muscleGroup, setMuscleGroup] = useState<string>('chest');
+  const [mode, setMode] = useState<StepMode>('reps');
+  const [twoSides, setTwoSides] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const rootRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
   const selected = exercises.find((exercise) => exercise.id === value) ?? null;
 
+  const needle = query.trim().toLowerCase();
+
   const matches = useMemo(() => {
-    const needle = query.trim().toLowerCase();
     if (!needle) return exercises;
     return exercises.filter((exercise) =>
-      `${exercise.name} ${exercise.muscle_group} ${exercise.equipment}`
-        .toLowerCase()
-        .includes(needle),
+      `${exercise.name} ${exerciseSummary(exercise)}`.toLowerCase().includes(needle),
     );
-  }, [exercises, query]);
+  }, [exercises, needle]);
+
+  /**
+   * Offered whenever the box holds something you do not already have: an exact name means there
+   * is nothing to add (and `exercises_user_name_key` would refuse it anyway), and an empty box
+   * means you are browsing what you have, not naming something new.
+   */
+  const exactMatch = exercises.some(
+    (exercise) => exercise.name.trim().toLowerCase() === needle,
+  );
+  const canAddNew = needle !== '' && !exactMatch;
 
   // On open: clear the previous search and put the cursor in the box.
   useEffect(() => {
     if (!open) return;
     setQuery('');
     setHighlight(0);
+    setCreating(false);
+    setError(null);
     searchRef.current?.focus();
   }, [open]);
 
@@ -61,8 +102,36 @@ export default function ExercisePicker({ exercises, value, onChange }: ExerciseP
   const activeIndex = Math.min(highlight, Math.max(0, matches.length - 1));
 
   function choose(exercise: Exercise) {
-    onChange(exercise.id);
+    onChange(exercise);
     setOpen(false);
+  }
+
+  function startCreating() {
+    setName(query.trim());
+    setError(null);
+    setCreating(true);
+  }
+
+  async function onCreate(event: FormEvent) {
+    event.preventDefault();
+    setSaving(true);
+    setError(null);
+    try {
+      const created = await createExercise({
+        name: name.trim(),
+        muscle_group: muscleGroup,
+        default_mode: mode,
+        has_two_sides: twoSides,
+      });
+      // Both updates land in one render: the caller adds it to the list this component looks
+      // `value` up in, so the picker shows the new name rather than falling back to "— pick —".
+      onCreated?.(created);
+      choose(created);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not create exercise');
+    } finally {
+      setSaving(false);
+    }
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLInputElement>) {
@@ -117,12 +186,67 @@ export default function ExercisePicker({ exercises, value, onChange }: ExerciseP
         </button>
       )}
 
-      {open && (
-        <ul className="picker-list" role="listbox">
-          {matches.length === 0 ? (
-            <li className="picker-empty muted small">No exercise matches “{query.trim()}”.</li>
-          ) : (
-            matches.map((exercise, index) => (
+      {open &&
+        (creating ? (
+          <form
+            className="picker-list picker-new"
+            onSubmit={onCreate}
+            // Escape backs out of the form rather than the whole panel: a half-typed name is
+            // worth more than the search that led here.
+            onKeyDown={(event) => {
+              if (event.key !== 'Escape') return;
+              event.preventDefault();
+              setCreating(false);
+              setError(null);
+            }}
+          >
+            <input
+              className="picker-search"
+              placeholder="Name"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              autoFocus
+              required
+            />
+            <div className="picker-new-fields">
+              <select value={muscleGroup} onChange={(event) => setMuscleGroup(event.target.value)}>
+                {MUSCLE_GROUPS.map((group) => (
+                  <option key={group} value={group}>
+                    {group.replace('_', ' ')}
+                  </option>
+                ))}
+              </select>
+              <select value={mode} onChange={(event) => setMode(event.target.value as StepMode)}>
+                <option value="reps">reps</option>
+                <option value="time">time</option>
+              </select>
+            </div>
+            <label className="inline-field" title="Performed once per side — left, then right">
+              <input
+                type="checkbox"
+                checked={twoSides}
+                onChange={(event) => setTwoSides(event.target.checked)}
+              />
+              <span>2 sides</span>
+            </label>
+            <div className="picker-new-fields">
+              <button className="primary" type="submit" disabled={saving}>
+                {saving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+            {error && <p className="error small">{error}</p>}
+          </form>
+        ) : (
+          <ul className="picker-list" role="listbox">
+            {matches.length === 0 && (
+              <li className="picker-empty muted small">
+                {exercises.length === 0
+                  ? 'No exercises yet.'
+                  : `No exercise matches “${query.trim()}”.`}
+              </li>
+            )}
+
+            {matches.map((exercise, index) => (
               <li key={exercise.id}>
                 <button
                   type="button"
@@ -133,15 +257,20 @@ export default function ExercisePicker({ exercises, value, onChange }: ExerciseP
                   onClick={() => choose(exercise)}
                 >
                   <span className="picker-name">{exercise.name}</span>
-                  <span className="picker-meta">
-                    {exercise.muscle_group.replace('_', ' ')} · {exercise.equipment}
-                  </span>
+                  <span className="picker-meta">{exerciseSummary(exercise)}</span>
                 </button>
               </li>
-            ))
-          )}
-        </ul>
-      )}
+            ))}
+
+            {canAddNew && (
+              <li className="picker-new-row">
+                <button type="button" className="link-btn" onClick={startCreating}>
+                  Add New
+                </button>
+              </li>
+            )}
+          </ul>
+        ))}
     </div>
   );
 }

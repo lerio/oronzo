@@ -23,7 +23,7 @@ final class SessionScreenTests: XCTestCase {
                 PlanStep(label: "Bench Press", mode: .reps, reps: 8),
             ]),
         ])
-        return PlanFlattener.flatten(plan)
+        return PlanFlattener.flatten(plan, exercises: [:])
     }
 
     // MARK: - The state word
@@ -182,7 +182,7 @@ final class SessionScreenTests: XCTestCase {
         let plan = Plan(name: "P", blocks: [
             PlanBlock(steps: [PlanStep(label: "Row", mode: .time, duration: 60, restAfter: 30)]),
         ])
-        let intervals = PlanFlattener.flatten(plan)   // [Row, Break]
+        let intervals = PlanFlattener.flatten(plan, exercises: [:])   // [Row, Break]
         let screen = SessionPresentation.screen(
             intervals: intervals, index: 1,
             end: t0.addingTimeInterval(30), isPaused: false, isFinished: false,
@@ -206,7 +206,7 @@ final class SessionScreenTests: XCTestCase {
                          targetWeightKg: 20, restAfter: 30),
                 PlanStep(label: "Lat Pulldown", mode: .reps, reps: 10, targetWeightKg: 40),
             ]),
-        ]))
+        ]), exercises: [:])
     }
 
     /// A weighted exercise coming up states its load on the next-up line.
@@ -269,7 +269,7 @@ final class SessionScreenTests: XCTestCase {
                 PlanStep(label: "Bench Press", mode: .reps, reps: 8, targetWeightKg: 20),
             ]),
         ])
-        let intervals = PlanFlattener.flatten(plan)
+        let intervals = PlanFlattener.flatten(plan, exercises: [:])
 
         let screen = SessionPresentation.screen(
             intervals: intervals, index: 1,          // the rest before the weighted bench
@@ -342,7 +342,7 @@ final class SessionScreenTests: XCTestCase {
                          targetWeightKg: 20, restAfter: 30),
             ]),
         ])
-        let intervals = PlanFlattener.flatten(plan)   // [Bench, Break]
+        let intervals = PlanFlattener.flatten(plan, exercises: [:])   // [Bench, Break]
 
         let bench = SessionPresentation.screen(
             intervals: intervals, index: 0, end: nil,
@@ -369,7 +369,7 @@ final class SessionScreenTests: XCTestCase {
                          targetWeightKg: 20, restAfter: 30),
             ]),
         ])
-        let intervals = PlanFlattener.flatten(plan)
+        let intervals = PlanFlattener.flatten(plan, exercises: [:])
 
         let screen = SessionPresentation.screen(
             intervals: intervals, index: 0, end: nil,
@@ -524,7 +524,7 @@ final class SessionScreenTests: XCTestCase {
                          duration: 60, restAfter: 30),
             ]),
         ])
-        let intervals = PlanFlattener.flatten(plan)   // set 1, rest, set 2, ...
+        let intervals = PlanFlattener.flatten(plan, exercises: [:])   // set 1, rest, set 2, ...
         let screen = SessionPresentation.screen(
             intervals: intervals, index: 0,
             end: t0.addingTimeInterval(42), isPaused: false, isFinished: false,
@@ -534,6 +534,27 @@ final class SessionScreenTests: XCTestCase {
         XCTAssertEqual(
             screen?.accessibilityAnnouncement,
             "Working. Bench Press. 42 seconds remaining. Set 1 of 4. Next: Break."
+        )
+    }
+
+    /// The spoken line is the drawn line where the drawn line is about progress — the same place
+    /// in the same order, so a VoiceOver user and a glance at the wrist are told the same thing.
+    func testTheAnnouncementSpeaksTheEffort() {
+        let plan = Plan(name: "P", blocks: [
+            PlanBlock(name: "HIIT", rounds: 6, steps: [
+                PlanStep(label: "Burpee", mode: .time, duration: 20, intensity: .hard),
+            ]),
+        ])
+        let intervals = PlanFlattener.flatten(plan, exercises: [:])
+        let screen = SessionPresentation.screen(
+            intervals: intervals, index: 0,
+            end: t0.addingTimeInterval(14), isPaused: false, isFinished: false,
+            planName: "P", startedAt: t0, now: t0
+        )
+
+        XCTAssertEqual(
+            screen?.accessibilityAnnouncement,
+            "Working. Burpee. 14 seconds remaining. hard. Next: Burpee."
         )
     }
 }

@@ -51,7 +51,7 @@ public struct PlanSummary: Equatable, Sendable {
     /// either way its contribution to the total is not something the plan can prove.
     let hasEstimatedWork: Bool
 
-    public init(plan: Plan, intervals: [Interval]) {
+    public init(plan: Plan, intervals: [Interval], exercises: [UUID: ExerciseInfo]) {
         let steps: [PlanStep] = plan.blocks.flatMap { $0.steps }
 
         self.blockCount = plan.blocks.count
@@ -60,7 +60,13 @@ public struct PlanSummary: Equatable, Sendable {
         self.repSeconds = steps
             .filter { $0.mode == .reps }
             .reduce(0) { total, step in
-                total + Double(step.sets * (step.reps ?? 0)) * Self.secondsPerRep
+                // A two-sided exercise is performed twice per set, so its reps count twice. The
+                // count comes from the flattener's own rule rather than a second reading of
+                // `hasTwoSides`: the timed half above already doubles, because it sums the
+                // doubled interval stream, and one total with two opinions in it is worse than
+                // either.
+                let sides = PlanFlattener.sideSuffixes(of: step, exercises: exercises).count
+                return total + Double(step.sets * (step.reps ?? 0) * sides) * Self.secondsPerRep
             }
         self.hasEstimatedWork = steps.contains { $0.mode == .reps || $0.duration == nil }
     }

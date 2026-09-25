@@ -14,7 +14,7 @@ import SwiftUI
 /// became twelve near-identical rows and the shape of the plan disappeared. What the summary
 /// owes you is "what am I doing", and the shape answers that better than the execution order.
 ///
-/// Steps are named through `PlanFlattener.name(for:exerciseNames:)` rather than `step.label`
+/// Steps are named through `PlanFlattener.name(for:exercises:)` rather than `step.label`
 /// directly, so this screen and the workout that follows it cannot name the same exercise
 /// differently. Both matter: `label` is null on every step the builder writes
 /// (`docs/known-issues.md` §1), so the exercise table is the branch that actually runs.
@@ -43,7 +43,7 @@ struct PlanDetailView: View {
     private var cardRadius: CGFloat { SpacingStep.roomy.points }
 
     private var intervals: [Interval] { store.intervals(for: plan) }
-    private var summary: PlanSummary { PlanSummary(plan: plan, intervals: intervals) }
+    private var summary: PlanSummary { PlanSummary(plan: plan, intervals: intervals, exercises: store.exercises) }
 
     var body: some View {
         ScrollView {
@@ -78,7 +78,7 @@ struct PlanDetailView: View {
         // away: with no `navigationTitle`, the back button still reads "Plans".
         .navigationBarTitleDisplayMode(.inline)
         .fullScreenCover(isPresented: $isRunning) {
-            SessionRunner(plan: plan, exerciseNames: store.exerciseNames)
+            SessionRunner(plan: plan, exercises: store.exercises)
         }
     }
 
@@ -215,7 +215,7 @@ struct PlanDetailView: View {
     /// own section. `caption` is the next role down — the vocabulary has no in-between size on
     /// purpose, so "a bit smaller" means this step and not a new number.
     private func stepName(_ step: PlanStep) -> some View {
-        Text(PlanFlattener.name(for: step, exerciseNames: store.exerciseNames))
+        Text(PlanFlattener.name(for: step, exercises: store.exercises))
             .font(.system(size: captionSize))
             .foregroundStyle(ColorRole.text.color(colorScheme))
             // At the largest Dynamic Type sizes the name takes the full width rather than
@@ -226,10 +226,15 @@ struct PlanDetailView: View {
     @ViewBuilder
     private func setsMarker(_ step: PlanStep) -> some View {
         if step.sets > 1 {
-            Text("×\(step.sets)")
+            // "×3 each side" rather than "×3" when the exercise is done per side, because this
+            // screen is read *before* the workout and the workout runs six intervals, not three.
+            // The name above stays side-free — the plan is listed as authored — but the
+            // prescription has to describe what will actually happen.
+            let perSide = PlanFlattener.sideSuffixes(of: step, exercises: store.exercises).count > 1
+            Text(perSide ? "×\(step.sets) each side" : "×\(step.sets)")
                 .font(.system(size: captionSize).monospacedDigit())
                 .foregroundStyle(ColorRole.text.color(colorScheme))
-                .accessibilityLabel("\(step.sets) sets")
+                .accessibilityLabel(perSide ? "\(step.sets) sets, each side" : "\(step.sets) sets")
         }
     }
 
@@ -291,6 +296,6 @@ struct PlanDetailView: View {
         // from the exercise table, which is what a real plan looks like on this screen.
         PlanDetailView(plan: DemoPlan.builderShaped())
     }
-    .environment(PlanStore.seeded(DemoPlan.builderExerciseNames))
+    .environment(PlanStore.seeded(DemoPlan.builderExercises))
 }
 #endif

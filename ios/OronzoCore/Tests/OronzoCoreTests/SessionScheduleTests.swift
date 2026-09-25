@@ -113,7 +113,7 @@ final class SessionScheduleTests: XCTestCase {
             PlanBlock(name: "Main", steps: (0..<10).map { i in
                 PlanStep(label: "Set \(i + 1)", mode: .time, duration: 60, restAfter: 30)
             }),
-        ]))
+        ]), exercises: [:])
         let duration = intervals.compactMap(\.duration).reduce(0, +)
         XCTAssertEqual(duration, 900, "a 15-minute session is the fixture")
 

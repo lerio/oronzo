@@ -9,7 +9,8 @@ import SwiftUI
 final class PlanStore {
 
     private(set) var plans: [Plan] = []
-    private(set) var exerciseNames: [UUID: String] = [:]
+    /// What flattening resolves against: each exercise's name, and whether it is done per side.
+    private(set) var exercises: [UUID: ExerciseInfo] = [:]
     private(set) var isLoading = false
     private(set) var error: String?
 
@@ -20,10 +21,21 @@ final class PlanStore {
     func load() async {
         if plans.isEmpty, let cached = cache.load() {
             plans = cached.plans
-            exerciseNames = cached.exerciseNames
+            exercises = Self.exerciseInfo(names: cached.exerciseNames, twoSided: cached.twoSidedExerciseIDs)
             invalidateIntervals()
         }
         await refresh()
+    }
+
+    /// The in-memory map and the cached pair of fields are two shapes of one thing — see
+    /// `CachedPlanList` for why they are not the same shape.
+    private static func exerciseInfo(names: [UUID: String], twoSided: [UUID]) -> [UUID: ExerciseInfo] {
+        let flagged = Set(twoSided)
+        var info: [UUID: ExerciseInfo] = [:]
+        for (id, name) in names {
+            info[id] = ExerciseInfo(name: name, hasTwoSides: flagged.contains(id))
+        }
+        return info
     }
 
     func refresh() async {
@@ -33,20 +45,90 @@ final class PlanStore {
         defer { isLoading = false }
 
         do {
-            async let plans = repository.fetchPlans()
-            async let names = repository.fetchExerciseNames()
-
-            let loadedPlans = try await plans
-            let loadedNames = try await names
-
-            self.plans = loadedPlans
-            self.exerciseNames = loadedNames
-            invalidateIntervals()
-            cache.save(plans: loadedPlans, exerciseNames: loadedNames)
+            try await fetchLatest()
         } catch {
-            // Keep whatever the cache gave us; a stale plan list beats an empty screen.
-            self.error = error.localizedDescription
+            // One second chance, and only when the failure is *about the session*.
+            //
+            // The access token lives an hour and this app is opened in a basement gym, so a
+            // request that arrives holding a just-expired token fails — and what it fails *with*
+            // is the "weird JWT" text: "invalid JWT: unable to parse or verify signature, token
+            // is unverifiable…". That is a renewable session reading as a broken one, which is
+            // what made the plan list fall back to the cache so often.
+            //
+            // Gated on the diagnosis rather than run unconditionally: `refreshSession()` rotates
+            // the refresh token, and rotating it after, say, a `400` from a column that does not
+            // exist would be a needless rotation — the very thing that produces "Invalid Refresh
+            // Token: Already Used" when two of them race.
+            let aboutTheSession = Self.looksLikeASessionProblem(error)
+
+            if aboutTheSession, await renewSession() {
+                do {
+                    try await fetchLatest()
+                    return
+                } catch {
+                    self.error = Self.readable(error, aboutTheSession: Self.looksLikeASessionProblem(error))
+                    return
+                }
+            }
+
+            self.error = Self.readable(error, aboutTheSession: aboutTheSession)
         }
+    }
+
+    /// The fetch itself, so it can be attempted twice without repeating the assignments.
+    /// (`load()` above is the cache entry point — this is the network half of a refresh.)
+    private func fetchLatest() async throws {
+        async let plans = repository.fetchPlans()
+        async let exercises = repository.fetchExercises()
+
+        let loadedPlans = try await plans
+        let loadedExercises = try await exercises
+
+        self.plans = loadedPlans
+        self.exercises = loadedExercises
+        invalidateIntervals()
+        cache.save(plans: loadedPlans, exercises: loadedExercises)
+    }
+
+    /// True when the session was renewed, so another attempt is worth making.
+    ///
+    /// A signed-out app is not a refresh problem — `AuthStore` owns that state — so this does
+    /// nothing when there is no session to renew.
+    private func renewSession() async -> Bool {
+        guard Backend.client.auth.currentSession != nil else { return false }
+        do {
+            try await Backend.client.auth.refreshSession()
+            return true
+        } catch {
+            Log.debug("plan refresh: could not renew the session: \(error)")
+            return false
+        }
+    }
+
+    /// Whether a failure is *about the session*, rather than about the data.
+    ///
+    /// The check is on the message text because the SDK does not surface a status code this layer
+    /// can read — a heuristic, and a deliberately narrow one: only the words a Supabase auth
+    /// failure actually uses. It decides two things, and both are better for being narrow: whether
+    /// to spend a refresh-token rotation on a retry, and whether the banner should say "your
+    /// session has expired" instead of repeating a server's sentence about keyfunc.
+    private static func looksLikeASessionProblem(_ error: Error) -> Bool {
+        let text = error.localizedDescription.lowercased()
+        return ["jwt", "unauthorized", "refresh token", "401"].contains { text.contains($0) }
+    }
+
+    /// The SDK's own words are accurate and unreadable, and they are what shows in the banner.
+    ///
+    /// A 401 arrives as "invalid JWT: unable to parse or verify signature, token is unverifiable:
+    /// error while executing keyfunc: …", which reads like a bug in the app rather than a session
+    /// that needs renewing. The original goes to the debug log, where it is worth having.
+    private static func readable(_ error: Error, aboutTheSession: Bool) -> String {
+        let raw = error.localizedDescription
+        Log.debug("plan refresh failed: \(raw)")
+
+        return aboutTheSession
+            ? "Your session has expired. Sign out and sign in again to renew it."
+            : raw
     }
 
     /// The flattened intervals for a plan — **cached, because this is called from view bodies.**
@@ -57,21 +139,21 @@ final class PlanStore {
     /// `[Interval]` of size blocks × rounds × sets, so a list of eight plans was re-deriving the
     /// same eight arrays every frame, and the detail screen four times per frame.
     ///
-    /// Keyed by plan id and thrown away whenever the plans or the exercise names are replaced,
-    /// which is the only thing that can change the answer — a plan is a value, and the names are
-    /// what flattening resolves against.
+    /// Keyed by plan id and thrown away whenever the plans or the exercise info are replaced,
+    /// which is the only thing that can change the answer — a plan is a value, and the exercises
+    /// are what flattening resolves against, name and side count alike.
     func intervals(for plan: Plan) -> [Interval] {
         if let cached = intervalCache[plan.id] { return cached }
-        let intervals = PlanFlattener.flatten(plan, exerciseNames: exerciseNames)
+        let intervals = PlanFlattener.flatten(plan, exercises: exercises)
         intervalCache[plan.id] = intervals
         return intervals
     }
 
     private var intervalCache: [UUID: [Interval]] = [:]
 
-    /// Any change to the plans or the names invalidates every entry: the names are an input to
-    /// flattening, so a refresh that only replaced `exerciseNames` would otherwise leave every plan
-    /// showing its old exercise names.
+    /// Any change to the plans or the exercises invalidates every entry: both are inputs to
+    /// flattening, so a refresh that only replaced `exercises` would otherwise leave every plan
+    /// running its old names and its old interval count.
     private func invalidateIntervals() {
         intervalCache.removeAll(keepingCapacity: true)
     }
@@ -79,11 +161,11 @@ final class PlanStore {
 
 #if DEBUG
 extension PlanStore {
-    /// A store holding only exercise names, for the launch-argument entry points that bypass
-    /// the backend. Lives here because `exerciseNames` is `private(set)`.
-    static func seeded(_ exerciseNames: [UUID: String]) -> PlanStore {
+    /// A store holding only exercise info, for the launch-argument entry points that bypass the
+    /// backend. Lives here because `exercises` is `private(set)`.
+    static func seeded(_ exercises: [UUID: ExerciseInfo]) -> PlanStore {
         let store = PlanStore()
-        store.exerciseNames = exerciseNames
+        store.exercises = exercises
         return store
     }
 }
@@ -93,9 +175,24 @@ extension PlanStore {
 
 /// A JSON file in Application Support. Deliberately dumb: the whole point is that the last
 /// successful fetch survives, so the app is usable offline.
+///
+/// **The shape on disk is not the shape in memory, on purpose.** Holding an `ExerciseInfo` per id
+/// here would turn each JSON value from a string into an object and invalidate every file on a
+/// device. Keeping the names exactly as they were, plus which of them are two-sided, means the
+/// only thing an older file is missing is the list of ids.
+///
+/// `twoSidedExerciseIDs` is **required**, and that is the decision rather than an oversight. It
+/// could have been optional — Swift's synthesised decoder tolerates a missing key only for an
+/// optional property — and an older file would then have kept working, with every exercise
+/// reading as one-sided. That is a workout that quietly runs half its sets: the phone would show
+/// three intervals where the builder showed six, and nothing anywhere would say why. A file that
+/// cannot be read is discarded instead, so the plan list is empty until one fetch succeeds —
+/// visible, and recoverable by going online. See `docs/known-issues.md` §3 for what that empty
+/// state currently says, which is a known and separate problem.
 private struct CachedPlanList: Codable {
     let plans: [Plan]
     let exerciseNames: [UUID: String]
+    let twoSidedExerciseIDs: [UUID]
 }
 
 private struct PlanCache {
@@ -121,9 +218,19 @@ private struct PlanCache {
         }
     }
 
-    func save(plans: [Plan], exerciseNames: [UUID: String]) {
+    func save(plans: [Plan], exercises: [UUID: ExerciseInfo]) {
         guard let url else { return }
-        let payload = CachedPlanList(plans: plans, exerciseNames: exerciseNames)
+        let payload = CachedPlanList(
+            plans: plans,
+            exerciseNames: exercises.mapValues(\.name),
+            // Sorted so the file is the same bytes for the same data rather than following
+            // dictionary order, which is worth having when the only way to read it is a text
+            // editor on a device.
+            twoSidedExerciseIDs: exercises
+                .filter { $0.value.hasTwoSides }
+                .keys
+                .sorted { $0.uuidString < $1.uuidString }
+        )
         guard let data = try? JSONEncoder().encode(payload) else { return }
         try? data.write(to: url, options: .atomic)
     }

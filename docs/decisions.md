@@ -57,6 +57,22 @@ Two things were tried and removed, rather than merely hidden:
   but iOS decoded and discarded them, so guidance like "per side" never reached a workout.
   Half-supporting a field is worse than not having it.
 
+  "Per side" is the one note that came back, as `exercises.has_two_sides` (`0012`) — because it
+  is the one piece of that guidance the app can act on rather than merely display. A flagged
+  exercise emits each set twice, left then right, and the pair is still one set: the rest falls
+  once, after both sides, and both intervals read "set 1 of 3". See below for why the side is
+  carried in the interval's name.
+
+**Effort is structured now** (`plan_steps.intensity`, `0013`). A timed interval is prescribed as a
+duration *and* an effort, and the effort had nowhere to live but the step's `label` — the seeded
+plans write "Hard — 20 sec" and `PlanFlattener` prefers a label over the exercise name, so it
+reached the screen as a name. A name is not a value: nothing could reason about it, and the
+builder cannot set a label at all (`docs/known-issues.md` §1). The three words are policed by a
+check constraint rather than by the client, the same way `mode` is, so no fourth word can exist and
+every surface switches on the enum exhaustively. It is nullable, because a strength hold is just a
+hold, and it sits on the *step* rather than the exercise: a HIIT block runs the same movement hard
+and easy.
+
 `session_steps.actual_reps` and `actual_weight_kg` went the same way in `0008`: the engine
 could record them but nothing ever called `record(reps:weightKg:)`, so every logged session
 stored nulls. `actual_duration_seconds` and `status` stay — the engine genuinely populates
@@ -64,6 +80,45 @@ both.
 
 Not supported: EMOM/AMRAP/time-capped work, which needs a *variable* rest (whatever is left
 in the minute). Adding it means a new interval concept, not a new column.
+
+**Why two-sided lives on the exercise, and why it rides in the name.** The flag is a property of
+the movement, not of a prescription, so it sits on `exercises` and is resolved while flattening —
+ticking it changes every plan that uses the exercise, which is what "this movement has two sides"
+means. The alternative, snapshotting it onto `plan_steps` the way `mode` is snapshotted, would
+have needed a column there, a seventh redefinition of `save_plan`, and an edit to both
+hand-written PostgREST select strings.
+
+Carrying the side in `Interval.name` rather than in a field of its own costs no wire change at
+all: the name is already on the wire and is what both surfaces draw. An added field would not
+have *broken* decoding the way a required one would — `Interval` decodes optionals with
+`decodeIfPresent`, so an optional `side` would have been readable by an older build — but it
+would still be a format that two separately-installed apps have to agree on, for text that only
+ever appears in one place. If the name slot ever needs the room back, an optional `side` on
+`Interval` plus a `LinkTests` tolerance case is the escape hatch, and the `(left)`/`(right)`
+spelling would move with it.
+
+## A session is not lost because a refresh failed
+
+`AuthStore.restore()` decides "signed in" by whether the **keychain holds a session**, and then
+renews it as a best-effort follow-up whose failure is logged and ignored. It used to call
+`auth.session`, which refreshes a stale token and throws when that refresh fails — and every throw
+was read as "signed out". So a dropped connection, a phone waking up, or a minute without signal
+produced the sign-in screen while the credentials sat untouched in the keychain. The report was
+"the session keeps getting lost"; it was never lost, it could not be renewed that second.
+
+The consequences are the point of the design, not a side effect:
+
+* Being signed in is a fact about stored credentials, so only an explicit Sign out — or a token
+  the server actually refuses — may change it.
+* A request that then fails shows its reason and offers the way out (Sign out → sign in), rather
+  than the app silently logging itself out and taking the user's context with it.
+* `PlanStore.refresh()` gets one retry behind a `refreshSession()` — but only when the failure
+  looks like the session (a 401, or the words "jwt", "unauthorized", "refresh token"). The common
+  case it fixes is a request that arrives holding a token that expired a moment ago. It is gated
+  rather than unconditional because `refreshSession()` *rotates* the refresh token, and rotating
+  it after an unrelated failure — a `400` from a column that does not exist, say — is exactly how
+  two rotations race into "Invalid Refresh Token: Already Used".
+* That same text is now the debug log's, and the banner gets a sentence a person can act on.
 
 ## The watch asks, the phone answers
 

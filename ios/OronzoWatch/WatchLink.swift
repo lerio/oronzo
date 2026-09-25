@@ -287,7 +287,9 @@ extension WatchLink {
             ]
         )
 
-        intervals = PlanFlattener.flatten(plan)
+        // No exercise info at all: every step in this fixture carries a label, and nothing here is
+        // two-sided. Passed explicitly rather than defaulted — see `PlanFlattener.flatten`.
+        intervals = PlanFlattener.flatten(plan, exercises: [:])
         state = SessionState(
             currentIndex: 0,
             isPaused: false,
