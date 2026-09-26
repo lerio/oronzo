@@ -1,6 +1,34 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { createExercise, deleteExercise, listExercises } from '../lib/api';
+import { createExercise, deleteExercise, listExercises, plansUsingExercise } from '../lib/api';
+import { errorMessage, isForeignKeyViolation } from '../lib/errors';
 import { MUSCLE_GROUPS, exerciseSummary, type Exercise, type StepMode } from '../lib/types';
+
+/**
+ * Why the exercise cannot go yet, naming the plans that hold it.
+ *
+ * The refusal is a RESTRICT foreign key: `plan_steps.exercise_id` cannot be left orphaned, so a
+ * plan step still points at this exercise. That is deliberate — silently gutting a plan would be
+ * worse — and it is also the whole rule, since an exercise no plan uses deletes normally. It
+ * arrives as a 409, reported by `isForeignKeyViolation`.
+ *
+ * Naming them is the point of the message: the refusal is correct, but "a plan" is not something
+ * you can go and act on. Best-effort — if the lookup itself fails the sentence is still true,
+ * just less immediately useful.
+ */
+async function inUseMessage(exercise: Exercise): Promise<string> {
+  const fallback = `"${exercise.name}" is still used by a plan. Remove it from that plan first.`;
+  try {
+    const plans = await plansUsingExercise(exercise.id);
+    if (plans.length === 0) return fallback;
+    const where =
+      plans.length === 1
+        ? `the plan "${plans[0]}"`
+        : `these plans: ${plans.map((name) => `"${name}"`).join(', ')}`;
+    return `"${exercise.name}" is used by ${where}. Remove it there first.`;
+  } catch {
+    return fallback;
+  }
+}
 
 export default function Exercises() {
   const [exercises, setExercises] = useState<Exercise[]>([]);
@@ -16,7 +44,7 @@ export default function Exercises() {
   useEffect(() => {
     listExercises()
       .then(setExercises)
-      .catch((err) => setError(err.message))
+      .catch((err) => setError(errorMessage(err, 'Could not load exercises')))
       .finally(() => setLoading(false));
   }, []);
 
@@ -34,7 +62,7 @@ export default function Exercises() {
       setName('');
       setTwoSides(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not create exercise');
+      setError(errorMessage(err, 'Could not create exercise'));
     }
   }
 
@@ -45,15 +73,11 @@ export default function Exercises() {
       await deleteExercise(exercise.id);
       setExercises((current) => current.filter((e) => e.id !== exercise.id));
     } catch (err) {
-      // A RESTRICT foreign key means this exercise is referenced by a plan step. That is
-      // deliberate — silently gutting a plan would be worse — so say so plainly.
-      setError(
-        err instanceof Error && /violates foreign key|restrict/i.test(err.message)
-          ? `"${exercise.name}" is still used by a plan. Remove it from that plan first.`
-          : err instanceof Error
-            ? err.message
-            : 'Delete failed',
-      );
+      if (isForeignKeyViolation(err)) {
+        setError(await inUseMessage(exercise));
+        return;
+      }
+      setError(errorMessage(err, 'Delete failed'));
     }
   }
 

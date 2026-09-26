@@ -15,6 +15,17 @@ import Foundation
 /// **fixed size**: four attempts at most, the last one just over a minute after the first, and
 /// then silence until the wrist comes up again and the watch has a reason to ask anew.
 ///
+/// **A waking with nothing to show gets the same four, and that was learned the hard way.** An
+/// earlier pass reasoned that a wrist showing nothing has nothing to *correct*, so one attempt was
+/// enough — the phone pushes on its own state changes anyway. That reasoning has a hole exactly
+/// the size of the bug this file exists for: the state change that matters is the *start* of a
+/// workout, it happens once, and if that one push is missed the next one is a whole interval away
+/// (or, on a rep set, a tap away). The wrist then reads **"No workout"** for minutes, which is the
+/// silent failure the whole link was rebuilt to remove. A single shot is not a recovery — the same
+/// lesson this project already paid for once. And the cost of being wrong in this direction is
+/// bounded: the extra attempts are spent only when the phone does not answer at all, which is a
+/// phone that is not there.
+///
 /// A pure function with no clock of its own, like `SessionSchedule` and `ExecutionEngine`: the
 /// caller has the time, this has the rule, and `swift test` proves the bound on macOS.
 public enum AskSchedule {
@@ -29,21 +40,22 @@ public enum AskSchedule {
     /// yet.
     public static let backoff: [TimeInterval] = [5, 15, 45]
 
-    /// How many attempts one waking is allowed, before the watch gives up and shows what it has.
-    ///
-    /// Four, and the number is the point: this multiplied by the wrist-raise rate is the whole
-    /// worst-case message budget, and an hour with the phone never reachable costs at most 480
-    /// messages against the 3,600 the poll this replaced would have spent.
-    public static let attemptCount = backoff.count + 1
-
-    /// The instant of attempt `attempt` (1-based), or `nil` when there are no attempts left.
+    /// Every instant at which one waking should ask the phone, in order.
     ///
     /// The first attempt is **now** rather than a gap away — asking immediately is the entire
     /// point of the mechanism, and delaying it would leave the wrist wrong for seconds longer for
     /// no saving.
-    public static func attempt(_ attempt: Int, from now: Date) -> Date? {
-        guard attempt >= 1, attempt <= attemptCount else { return nil }
-        let elapsed = backoff.prefix(attempt - 1).reduce(0, +)
-        return now.addingTimeInterval(elapsed)
+    public static func attempts(from now: Date) -> [Date] {
+        // Walked as a running total rather than read off the array: `backoff` holds the *gaps*
+        // between attempts, so the third attempt is 5 + 15 seconds out, not 15. Getting that
+        // wrong shortens the retry by half a minute, which is the sort of thing only a test
+        // notices — this one did.
+        var elapsed: TimeInterval = 0
+        var offsets: [TimeInterval] = [0]
+        for gap in backoff {
+            elapsed += gap
+            offsets.append(elapsed)
+        }
+        return offsets.map { now.addingTimeInterval($0) }
     }
 }

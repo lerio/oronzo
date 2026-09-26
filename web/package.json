@@ -17,7 +17,7 @@
     "react-router-dom": "^7.18.4"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "^1.60.1",
+    "@cloudflare/vite-plugin": "^1.60.2",
     "@types/node": "^26.6.2",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
@@ -25,11 +25,11 @@
     "oxlint": "^1.85.0",
     "typescript": "~7.0.2",
     "vite": "^8.3.1",
-    "wrangler": "^4.140.0"
+    "wrangler": "^4.141.0"
   },
   "allowScripts": {
     "fsevents@2.3.3": true,
     "esbuild@0.28.1": true,
-    "workerd@1.20260923.1": true
+    "workerd@1.20260925.1": true
   }
 }

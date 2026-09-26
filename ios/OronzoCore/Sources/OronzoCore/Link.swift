@@ -7,6 +7,20 @@ import Foundation
 public enum WatchMessage: Codable, Sendable {
     /// Everything the watch needs, always complete.
     case session(SessionSnapshot)
+    /// **"I have nothing, as of this instant."**
+    ///
+    /// The date is the whole point of the message. A clear is the one thing the phone can say that
+    /// *erases* what the watch is showing, and the application context it arrives in keeps its
+    /// value across launches and installs — so a watch can be handed a clear that is older than
+    /// the workout on its screen. `SessionClear` compares this instant with the session's start
+    /// and settles it without asking anybody.
+    case idle(at: Date)
+    /// The original clear, kept for a phone built before `idle(at:)` existed.
+    ///
+    /// It carries nothing to order it by, so it can never erase a live screen — the watch asks the
+    /// phone instead. See `SessionClear.Decision.unorderable`. Both apps are installed from Xcode
+    /// together, so this is a transitional shape rather than a permanent one; it is deleted when
+    /// `WireProtocol.minimum` moves past the builds that send it.
     case sessionEnded
 }
 
@@ -63,7 +77,13 @@ public struct SessionSnapshot: Codable, Sendable {
 public enum WireProtocol {
 
     /// What this build speaks. Absent on the wire means "built before versioning existed".
-    public static let current = 1
+    ///
+    /// 2 added `WatchMessage.idle(at:)`, whose date is what lets a watch refuse a clear that
+    /// predates the workout on its screen. A 1 phone still runs a session perfectly well — it is
+    /// the *clear* that differs, and a 1 clear cannot erase a live screen, it can only fail to
+    /// clear a dead one. That is worth naming on the watch's screen rather than hiding, and it is
+    /// the reason this number moves for a change that breaks nothing.
+    public static let current = 2
 
     /// The oldest build this one can still work with. Bumping this is a promise that everything
     /// older is genuinely unusable, which is a much stronger claim than adding a field.

@@ -15,7 +15,15 @@ struct OronzoApp: App {
                 .environment(session)
                 // Activated once, early, and left alone: there is exactly one WCSession and
                 // it has to be running before a workout starts, not when one does.
-                .task { PhoneConnectivity.shared.activate() }
+                //
+                // The host is handed over at the same moment, and before anything can be asked —
+                // an answer has to be built from the session this app *has*, not only from the one
+                // that has claimed the link. See `PhoneConnectivity.currentWatchMessage` for the
+                // bug that gap was producing.
+                .task {
+                    PhoneConnectivity.shared.activate()
+                    PhoneConnectivity.shared.host = session
+                }
         }
     }
 }
@@ -88,6 +96,9 @@ private struct RootView: View {
         // Coming forward with nothing running tells the watch so. This is what clears a
         // phantom session left behind by a force-quit or a crash mid-workout.
         .onChange(of: scenePhase) { _, phase in
+            // Guarded by `hasActiveSession` inside the link, which now counts the session this app
+            // *has* rather than only the one that has claimed the link — so a workout that is
+            // still starting cannot be cleared. See `PhoneConnectivity.currentWatchMessage`.
             if phase == .active { PhoneConnectivity.shared.clearIfIdle() }
         }
     }

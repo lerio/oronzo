@@ -89,29 +89,25 @@ struct WatchSessionView: View {
             }
         }
         // Only keep the app alive when there is something to keep it alive for.
-        .onChange(of: keepsRunning) { _, _ in syncRuntimeAndCues() }
-    }
-
-    /// Whether there is still a workout to stay awake for.
-    ///
-    /// **Deliberately not "the phone has sent us intervals".** A finished session keeps its
-    /// intervals — the DONE screen is drawn from them, which is why `WatchLink` does not clear
-    /// them — but it has nothing left to do. The extended runtime session is the only thing
-    /// stopping watchOS suspending us, so holding one for a workout that is already over is how
-    /// the watch stayed awake, redrawing at four times a second, for up to an hour after the last
-    /// set. Every way a session can end lands here: finishing runs its course, ending early, and
-    /// the phone clearing the screen.
-    private var keepsRunning: Bool {
-        !link.intervals.isEmpty && !(link.state?.isFinished ?? false)
+        .onChange(of: link.keepsRunning) { _, _ in syncRuntimeAndCues() }
     }
 
     /// Puts the watch in the state the session calls for: awake, and listening for the next cue.
+    ///
+    /// The extended runtime session is the only thing stopping watchOS suspending us, so holding
+    /// one for a workout that is already over is how the watch stayed awake — redrawing, for up to
+    /// an hour after the last set. Every way a session can end lands in `keepsRunning`: finishing
+    /// runs its course, ending early, and the phone clearing the screen.
+    ///
+    /// **The rule itself lives on the link, not here**, because it also bounds the ask: a wrist
+    /// showing nothing, or showing DONE, has nothing to correct and asks once. One rule, two
+    /// questions — see `WatchLink.keepsRunning`.
     private func syncRuntimeAndCues() {
-        runtime.setRunning(keepsRunning)
+        runtime.setRunning(link.keepsRunning)
         // Cheap to call on every wrist raise, and that is the point: it announces once on the spot
         // — which is how a cue missed across a suspension still reaches the wrist — and then works
         // out for itself whether anything is due.
-        if keepsRunning { link.startHaptics() }
+        if link.keepsRunning { link.startHaptics() }
     }
 
     // MARK: - Nothing running
@@ -128,8 +124,30 @@ struct WatchSessionView: View {
                 .font(.system(size: captionSize))
                 .foregroundStyle(ColorRole.muted.color(colorScheme))
                 .multilineTextAlignment(.center)
+            noteView
         }
         .padding(.horizontal, SpacingStep.tight.points)
+    }
+
+    /// The explanation line, drawn wherever there is something to explain.
+    ///
+    /// **On the idle screen too, and that is the whole point of it being one view.** This used to
+    /// live inside `content`, which is only reached when there is a session to draw — so the notes
+    /// that explain an *empty* screen were invisible on the only screen that shows nothing. A
+    /// stale build that cannot read the phone, a phone that never answered, and a phone that never
+    /// started a workout all look identical from the wrist: **"No workout"**. This line is the
+    /// difference between three problems and one, and its absence is why telling them apart has
+    /// cost this project hours, five separate times.
+    @ViewBuilder
+    private var noteView: some View {
+        if let note = link.note ?? runtime.note {
+            Text(note)
+                .font(.system(size: captionSize, weight: .medium))
+                .foregroundStyle(ColorRole.danger.color(colorScheme))
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .minimumScaleFactor(0.8)
+        }
     }
 
     // MARK: - Running
@@ -195,15 +213,9 @@ struct WatchSessionView: View {
             // the wrist is indistinguishable from a phone that never started a workout. The
             // runtime's own note is set when watchOS ended the session itself; the link's is set
             // when this watch cannot read what the phone is sending — which is the stale-build
-            // case `docs/runbook.md` records as costing hours, finally saying so for itself.
-            if let note = link.note ?? runtime.note {
-                Text(note)
-                    .font(.system(size: captionSize, weight: .medium))
-                    .foregroundStyle(ColorRole.danger.color(colorScheme))
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.8)
-            }
+            // case `docs/runbook.md` records as costing hours, finally saying so for itself. The
+            // same view is drawn on the idle screen; see `noteView`.
+            noteView
         }
         .padding(.horizontal, SpacingStep.tight.points)
     }

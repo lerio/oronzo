@@ -63,12 +63,42 @@ final class PhoneConnectivity: NSObject {
     var currentWatchMessage: WatchMessage? {
         if let advertised { return advertised.currentMessage }
 
+        // **A session that exists but has not claimed the link yet is still a session.**
+        //
+        // This is the window between `SessionHost.begin` and the runner's `start`: the controller
+        // exists, the engine holds the whole plan, and nothing has been said to the watch yet.
+        // Answering "nothing running" there is not a harmless gap — it is the phone *telling the
+        // watch there is no workout at the exact moment one is starting*, and that clear goes into
+        // the single-slot application context with the same authority as everything else, where it
+        // can outlive the snapshot that follows it. Measured on paired simulators, this is the
+        // reported bug in the phone's own log:
+        //
+        //     host: began a session for "Demo — Upper Body A"
+        //     answer: nothing running                        ← while the workout was starting
+        //     sent sessionEnded (19 bytes)                   ← written over the watch's screen
+        //     session: started by …
+        //     sent session (7222 bytes)
+        //
+        // A wrist is a screen that says "No workout" until something corrects it, and this is what
+        // put it there. The host is the third source for the same reason the record was the second:
+        // the question is what this phone *knows* is running, and it knows more than the link does.
+        if let controller = host?.controller { return controller.currentMessage }
+
         guard let record = SessionRecordFile.load(), record.isPresentable(at: .now) else { return nil }
         return (record.advanced(to: .now) ?? record).message
     }
 
     /// The live session. `@ObservationIgnored` because it is a back-reference, not UI state.
     @ObservationIgnored private weak var advertised: (any AdvertisedSession)?
+
+    /// The app's session owner — set once, at launch, by `OronzoApp`.
+    ///
+    /// `advertised` is a session that has *claimed the link*, which happens when the runner
+    /// starts. This is the session the app *has*, claimed or not, and the gap between the two is
+    /// where a starting workout was being answered as "nothing running". Weak, like `advertised`:
+    /// a host that goes away cannot leave the link answering on its behalf. `@ObservationIgnored`
+    /// because it is a back-reference rather than state the UI reads.
+    @ObservationIgnored weak var host: SessionHost?
 
     /// What the watch has told us about itself, from the controls it sends.
     ///
@@ -99,7 +129,26 @@ final class PhoneConnectivity: NSObject {
     /// therefore a maintenance instruction rather than an alarm — it says what to do, not that the
     /// workout is in trouble, because it is not: the countdown on this phone is unaffected either
     /// way.
+    /// What the link knows about the watch as a *place to install to*, refreshed whenever the
+    /// session is consulted — both facts move, and neither is available from the watch's side.
+    private(set) var isPaired = false
+    private(set) var isWatchAppInstalled = false
+
     var watchNote: String? {
+        // **The one thing a wrist cannot tell you about itself.** With no watch app installed
+        // there is no process to put a note on, and every other surface looks perfect: the phone
+        // runs the whole workout, the log says exactly what it always says, and the wrist shows
+        // **"No workout"** with dead controls. It is the failure `docs/runbook.md` records as the
+        // most expensive in the project, and it is invisible from both screens at once — so the
+        // phone says it. Drawn only by `SessionRunner`, which is the one screen where a workout is
+        // running and the sentence is worth the ink.
+        //
+        // `isPaired` is required, not decoration: a phone with no watch at all must not be told to
+        // install an app for it.
+        if isPaired, !isWatchAppInstalled, session?.activationState == .activated {
+            return "No Watch app — run the OronzoWatch scheme"
+        }
+
         guard hasHeardFromWatch else { return nil }
         switch WireProtocol.mismatch(watchProtocolVersion) {
         case .some(.peerIsOlder):
@@ -112,6 +161,17 @@ final class PhoneConnectivity: NSObject {
     }
 
     private var session: WCSession?
+
+    /// When the watch's last ask was answered. See `deliver`.
+    private var lastAnsweredAsk: Date?
+
+    /// How close two asks have to be to be one ask arriving twice over.
+    ///
+    /// A queued `transferUserInfo` and a direct `sendMessage` can carry the same ask and land
+    /// together, and the window only has to cover that gap rather than any real repetition: the
+    /// watch's own attempts are five seconds apart at the closest, and a second ask carrying the
+    /// same question has the same answer as the one before it.
+    private static let answerWindow: TimeInterval = 1
 
     private override init() {
         super.init()
@@ -170,7 +230,7 @@ final class PhoneConnectivity: NSObject {
     /// watch happily showing a session that no longer exists. Cheap to send, and idempotent.
     func clearIfIdle() {
         guard !hasActiveSession else { return }
-        send(.sessionEnded)
+        send(.idle(at: .now))
     }
 
     /// Answers the watch with the truth: the session's own message, or "nothing is running".
@@ -190,7 +250,9 @@ final class PhoneConnectivity: NSObject {
         // the log line and the send must not be able to disagree about what was found.
         let message = currentWatchMessage
         Log.debug("answer: \(message == nil ? "nothing running" : "a session")")
-        send(message ?? .sessionEnded)
+        // Dated, so the watch can tell this apart from a clear that was already in flight and
+        // predates the workout it is showing. See `SessionClear`.
+        send(message ?? .idle(at: .now))
     }
 
     func send(_ message: WatchMessage) {
@@ -198,6 +260,8 @@ final class PhoneConnectivity: NSObject {
             Log.debug("send skipped: no session")
             return
         }
+        isPaired = session.isPaired
+        isWatchAppInstalled = session.isWatchAppInstalled
         guard let data = try? WireCodec.encode(message) else {
             Log.debug("send skipped: encode failed")
             return
@@ -227,6 +291,7 @@ final class PhoneConnectivity: NSObject {
     private static func kind(of message: WatchMessage) -> String {
         switch message {
         case .session: "session"
+        case .idle: "idle"
         case .sessionEnded: "sessionEnded"
         }
     }
@@ -307,6 +372,17 @@ extension PhoneConnectivity: WCSessionDelegate {
     /// stopped working".
     private func deliver(_ control: WatchControl) {
         guard control != .requestState else {
+            // **One answer per ask, however many ways the ask arrives.**
+            //
+            // The ask is the one control the watch is willing to pay for twice — a direct message
+            // for speed and a queued transfer for the phone that is not listening — and both can
+            // reach here. Each answer is a whole snapshot pushed to the wrist: a write, a radio
+            // wake and a decode on a battery the size of a thumbnail, saying exactly what the
+            // answer a moment ago already said. The second is dropped; nothing is lost, because a
+            // repeated ask this close is by construction the same question with the same answer.
+            let now = Date()
+            if let last = lastAnsweredAsk, now.timeIntervalSince(last) < Self.answerWindow { return }
+            lastAnsweredAsk = now
             answer()
             return
         }

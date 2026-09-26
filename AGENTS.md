@@ -93,7 +93,7 @@ Full detail in `docs/patterns.md`. The short version:
 ## Commands
 
 ```bash
-cd ios/OronzoCore && swift test      # 151 tests, no simulator or signing — run this first
+cd ios/OronzoCore && swift test      # 202 tests, no simulator or signing — run this first
 cd ios && xcodegen generate          # after editing ios/project.yml or adding files
 cd web && npm run dev                # localhost:5173
 cd web && npm run build              # tsc -b is what catches stale field references

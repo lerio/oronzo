@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { signIn } from '../auth';
+import { errorMessage } from '../lib/errors';
 
 /**
  * There is no sign-up flow on purpose. This app has exactly one user, created by hand in
@@ -19,7 +20,7 @@ export default function Login() {
     try {
       await signIn(email, password);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Sign in failed');
+      setError(errorMessage(err, 'Sign in failed'));
     } finally {
       setBusy(false);
     }

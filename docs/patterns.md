@@ -143,6 +143,24 @@ are stated where they are set — and **both surfaces now draw their clock from 
 exists purely to repaint a countdown. A timeline also stops when it is not on screen, which is the
 half that matters for a phone locked in a pocket.
 
+**A message is not one event, so count deliveries rather than calls.** Every message between the
+two apps is written to the application context *and* sent directly, and on a watch holding an
+extended runtime session both land — so one thing the phone said arrives twice, and the phone
+answers every delivery it receives rather than every ask it was sent. The ask paid for this twice
+over before anyone measured it: one wrist raise cost the watch six radio events against the one it
+was believed to cost (`docs/decisions.md`, 26 September 2026). The rules that came out of it:
+`WatchLink.send` picks exactly one channel on `isReachable` alone, `WatchLink.apply` drops a
+payload identical to the one it just applied, and `PhoneConnectivity.deliver` answers a repeated
+ask once. Before adding traffic here, name what it costs **per delivery, at both ends**.
+
+**And a message that can erase state has to carry enough to be ordered.** The application context
+is a single slot that keeps its value across launches and installs, so the watch can be handed
+something decided *before* what it is showing — which is how a clear meant for a workout that had
+already ended put **"No workout"** on the wrist of the one that replaced it. `WatchMessage.idle`
+carries the instant it was decided and `SessionClear` compares it with the session's start; a
+message that cannot be ordered is never allowed to erase a live screen. Same rule for anything
+destructive added later: **make it comparable, or make it ask.**
+
 **`.rest` parks the loop; it never means "wait and look again".** `SessionSchedule.wake` returns
 either `.at(instant)` or `.rest`, and the second covers a rep interval, a pause, a finished session
 and no session at all. Parking is right for all four because each is moved on by something *outside*

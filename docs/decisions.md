@@ -137,14 +137,105 @@ running"), rather than from a remembered flag. The watch asks when it becomes ac
 activation completes, because those are the two moments it can be sure it is awake — a cold launch
 does not necessarily produce a `scenePhase` change.
 
-This is deliberately **not** a poll. It is a bounded retry, and the bound is the feature: four
-attempts at most over about a minute (`AskSchedule`), cancelled the instant anything is applied, so
-a healthy link costs exactly one extra message and an hour with the phone never reachable costs a
-few hundred at worst — against the 3,600 the four-hertz poll this project already rejected would
-have spent. The watch still renders from the absolute interval list, and the answer is a
-re-anchor, not a heartbeat. It also **always** queues the ask on the durable channel rather than
-only when out of range, because the failure being recovered from is precisely the one where the
-phone looked reachable and was not.
+This is deliberately **not** a poll. It is a bounded retry, and the bound is the feature: cancelled
+the instant anything is applied, so an hour with the phone never reachable costs a few hundred
+messages at worst — against the 3,600 the four-hertz poll this project already rejected would have
+spent. The watch still renders from the absolute interval list, and the answer is a re-anchor, not
+a heartbeat.
+
+### Energy pass and the fifth "No workout", 26 September 2026
+
+An afternoon spent on the report *"I just launched one workout from the app and the watch app still
+shows No workout"*, using paired simulators — which is the first time this project has been able to
+watch the whole link from both ends at once. Three measurements, and the third is the one that
+mattered.
+
+* **An ask went out on two channels, not one.** *"It always queues the ask on the durable channel
+  rather than only when out of range"* was wrong in practice, and expensively so: the durable copy
+  does not replace the direct one — both arrive — and the phone answers *every* delivery it
+  receives, on both channels as well. One wrist raise was therefore **six radio events**, against
+  the single message this section said a healthy link costs. The case the duplicate was covering —
+  the ask dropped while the phone *looked* reachable — is covered twice over without it: the retry
+  asks again at 5, 20 and 65 seconds, and the phone's own `answer()` fires the moment its link
+  finishes activating. `send` now picks exactly one channel, and `isReachable` is the only input.
+* **A duplicate delivery is dropped rather than applied.** Both channels of one push land on a
+  watch that is awake for the whole workout, so a single state change was decoded, applied and
+  re-anchored — a fresh cue loop included — twice. `WatchLink.apply` now ignores a payload
+  identical to the one it applied moments ago, and still stops the retry: the phone has spoken even
+  when it said nothing new.
+* **The retry was briefly cut to one attempt for a wrist showing nothing. That was wrong, and it
+  was put back the same day.** The reasoning was that a wrist with nothing on it has nothing to
+  *correct*. It does have something to *discover*: a workout that has just started, whose single
+  push was missed. The next push is an interval away — or a tap away, on a rep set — and "No
+  workout" that persists for minutes is exactly the failure this mechanism exists to remove. A
+  single shot is not a recovery. The bound is four attempts for every waking, and the cost of being
+  wrong in that direction is bounded, because the extra attempts are only spent when the phone does
+  not answer at all.
+
+**The bug itself was in `PhoneConnectivity.currentWatchMessage`, and it is the same mistake the
+record was introduced to fix, one layer further in.** The link answered from what it had been
+*told* to advertise (set when the runner's `start()` claims it) and then from the record on disk.
+But between `SessionHost.begin` and that claim there is a window where the app has a session, the
+engine holds the whole plan, and the link has been told nothing. An ask landing in that window —
+or `activationDidCompleteWith` firing in it — was answered **"nothing running"**, and that answer
+is a `.sessionEnded` written into the single-slot application context with the same authority as
+everything else. The phone's own log, captured on paired simulators:
+
+```
+host: began a session for "Demo — Upper Body A"
+activation: state=2 reachable=false paired=true watchAppInstalled=true
+answer: nothing running                        ← mid-start, and believed
+sent sessionEnded (19 bytes); reachable=false  ← written over the wrist
+session: started by ObjectIdentifier(…)
+sent session (7222 bytes); reachable=false
+```
+
+The fix is one line of *sourcing* and one of plumbing: `currentWatchMessage` consults the session
+the app **has** (`SessionHost.controller`, handed to the link at launch) before falling back to the
+record. The question is what this phone *knows* is running — which is what the record entry below
+established, and the host is simply where the phone knows it.
+
+**Two legibility fixes came out of the same afternoon, and they may matter more than the traffic
+ones:**
+
+* **The watch draws its explanation line on the idle screen now.** `link.note` and `runtime.note`
+  were rendered only inside `content`, which is reached only when there *is* a session to draw —
+  so the notes that explain an *empty* screen were invisible on the only screen that shows nothing.
+  A stale build that cannot read the phone, a phone that never answered, and a phone that never
+  started a workout were one screen: **"No workout"**. That is why this class of bug has cost hours
+  five times, and it was a two-line fix that should have been made after the first.
+* **An ask nobody answers now says so** — "Your iPhone didn't answer" — and it is only reachable by
+  holding the wrist up for the whole retry, about a minute, because looking away cancels it. It is
+  the difference between a phone that has nothing and a phone that is not listening.
+* **The phone names a missing Watch app** (`No Watch app — run the OronzoWatch scheme`), which is
+  the one failure a wrist cannot report about itself: with no watch app installed there is no
+  process to draw the note.
+
+**A clear now carries the instant it was decided, and the watch checks that against the session on
+screen** (`WatchMessage.idle(at:)`, `SessionClear` in `OronzoCore`, `WireProtocol.current = 2`).
+This is the half that holds even with the root cause unfixed, because the root cause was a *clear
+that contradicted a live screen* and nothing in the protocol could tell.
+
+A clear is the one message that can **erase** what the wrist is showing, and it used to carry
+nothing to order it by — no session, no time — while the application context it arrives in keeps
+its value across launches and installs. So a watch could be handed "nothing is running" that was
+decided *before* the workout it was displaying; the daemon re-delivered exactly that during this
+investigation. One comparison settles every case, with no round trip:
+
+| The clear's instant | Against the session on screen | What the watch does |
+|---|---|---|
+| before it started | cannot be about this session | ignores it, and writes a line saying so |
+| at or after it started | the phone's current word | believes it; the screen goes back to idle |
+| absent — an older phone | unorderable | never erases a live screen; asks the phone instead |
+
+The undated `sessionEnded` is kept so a 1 build still runs, and its behaviour is deliberately the
+conservative one: it can leave a screen up for one more round trip, and it cannot erase a workout
+that is running. That is why the protocol version moved for a change that breaks no session.
+
+**What was deliberately not changed:** the watch still asks, still asks immediately, still reads
+the stored context for free first, and still holds its extended runtime session for the whole of a
+live workout. The recovery this section describes is worth its messages. What it was not worth was
+paying for each of them twice.
 
 The other half of the same decision is on the phone: **only a live session may clear the watch.**
 A `SessionController` advertises itself to `PhoneConnectivity` on `start` and resigns on

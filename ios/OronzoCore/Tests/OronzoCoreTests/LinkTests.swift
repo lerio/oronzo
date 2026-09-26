@@ -87,6 +87,9 @@ final class LinkTests: XCTestCase {
         XCTAssertEqual(back.state, runningState())
     }
 
+    /// The undated clear still decodes, because a phone built before `idle(at:)` exists keeps
+    /// sending it. The watch refuses to obey it against a live screen rather than refusing to read
+    /// it — see `SessionClear`.
     func testSessionEndedRoundTrips() throws {
         let encoded = try WireCodec.encode(WatchMessage.sessionEnded)
 
@@ -95,6 +98,21 @@ final class LinkTests: XCTestCase {
         guard case .sessionEnded = decoded else {
             return XCTFail("sessionEnded came back as something else")
         }
+    }
+
+    /// **The date is the message.** A clear that came back without its instant would be
+    /// indistinguishable from the undated one, on a build that believes it is safe to obey — so
+    /// this asserts the value, not just the case.
+    func testIdleRoundTripsWithItsDate() throws {
+        let clearedAt = t0.addingTimeInterval(90)
+
+        let encoded = try WireCodec.encode(WatchMessage.idle(at: clearedAt))
+        let decoded = try WireCodec.decode(WatchMessage.self, from: encoded)
+
+        guard case .idle(let back) = decoded else {
+            return XCTFail("idle came back as something else")
+        }
+        XCTAssertEqual(back.timeIntervalSince1970, clearedAt.timeIntervalSince1970, accuracy: 0.001)
     }
 
     // MARK: - Tolerance

@@ -130,6 +130,29 @@ export async function deleteExercise(id: string): Promise<void> {
   if (error) throw error;
 }
 
+/**
+ * The names of the plans holding a step that uses this exercise.
+ *
+ * `plan_steps.exercise_id` is ON DELETE RESTRICT, so this answers the same question as "may this
+ * exercise be deleted" — and it is the answer the user needs, because "a plan" is not one they
+ * can act on.
+ *
+ * Reuses `listPlans` rather than writing a new embed: `plan_steps` reaches `plans` through two
+ * joins (block -> plan), and a hand-written PostgREST select string is the most fragile code in
+ * this repo (`AGENTS.md`). One account's plan list is small, so the extra rows cost nothing.
+ *
+ * `plan_steps` is visible through its block and plan under RLS, so a row that blocks a delete is
+ * always one this returns — a referenced exercise cannot be held by a plan you cannot see.
+ */
+export async function plansUsingExercise(exerciseId: string): Promise<string[]> {
+  const plans = await listPlans();
+  return plans
+    .filter((plan) =>
+      plan.blocks.some((block) => block.steps.some((step) => step.exercise_id === exerciseId)),
+    )
+    .map((plan) => plan.name);
+}
+
 export type SessionSummary = {
   id: string;
   plan_name: string;

@@ -2,7 +2,7 @@
 
 ## Where the tests are
 
-**All 192 tests live in `ios/OronzoCore/Tests/OronzoCoreTests/`.** Nothing else in the repository
+**All 202 tests live in `ios/OronzoCore/Tests/OronzoCoreTests/`.** Nothing else in the repository
 has a single automated test — not the iOS app target, not the watch app, not the web app.
 
 ```bash

@@ -41,6 +41,17 @@ final class WatchLink: NSObject {
     private var ask: Task<Void, Never>?
     private var lastMoment: SessionMoment?
     private var lastCountdownSecond: Int?
+    /// The last payload applied, and when. See `apply`, and `duplicateWindow` for why a window.
+    private var lastApplied: (payload: Data, at: Date)?
+
+    /// How close two identical deliveries have to be to be the same one thing the phone said.
+    ///
+    /// A window rather than a bare equality, because the two channels are not synchronised: the
+    /// direct message is immediate and the application context is scheduled by watchOS, so the
+    /// second copy of a push can trail the first by a little. Two seconds is comfortably longer
+    /// than that gap and comfortably shorter than the shortest gap between two *different* pushes,
+    /// which are separated by an interval boundary or a control press.
+    private static let duplicateWindow: TimeInterval = 2
 
     func activate() {
         guard WCSession.isSupported() else {
@@ -74,6 +85,20 @@ final class WatchLink: NSObject {
 
     func interval(at index: Int) -> Interval? {
         intervals.indices.contains(index) ? intervals[index] : nil
+    }
+
+    /// Whether there is a workout to stay awake for — and, in the same breath, whether the wrist
+    /// is showing one that could be wrong.
+    ///
+    /// **Deliberately not "the phone has sent us intervals".** A finished session keeps its
+    /// intervals — the DONE screen is drawn from them, which is why `apply` does not clear them —
+    /// but it has nothing left to do. One rule, two questions, and both of them are this one: the
+    /// view holds an extended runtime session and a cue loop exactly while it is true, and
+    /// `askForState` retries exactly while it is true. A watch showing nothing, or showing DONE,
+    /// costs a message per glance and no more; a watch showing a live workout is worth the retry,
+    /// because its screen is wrong until something corrects it.
+    var keepsRunning: Bool {
+        !intervals.isEmpty && !(state?.isFinished ?? false)
     }
 
     /// Re-reads whatever the phone last sent.
@@ -110,15 +135,21 @@ final class WatchLink: NSObject {
     ///
     /// - **The stored context is read first.** It is local, it is durable, and reading it costs
     ///   nothing — so the cheapest possible recovery is tried before spending a message on one.
-    /// - **The retry is bounded by `AskSchedule`**: four attempts at most, over about a minute.
-    ///   `docs/decisions.md` rules out per-second traffic between these apps for reasons that cost
-    ///   a battery to learn, so the bound is the feature rather than a limitation.
+    /// - **The retry is bounded by `AskSchedule`, and bounded to one attempt unless there is
+    ///   something to correct.** An ask is either a correction ("is this workout I am showing still
+    ///   true?") or a confirmation ("is anything running?"), and a wrist with nothing on it has
+    ///   nothing for a retry to put right — the phone pushes on its own state changes anyway, and
+    ///   the stored context is read again on the next wrist raise. `docs/decisions.md` rules out
+    ///   per-second traffic between these apps for reasons that cost a battery to learn, so the
+    ///   bound is the feature rather than a limitation.
     /// - **The guard that suppressed the ask is gone.** It read
-    ///   `session.isReachable || intervals.isEmpty` — which discards the durable channel for a
-    ///   watch showing *stale non-empty intervals*, which is precisely the watch that needs to
-    ///   ask. It was inverted for the case that matters.
+    ///   `session.isReachable || intervals.isEmpty` — which suppressed the ask for a watch showing
+    ///   *stale non-empty intervals*, precisely the watch that needs to ask. It was inverted for
+    ///   the case that matters.
     ///
-    /// Cancelled the moment anything is applied, so a healthy link still costs exactly one ask.
+    /// Cancelled the moment anything is applied, so a healthy link costs **one message each way**
+    /// and nothing queued — see `send`, which is where the six events a wrist raise used to cost
+    /// were going.
     func askForState(reason: String) {
         refreshFromContext()
 
@@ -132,16 +163,28 @@ final class WatchLink: NSObject {
 
         let began = Date()
         ask = Task { [weak self] in
-            for attempt in 1...AskSchedule.attemptCount {
+            for due in AskSchedule.attempts(from: began) {
                 guard let self, !Task.isCancelled else { return }
-                guard let due = AskSchedule.attempt(attempt, from: began) else { return }
 
                 let delay = due.timeIntervalSinceNow
                 if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
                 guard !Task.isCancelled else { return }
 
-                self.send(.requestState, asking: true)
+                self.send(.requestState)
             }
+
+            // **Falling out of the loop means nobody answered, and that is worth saying.**
+            //
+            // `apply` cancels this task the moment anything arrives, so reaching here means every
+            // attempt went out and the phone said nothing back. That is the state the wrist cannot
+            // otherwise describe: it is showing "No workout" and there is no way to tell a phone
+            // that has nothing from a phone that is not listening — which is the ambiguity that
+            // made this bug cost hours, four times over.
+            //
+            // Bounded by the retry, so this cannot appear at a glance: the wrist has to stay up
+            // for the whole schedule — about a minute — with no answer. Looking away cancels it.
+            guard let self, !Task.isCancelled else { return }
+            self.note = "Your iPhone didn't answer"
         }
     }
 
@@ -151,14 +194,25 @@ final class WatchLink: NSObject {
         ask = nil
     }
 
-    /// Sends a control to the phone.
+    /// Sends a control to the phone, on **exactly one** channel.
     ///
-    /// - Parameter asking: an ask is worth putting on the **durable** channel even when the phone
-    ///   is in range, which is not true of a button press. A press that is dropped is recoverable
-    ///   by pressing again; an ask that is dropped leaves the wrist wrong, and the failure being
-    ///   covered is exactly the one where the phone looked ready and was not — its link not yet
-    ///   activated, so `sendMessage` failed with nobody listening for the error.
-    func send(_ control: WatchControl, asking: Bool = false) {
+    /// Which channel is `isReachable`'s answer and nothing else: a reachable phone is listening
+    /// now, so the direct message is both the fastest and the only one that arrives once; an
+    /// unreachable one is not listening, so the message is queued for when it is.
+    ///
+    /// **A reachable ask used to go out on both, and that was the most expensive thing this link
+    /// did.** The durable copy does not replace the direct one — both arrive — so one ask became
+    /// two messages, and the phone answers every delivery it receives (`PhoneConnectivity.send`
+    /// also uses both channels), so one wrist raise cost the wrist four deliveries back. Six radio
+    /// events for a question asked once, against the single one the ask was believed to cost.
+    ///
+    /// The durable copy was there for the ask that is dropped while the phone *looked* ready — its
+    /// link not yet activated, so `sendMessage` failed with nobody listening for the error. That
+    /// case is covered twice over without it: the retry in `askForState` asks again at 5, 20 and
+    /// 65 seconds, and the phone's own `answer()` fires the moment its link finishes activating.
+    /// A press that is dropped is recoverable by pressing again; an ask that is dropped is
+    /// recovered by the retry. Neither is worth a duplicate on the wire.
+    func send(_ control: WatchControl) {
         guard let session else { return }
 
         var payload: [String: Any] = ["control": control.rawValue]
@@ -169,8 +223,7 @@ final class WatchLink: NSObject {
 
         if session.isReachable {
             session.sendMessage(payload, replyHandler: nil, errorHandler: nil)
-        }
-        if asking || !session.isReachable {
+        } else {
             // Queued for when the phone is next awake, rather than dropped.
             session.transferUserInfo(payload)
         }
@@ -416,6 +469,31 @@ extension WatchLink: WCSessionDelegate {
     }
 
     private func apply(_ data: Data) {
+        // **One thing the phone said costs one application, however many ways it arrives.**
+        //
+        // Every message is written to the application context *and* sent directly
+        // (`PhoneConnectivity.send`), and both land here: the watch app is awake with an extended
+        // runtime session for the whole of a workout, so the context delivery is not deferred to
+        // some later launch. That is two JSON decodes, two assignments that invalidate the view,
+        // and two fresh cue loops for one state the phone reported once. The second is dropped.
+        //
+        // Nothing is lost by dropping it: an identical payload carries no new information, so the
+        // only thing it could still do is re-anchor the cue loop — which `syncRuntimeAndCues` does
+        // on every wrist raise, and the next genuine push does on arrival. Identity with a window
+        // rather than a version number, because the two copies of one push are moments apart and
+        // nothing later repeats an identical payload on purpose.
+        if let last = lastApplied, last.payload == data,
+           Date().timeIntervalSince(last.at) < Self.duplicateWindow {
+            // **Still an answer, though.** This is reached by the common path where nothing has
+            // changed: the watch asks, and the phone replies with the snapshot the watch is
+            // already showing. Dropping the *work* must not drop the *signal* — the retry stops
+            // because the phone has spoken, not because its words were new.
+            stopAsking()
+            Log.debug("dropped a duplicate delivery of the message already applied")
+            return
+        }
+        lastApplied = (data, Date())
+
         guard let message = try? WireCodec.decode(WatchMessage.self, from: data) else {
             // The one failure that leaves no trace at all. A message that cannot be decoded is
             // almost always a wire shape this build does not know — the two apps are installed
@@ -477,15 +555,55 @@ extension WatchLink: WCSessionDelegate {
             startedAt = snapshot.startedAt
             startHaptics()
 
+        case .idle(let clearedAt):
+            // Dated, so it can be ordered against the session on screen — see `SessionClear`. A
+            // clear stamped before that session began is not about it, and obeying one is how a
+            // wrist showing a live workout went back to "No workout" and stayed there.
+            switch SessionClear.decide(
+                clearedAt: clearedAt,
+                showingSince: startedAt,
+                isLive: keepsRunning
+            ) {
+            case .believe:
+                Log.debug("applied idle(at:): clearing")
+                clearScreen()
+            case .stale:
+                // The case that cost five attempts at this bug. Worth a line: it means the phone
+                // said "nothing is running" at a moment when that was true and has since been
+                // overtaken, and the wrist kept the workout it was right to keep.
+                Log.debug("ignored a clear from \(clearedAt) — it predates the session on screen")
+            case .unorderable:
+                // Unreachable for a dated clear, and written out rather than defaulted so that a
+                // change to `SessionClear` cannot silently start clearing screens here.
+                Log.debug("a dated clear was reported unorderable; ignoring it")
+            }
+
         case .sessionEnded:
-            Log.debug("applied sessionEnded: clearing")
-            stopHaptics()
-            intervals = []
-            state = nil
-            planName = nil
-            startedAt = nil
-            finishedAt = nil
-            lastMoment = nil
+            // The undated clear, sent by a phone built before `idle(at:)`. It cannot be ordered,
+            // so it is never allowed to erase a live screen: the watch asks the phone instead,
+            // which is the recovery both apps already trust.
+            switch SessionClear.decide(clearedAt: nil, showingSince: startedAt, isLive: keepsRunning) {
+            case .believe:
+                Log.debug("applied sessionEnded (undated): clearing")
+                clearScreen()
+            case .unorderable:
+                Log.debug("an undated clear arrived while a workout is on screen; asking the phone")
+                askForState(reason: "an undated clear arrived while a workout was on screen")
+            case .stale:
+                break
+            }
         }
+    }
+
+    /// Puts the screen back to idle. Shared by the two clear shapes so they cannot drift apart.
+    private func clearScreen() {
+        note = nil
+        stopHaptics()
+        intervals = []
+        state = nil
+        planName = nil
+        startedAt = nil
+        finishedAt = nil
+        lastMoment = nil
     }
 }

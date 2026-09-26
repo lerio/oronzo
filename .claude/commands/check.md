@@ -14,7 +14,7 @@ Run these, in this order, and stop early only if one fails:
    ```bash
    cd ios/OronzoCore && swift test
    ```
-   Expect 192 tests. A failure here explains most downstream weirdness, so fix it before looking
+   Expect 202 tests. A failure here explains most downstream weirdness, so fix it before looking
    anywhere else.
 
 2. **Web build** — `tsc -b` runs first and is the half that matters: it is what catches a

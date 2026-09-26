@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import ExercisePicker from '../components/ExercisePicker';
 import { getPlan, listExercises, savePlan } from '../lib/api';
+import { errorMessage } from '../lib/errors';
 import {
   INTENSITIES,
   estimatePlanDuration,
@@ -86,7 +87,7 @@ export default function PlanEditor() {
         setExercises(loaded);
         setPlan(isNew ? blankPlan() : (found ?? blankPlan()));
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Could not load plan');
+        if (!cancelled) setError(errorMessage(err, 'Could not load plan'));
       }
     })();
     return () => {
@@ -234,7 +235,7 @@ export default function PlanEditor() {
       setSavedAt(new Date().toLocaleTimeString());
       if (isNew) navigate(`/plans/${savedId}`, { replace: true });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Save failed');
+      setError(errorMessage(err, 'Save failed'));
     } finally {
       setSaving(false);
     }

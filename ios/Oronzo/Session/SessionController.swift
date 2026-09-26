@@ -265,7 +265,10 @@ final class SessionController {
         // that must not clear: a re-created runner would otherwise hand the watch a session and
         // then erase it. Harmless if the session already ended.
         if link.resign(self) {
-            link.send(.sessionEnded)
+            // Dated, so a watch that is somehow still showing this session can tell this clear
+            // from one that predates it — and, more to the point, so a clear that predates a
+            // *newer* session cannot erase it. See `SessionClear`.
+            link.send(.idle(at: .now))
         }
     }
 

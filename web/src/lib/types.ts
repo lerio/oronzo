@@ -135,10 +135,19 @@ export function exerciseSummary(exercise: Exercise): string {
   return parts.join(' · ');
 }
 
+/**
+ * The vocabulary offered when an exercise is created — the two `<select>`s, on the Exercises
+ * page and in the builder's picker. Not a database enum: `exercises.muscle_group` is plain text
+ * with no check constraint (unlike `intensity`), so this list constrains nothing that is already
+ * stored, and a row carrying a group since removed from here still reads and filters fine.
+ *
+ * The first eleven are muscle groups, roughly top to bottom. The last four are not muscles at
+ * all — they answer "what kind of session is this" — so they sit together at the end.
+ */
 export const MUSCLE_GROUPS = [
   'chest', 'back', 'shoulders', 'biceps', 'triceps', 'forearms',
   'quads', 'hamstrings', 'glutes', 'calves', 'core',
-  'full_body', 'cardio', 'mobility',
+  'full_body', 'cardio', 'mobility', 'mindfulness',
 ] as const;
 
 const REST_LABEL = 'Break';

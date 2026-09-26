@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { deletePlan, listExercises, listPlans } from '../lib/api';
+import { errorMessage } from '../lib/errors';
 import {
   estimatePlanDuration,
   flattenPlan,
@@ -22,7 +23,7 @@ export default function Plans() {
         setPlans(p);
         setExercises(e);
       })
-      .catch((err) => setError(err.message))
+      .catch((err) => setError(errorMessage(err, 'Could not load plans')))
       .finally(() => setLoading(false));
   }, []);
 
@@ -32,7 +33,7 @@ export default function Plans() {
       await deletePlan(plan.id);
       setPlans((current) => current.filter((p) => p.id !== plan.id));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Delete failed');
+      setError(errorMessage(err, 'Delete failed'));
     }
   }
 

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { deleteSession, listSessions, type SessionSummary } from '../lib/api';
+import { errorMessage } from '../lib/errors';
 import { formatDuration } from '../lib/types';
 
 export default function History() {
@@ -13,7 +14,7 @@ export default function History() {
   useEffect(() => {
     listSessions()
       .then(setSessions)
-      .catch((err) => setError(err.message))
+      .catch((err) => setError(errorMessage(err, 'Could not load history')))
       .finally(() => setLoading(false));
   }, []);
 
@@ -30,7 +31,7 @@ export default function History() {
       await deleteSession(session.id);
       setSessions((current) => current.filter((s) => s.id !== session.id));
     } catch (err) {
-      setDeleteError(err instanceof Error ? err.message : 'Delete failed');
+      setDeleteError(errorMessage(err, 'Delete failed'));
     }
   }
 

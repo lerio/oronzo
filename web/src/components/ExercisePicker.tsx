@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { createExercise } from '../lib/api';
+import { errorMessage } from '../lib/errors';
 import { MUSCLE_GROUPS, exerciseSummary, type Exercise, type StepMode } from '../lib/types';
 
 interface ExercisePickerProps {
@@ -128,7 +129,7 @@ export default function ExercisePicker({
       onCreated?.(created);
       choose(created);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not create exercise');
+      setError(errorMessage(err, 'Could not create exercise'));
     } finally {
       setSaving(false);
     }
