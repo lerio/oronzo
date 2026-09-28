@@ -557,6 +557,156 @@ final class SessionScreenTests: XCTestCase {
             "Working. Burpee. 14 seconds remaining. hard. Next: Burpee."
         )
     }
+    // MARK: - What the load arrows may adjust
+
+    /// A step with a row behind it, so the two questions — *is there something to adjust* and *is
+    /// there somewhere to save it* — are separable, because the rules differ on each.
+    private func adjustablePlan(
+        sets: Int = 1,
+        mode: StepMode = .reps,
+        weight: Double? = nil,
+        intensity: Intensity? = nil,
+        step: UUID? = UUID()
+    ) -> [Interval] {
+        let plan = Plan(name: "P", blocks: [
+            PlanBlock(name: "Main", steps: [
+                PlanStep(id: step, label: "Bench Press", sets: sets, mode: mode,
+                         duration: mode == .time ? 60 : nil, reps: mode == .reps ? 8 : nil,
+                         targetWeightKg: weight, restAfter: 30, intensity: intensity),
+            ]),
+        ])
+        return PlanFlattener.flatten(plan, exercises: [:])
+    }
+
+    private func screenOf(_ intervals: [Interval], at index: Int, pending: StepLoadEdit? = nil) -> SessionScreen? {
+        SessionPresentation.screen(
+            intervals: intervals, index: index,
+            end: t0.addingTimeInterval(42), isPaused: false, isFinished: false,
+            planName: "P", startedAt: t0, pendingLoadEdit: pending, now: t0
+        )
+    }
+
+    /// A weighted step offers exactly the weight, and the value the arrows move is the number the
+    /// line already draws — the two must not be able to disagree.
+    func testAWeightedStepOffersItsWeight() {
+        let intervals = adjustablePlan(weight: 20)
+
+        let adjust = screenOf(intervals, at: 0)?.adjust
+
+        XCTAssertEqual(adjust?.weightKg, 20)
+        XCTAssertNil(adjust?.intensity)
+        XCTAssertEqual(screenOf(intervals, at: 0)?.weight, "20 kg")
+    }
+
+    /// An effort-only step — the warm-up in the demo plan — offers the effort and no weight.
+    func testAnEffortOnlyStepOffersItsEffort() {
+        let adjust = screenOf(adjustablePlan(mode: .time, intensity: .low), at: 0)?.adjust
+
+        XCTAssertEqual(adjust?.intensity, .low)
+        XCTAssertNil(adjust?.weightKg)
+        XCTAssertTrue(adjust?.intensityIsOnContextLine == true, "one set, so the line carries it")
+    }
+
+    /// **A rest adjusts nothing.** It has no load of its own and no step behind it; both rules
+    /// have to hold, and index 1 of this fixture is the synthetic rest.
+    func testARestOffersNothingToAdjust() {
+        let intervals = adjustablePlan(weight: 20)
+
+        XCTAssertEqual(intervals[1].kind, .rest)
+        XCTAssertNil(screenOf(intervals, at: 1)?.adjust)
+    }
+
+    /// The rule the request states: arrows for an exercise that *has* a weight or an effort. A
+    /// step that declared neither is left alone — nothing here invents a load to move.
+    func testAStepWithNeitherOffersNothingToAdjust() {
+        XCTAssertNil(screenOf(adjustablePlan(), at: 0)?.adjust)
+    }
+
+    /// **No row, no arrows.** A step built in code — a fixture, or a plan off a cache written
+    /// before ids travelled with the intervals — has nowhere to save an adjustment to, so the
+    /// control is not offered rather than being offered and failing. Compare the same step *with*
+    /// an id, which does offer it.
+    func testAStepWithNoRowBehindItOffersNothingToAdjust() {
+        XCTAssertNil(screenOf(adjustablePlan(weight: 20, step: nil), at: 0)?.adjust)
+        XCTAssertNotNil(screenOf(adjustablePlan(weight: 20), at: 0)?.adjust, "the same step, with a row")
+    }
+
+    /// A step with several sets hides its effort from the context line — that precedence is
+    /// deliberate and the arrows do not touch it. What they do instead is draw the effort on a
+    /// line of its own, which is what this flag tells the runner to do.
+    func testEffortIsAdjustableEvenWhenTheSetCountHidesIt() {
+        let adjust = screenOf(adjustablePlan(sets: 3, mode: .time, intensity: .hard), at: 0)?.adjust
+
+        XCTAssertEqual(screenOf(adjustablePlan(sets: 3, mode: .time, intensity: .hard), at: 0)?.context,
+                       "Set 1 of 3", "the set count still wins the line")
+        XCTAssertEqual(adjust?.intensity, .hard, "and the effort is still adjustable")
+        XCTAssertFalse(adjust?.intensityIsOnContextLine == true, "so the runner gives it its own line")
+    }
+
+    /// `contextLabelIsIntensity` is a second expression of a precedence that lives in
+    /// `contextLabel`, so the two are asserted to agree rather than left to be kept in step by
+    /// hand. These are the four things that line can carry.
+    func testTheIntensityFlagAgreesWithWhatTheContextLineActuallySays() {
+        let cases: [[Interval]] = [
+            adjustablePlan(weight: 20),                                  // set count / block name
+            adjustablePlan(mode: .time, intensity: .hard),                // the effort
+            adjustablePlan(sets: 3, mode: .time, intensity: .hard),       // the set count, over an effort
+            adjustablePlan(sets: 2, weight: 20),                          // the set count, over a weight
+        ]
+
+        for intervals in cases {
+            let interval = intervals[0]
+            XCTAssertEqual(
+                interval.contextLabelIsIntensity,
+                interval.contextLabel == interval.intensity?.rawValue,
+                "disagreed on: \(interval.contextLabel ?? "nil") / intensity \(String(describing: interval.intensity))"
+            )
+        }
+    }
+
+    /// The button that saves is drawn by the pending edit alone — and only over the step it is
+    /// about, so a stale edit cannot put "Adjust" under a load it does not describe.
+    func testOnlyAPendingEditAboutThisStepDrawsTheAdjustButton() {
+        let step = UUID()
+        let other = UUID()
+        let intervals = adjustablePlan(weight: 20, step: step)
+        let pending = StepLoadEdit(stepID: step, weightKg: 22.5)
+
+        XCTAssertFalse(screenOf(intervals, at: 0)?.adjust?.isPending == true, "nothing pending yet")
+        XCTAssertTrue(screenOf(intervals, at: 0, pending: pending)?.adjust?.isPending == true)
+        XCTAssertFalse(
+            screenOf(intervals, at: 0, pending: StepLoadEdit(stepID: other, weightKg: 22.5))?
+                .adjust?.isPending == true,
+            "an edit about another step is not this step's"
+        )
+    }
+
+    /// A finished session is over: the runner replaces it with the summary, and nothing on it
+    /// should be offering to save anything.
+    func testAFinishedSessionOffersNothingToAdjust() {
+        let screen = SessionPresentation.screen(
+            intervals: adjustablePlan(weight: 20), index: 0,
+            end: nil, isPaused: false, isFinished: true,
+            planName: "P", startedAt: t0, now: t0
+        )
+
+        XCTAssertNil(screen?.adjust)
+    }
+
+    /// The drawn arrow is a bare number under a chevron, so the spoken one has to say both what is
+    /// being moved and where the tap lands — including the wrap, which is the case a listener
+    /// could not otherwise predict.
+    func testTheArrowLabelsNameTheValueTheTapLandsOn() {
+        let weighted = screenOf(adjustablePlan(weight: 20), at: 0)?.adjust
+        XCTAssertEqual(weighted?.weightLabel(up: true), "Increase weight to 22.5 kg")
+        XCTAssertEqual(weighted?.weightLabel(up: false), "Decrease weight to 17.5 kg")
+        XCTAssertNil(weighted?.intensityLabel(up: true), "there is no effort on this step to move")
+
+        let effort = screenOf(adjustablePlan(mode: .time, intensity: .hard), at: 0)?.adjust
+        XCTAssertEqual(effort?.intensityLabel(up: true), "Increase intensity to low", "the wrap, said")
+        XCTAssertEqual(effort?.intensityLabel(up: false), "Decrease intensity to medium")
+        XCTAssertNil(effort?.weightLabel(up: true))
+    }
 }
 
 // MARK: - S4: the elapsed time must be frozen, not counting up

@@ -316,6 +316,102 @@ final class ExecutionEngineTests: XCTestCase {
         XCTAssertEqual(session.steps.map(\.position), [0, 1])
     }
 
+    // MARK: - Adjusting a step's load mid-session
+
+    /// An interval that came from a `plan_steps` row, which is what an adjustment needs to exist.
+    private func weighted(_ index: Int, step: UUID?, weight: Double, intensity: Intensity? = nil) -> Interval {
+        Interval(
+            index: index, kind: .exercise, name: "Press", mode: .reps, duration: nil,
+            reps: 8, targetWeightKg: weight, setIndex: index + 1, setCount: 3,
+            blockRound: 1, blockRoundCount: 1, blockName: nil, exerciseID: nil,
+            stepID: step, intensity: intensity
+        )
+    }
+
+    /// **The whole point of the feature**: the step is one prescription, so every one of its
+    /// intervals moves — the sets still ahead as much as the one being performed — and a step that
+    /// merely shares the exercise does not.
+    func testACommittedEditMovesEveryIntervalOfItsStepAndNoOther() {
+        let edited = UUID()
+        let untouched = UUID()
+        var engine = ExecutionEngine(intervals: [
+            weighted(0, step: edited, weight: 20),
+            weighted(1, step: edited, weight: 20),
+            rest(2, 60),
+            weighted(3, step: untouched, weight: 50),
+        ])
+        _ = engine.start(at: t0)
+
+        engine.applyLoadEdit(StepLoadEdit(stepID: edited, weightKg: 22.5))
+
+        XCTAssertEqual(engine.intervals.map(\.targetWeightKg), [22.5, 22.5, nil, 50])
+        XCTAssertEqual(engine.intervals[1].stepID, edited, "and it is still the same step")
+    }
+
+    /// An edit is keyed by the step, and an interval with no step is in no step's set — so a rest
+    /// and a step built in code are both left exactly as they were.
+    func testAnEditLeavesSteplessIntervalsAlone() {
+        let step = UUID()
+        var engine = ExecutionEngine(intervals: [
+            weighted(0, step: step, weight: 20),
+            rest(1, 60),
+            weighted(2, step: nil, weight: 30),
+        ])
+        _ = engine.start(at: t0)
+
+        engine.applyLoadEdit(StepLoadEdit(stepID: step, weightKg: 22.5))
+
+        XCTAssertNil(engine.intervals[1].targetWeightKg, "a rest has no load to edit")
+        XCTAssertEqual(engine.intervals[2].targetWeightKg, 30, "a step with no row belongs to no edit")
+    }
+
+    /// A load is not a duration and not a position. Everything the engine tracks about *where the
+    /// session is* — and everything it has already recorded about it — has to survive untouched,
+    /// or an adjustment made in set two would rewrite sets already done.
+    func testAnEditDoesNotMoveTheSessionOrItsRecordedOutcomes() {
+        let step = UUID()
+        var engine = ExecutionEngine(intervals: [
+            weighted(0, step: step, weight: 20),
+            weighted(1, step: step, weight: 20),
+            weighted(2, step: step, weight: 20),
+        ])
+        _ = engine.start(at: t0)
+        _ = engine.advance(at: t0.addingTimeInterval(30))    // set 1 done
+        _ = engine.tick(now: t0.addingTimeInterval(45))      // set 2 running, anchored at 60
+
+        let indexBefore = engine.currentIndex
+        let endBefore = engine.intervalEnd
+        let outcomesBefore = engine.outcomes
+
+        engine.applyLoadEdit(StepLoadEdit(stepID: step, weightKg: 22.5))
+
+        XCTAssertEqual(engine.currentIndex, indexBefore)
+        XCTAssertEqual(engine.phase, .running)
+        XCTAssertEqual(engine.intervalEnd, endBefore, "a load does not move a clock")
+        XCTAssertEqual(engine.outcomes, outcomesBefore, "set 1 is recorded at the load it was done at")
+        XCTAssertEqual(engine.current?.targetWeightKg, 22.5, "and the set in progress has the new one")
+    }
+
+    /// The edit travels the same way everything else the session knows does: into the record, so a
+    /// phone that relaunches mid-workout resumes onto the load it was actually using.
+    func testACommittedEditSurvivesTheRecord() throws {
+        let step = UUID()
+        let planID = UUID()
+        var engine = ExecutionEngine(intervals: [weighted(0, step: step, weight: 20, intensity: .low)])
+        _ = engine.start(at: t0)
+
+        engine.applyLoadEdit(StepLoadEdit(stepID: step, weightKg: 22.5, intensity: .hard))
+        let record = SessionRecord(engine: engine, planID: planID, planName: "P", savedAt: t0)
+
+        let restored = ExecutionEngine(restoring: try WireCodec.decode(
+            SessionRecord.self, from: WireCodec.encode(record)
+        ))
+
+        XCTAssertEqual(restored?.intervals.first?.targetWeightKg, 22.5)
+        XCTAssertEqual(restored?.intervals.first?.intensity, .hard)
+        XCTAssertEqual(restored?.intervals.first?.stepID, step, "still adjustable after a resume")
+    }
+
     // MARK: - End to end
 
     /// "3 x 12 squats, 90s rest", run to completion by tapping through.

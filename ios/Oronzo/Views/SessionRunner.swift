@@ -16,6 +16,12 @@ struct SessionRunner: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
 
+    /// The plans and exercises this session was started from.
+    ///
+    /// Needed for one thing: a committed load adjustment changes a step, and the app's own copy of
+    /// that plan has to change with it. See `.onAppear` below.
+    @Environment(PlanStore.self) private var store
+
     /// **Owned by `SessionHost`, not by this view.** It used to be `@State(initialValue:)`, which
     /// SwiftUI re-evaluates on every re-render — so the view built controllers it threw away, and
     /// four guards grew up around the consequences. A session outlives the screen that started it;
@@ -59,7 +65,18 @@ struct SessionRunner: View {
         // re-render and this has side effects. That much was already true; what is new is that
         // `start` is idempotent, so a reappearing runner re-asserts its session rather than
         // either starting a second one or doing nothing at all.
-        .onAppear { controller.start() }
+        //
+        // The handler alongside it is set here for the same reason and is deliberately a plain
+        // assignment: re-asserting it costs nothing, and a session that outlives this view keeps
+        // whichever closure it was last given — which is what an adjustment saved from a
+        // re-created runner needs.
+        .onAppear {
+            controller.start()
+            // The one thing a saved adjustment has to reach that the controller cannot: the app's
+            // own copy of the plan. Without it the plan list, the plan detail screen and the next
+            // session started in this app run would all still say the old weight.
+            controller.onLoadEditCommitted = { [store] edit in store.applyLoadEdit(edit) }
+        }
         // **The call that was missing.** A session that runs its course or is ended early lands in
         // `controller.completed`, and this is what writes it down; without it the summary promised
         // a history entry forever and the web History page had nothing to read. `SessionLogger` was
@@ -116,6 +133,7 @@ struct SessionRunner: View {
             }
             Spacer(minLength: SpacingStep.roomy.points)
             live(screen)
+            adjustSlot(screen)
             Spacer(minLength: SpacingStep.roomy.points)
             controls(screen)
         }
@@ -179,18 +197,46 @@ struct SessionRunner: View {
             // present: a rest and an unweighted exercise have no weight, and letting the line
             // come and go moved the clock by the same 33pt a one-row name did. A space rather
             // than an empty string — `Text("")` reserves 6px less than a line of real text.
-            Text(screen.weight ?? " ")
-                .font(.system(size: labelSize))
-                .foregroundStyle(ColorRole.muted.color(colorScheme))
-                .lineLimit(1, reservesSpace: true)
-
-            if let label = screen.context {
-                Text(label)
-                    .font(.system(size: labelSize, weight: .semibold))
-                    .textCase(.uppercase)
-                    .tracking(0.8)
+            //
+            // **The one line the arrows change.** A step that prescribes a load gets a chevron
+            // either side of the number; everything else — a rest, a bodyweight movement, a step
+            // with no row behind it — is drawn exactly as it was, spare line and all.
+            if let adjust = screen.adjust, adjust.weightKg != nil {
+                adjustable(
+                    up: adjust.weightLabel(up: true),
+                    down: adjust.weightLabel(up: false),
+                    onUp: { controller.nudgeWeight(up: true) },
+                    onDown: { controller.nudgeWeight(up: false) }
+                ) {
+                    Text(screen.weight ?? " ")
+                        .font(.system(size: labelSize))
+                        .foregroundStyle(ColorRole.muted.color(colorScheme))
+                        .lineLimit(1)
+                }
+            } else {
+                Text(screen.weight ?? " ")
+                    .font(.system(size: labelSize))
                     .foregroundStyle(ColorRole.muted.color(colorScheme))
-                    .padding(.top, SpacingStep.snug.points)
+                    .lineLimit(1, reservesSpace: true)
+            }
+
+            // The effort, where it belongs on this screen: **on the context line when that line is
+            // already carrying it**, and on a line of its own when the set count has taken it.
+            // The precedence is `Interval.contextLabel`'s and is not touched here — a multi-set
+            // step still shows its progress — but the arrows cannot be offered for something that
+            // is not on screen, so that case gets the effort drawn rather than hidden.
+            if let adjust = screen.adjust, adjust.intensity != nil {
+                adjustable(
+                    up: adjust.intensityLabel(up: true),
+                    down: adjust.intensityLabel(up: false),
+                    onUp: { controller.nudgeIntensity(up: true) },
+                    onDown: { controller.nudgeIntensity(up: false) }
+                ) {
+                    // The same word either way, so there is only ever one of these on screen.
+                    contextText(adjust.intensityIsOnContextLine ? screen.context : adjust.intensity?.rawValue)
+                }
+            } else if let label = screen.context {
+                contextText(label)
             }
 
             if let next = screen.next {
@@ -207,6 +253,110 @@ struct SessionRunner: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                     .padding(.top, SpacingStep.roomy.points)
+            }
+        }
+    }
+
+    /// The context line: how much is left to do, or how hard to go.
+    ///
+    /// Extracted so the effort can be drawn here *or* on an adjustable row of its own without the
+    /// two drifting apart — the same text, the same treatment either way.
+    @ViewBuilder
+    private func contextText(_ label: String?) -> some View {
+        if let label {
+            Text(label)
+                .font(.system(size: labelSize, weight: .semibold))
+                .textCase(.uppercase)
+                .tracking(0.8)
+                .foregroundStyle(ColorRole.muted.color(colorScheme))
+                .padding(.top, SpacingStep.snug.points)
+        }
+    }
+
+    /// One value the runner may step, with a chevron either side of it.
+    ///
+    /// The arrows are drawn in `muted`, which is what §2 of the design spec reserves that role for
+    /// — "non-prominent control glyphs" — and the **value keeps the treatment it already had**, so
+    /// an adjustable load looks like the load that was there before. What makes the row readable
+    /// as a control is the chevrons, not a change of colour.
+    ///
+    /// The chevrons are symmetric, so the value stays centred in the row and does not shift
+    /// sideways as an exercise gains or loses its arrows between intervals.
+    private func adjustable<Content: View>(
+        up: String?,
+        down: String?,
+        onUp: @escaping () -> Void,
+        onDown: @escaping () -> Void,
+        @ViewBuilder value: () -> Content
+    ) -> some View {
+        HStack(spacing: SpacingStep.snug.points) {
+            arrow("chevron.left", label: down, action: onDown)
+            value()
+            arrow("chevron.right", label: up, action: onUp)
+        }
+    }
+
+    /// One arrow. The tap target is the full 44pt the platform asks for even though the glyph is
+    /// not — mid-set, one-handed, is exactly when a small target is missed.
+    private func arrow(_ systemName: String, label: String?, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: labelSize, weight: .semibold))
+                .foregroundStyle(ColorRole.muted.color(colorScheme))
+                .frame(width: 44, height: 44)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        // Names the value the tap lands on, not the direction of the arrow: "increase" is what it
+        // does to a load, and it is also the only way a listener learns where the ends wrap to.
+        .accessibilityLabel(label ?? "")
+    }
+
+    /// The Adjust button, and what became of the last attempt.
+    ///
+    /// **Between the figure and the controls, taking its room from the flexible spacer below it.**
+    /// Not in the controls row: four controls do not fit across a 393pt phone, and inserting one
+    /// would move the three that must not move. Not beside the value either, where it would shift
+    /// the number sideways every time it appeared. From here the clock, the name, the load and the
+    /// step controls are all exactly where they were.
+    ///
+    /// It is drawn by the pending edit alone, so saving removes it — and a *failed* save keeps it,
+    /// which is the point: the value is still on screen and the tap is still available.
+    @ViewBuilder
+    private func adjustSlot(_ screen: SessionScreen?) -> some View {
+        if screen?.adjust?.isPending == true {
+            switch controller.loadEditState {
+            case .idle:
+                Button {
+                    controller.commitLoadEdit()
+                } label: {
+                    Text("Adjust")
+                        .font(.system(size: captionSize, weight: .semibold))
+                        .padding(.horizontal, SpacingStep.roomy.points)
+                        .padding(.vertical, SpacingStep.snug.points)
+                }
+                .buttonStyle(.borderedProminent)
+                .buttonBorderShape(.capsule)
+                .padding(.top, SpacingStep.snug.points)
+                .accessibilityHint("Saves this for the next time you do this exercise")
+
+            case .saving:
+                Label("Saving…", systemImage: "arrow.triangle.2.circlepath")
+                    .font(.system(size: captionSize))
+                    .foregroundStyle(ColorRole.muted.color(colorScheme))
+                    .padding(.top, SpacingStep.snug.points)
+
+            case .failed(let message):
+                VStack(spacing: SpacingStep.tight.points) {
+                    Label("Not saved — \(message)", systemImage: "exclamationmark.triangle.fill")
+                        .font(.system(size: captionSize))
+                        .foregroundStyle(ColorRole.danger.color(colorScheme))
+                        .multilineTextAlignment(.center)
+                    Button("Try again") { controller.commitLoadEdit() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                }
+                .padding(.top, SpacingStep.snug.points)
             }
         }
     }
@@ -513,6 +663,19 @@ struct SessionRunner: View {
                 // These strings are longer than the history ones, so they wrap in a narrow column —
                 // and a wrapped `Label` aligns leading by default, which would sit crooked under
                 // the centred title. Same treatment the failure case below already had.
+                .multilineTextAlignment(.center)
+
+        case .unconfirmed:
+            // "Added, not confirmed" rather than either extreme, and both halves are load-bearing.
+            // The app genuinely cannot see the workout the store refused to hand back — Apple
+            // documents that as a save that happened while the phone was locked, and it is also
+            // reported in the field as a write that never happened — so it says what it got. What
+            // was measured is that for this app it is the locked case and the workout *is* there,
+            // which is why this is secondary and not a warning: the failure path above has to stay
+            // the only one that looks like bad news.
+            Label("Added to Apple Health — not confirmed", systemImage: "heart.fill")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
 
         case .failed(let message):

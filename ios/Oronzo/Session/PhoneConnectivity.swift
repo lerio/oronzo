@@ -146,7 +146,19 @@ final class PhoneConnectivity: NSObject {
         // `isPaired` is required, not decoration: a phone with no watch at all must not be told to
         // install an app for it.
         if isPaired, !isWatchAppInstalled, session?.activationState == .activated {
-            return "No Watch app — run the OronzoWatch scheme"
+            // **Names the *phone* scheme, and that is the correction of a costly misdirection.**
+            // This used to say "run the OronzoWatch scheme", which is the second of the two steps
+            // the weekly re-sign prescribes and, on its own, does not fix this: on 28 September 2026
+            // the watch app was installed and running on the wrist while this banner showed, and
+            // WatchConnectivity was refusing every write with `WCErrorCodeSessionNotInstalled`
+            // (7006) because the watch app was not registered as *this* app's companion. Running
+            // OronzoWatch again would have changed nothing — the fix was running the **Oronzo**
+            // scheme to the iPhone, which reinstalls the embedded watch app and repairs the pairing.
+            //
+            // The app cannot tell the two cases apart from here, so it names the step that covers
+            // both: the watch app is embedded in the phone app, so installing the phone app installs
+            // it. There is no state in which this advice is wrong and the old advice was right.
+            return "No Watch app — run the Oronzo scheme to the iPhone"
         }
 
         guard hasHeardFromWatch else { return nil }

@@ -1,6 +1,19 @@
 import Foundation
 import OronzoCore
 
+/// What became of a load adjustment the user has asked to save.
+///
+/// Three states rather than the history save's four, and the missing one is the point: there is no
+/// `saved` state because **a successful save has nothing to say**. The Adjust button is drawn by
+/// the edit being pending, so committing it removes the button — success is the absence of the
+/// control, and the value staying where the user put it. `idle` is therefore "nothing to say",
+/// whether nothing has been tried or the last attempt worked.
+enum LoadEditState: Equatable {
+    case idle
+    case saving
+    case failed(String)
+}
+
 /// Drives a workout: owns the engine, ticks it, and turns engine events into sound, haptics
 /// and published state for the view.
 ///
@@ -25,6 +38,18 @@ final class SessionController {
     /// in when it does.
     private(set) var healthWrite: HealthWriteOutcome = .notAttempted
 
+    /// The load the user has tapped the arrows to but **not yet saved**, if there is one.
+    ///
+    /// Held here and nowhere else — not in the engine, not in the record file, not in the database
+    /// — because until Adjust says so it is not a fact about the session, only about what is on
+    /// screen. Two things follow from that, and both are the behaviour rather than a side effect:
+    /// the Watch sees it (the snapshot is built from the same intervals the screen is), and
+    /// **leaving the step discards it**, which is one assignment in `refreshFromEngine`.
+    private(set) var pendingLoadEdit: StepLoadEdit?
+
+    /// Whether a load edit is being written, and what became of the last one.
+    private(set) var loadEditState: LoadEditState = .idle
+
     /// Whether this session writes itself down. False only for the `-demoSession` fixture, which
     /// must never leave a record behind: a demo record would be picked up by the next real launch
     /// and resume a workout nobody started, which is a new and worse flavour of the confusion this
@@ -42,8 +67,28 @@ final class SessionController {
     /// Read it as: *nobody did this workout, so nothing about it belongs in Health.*
     private let recordsHealth: Bool
 
+    /// Whether this session may write a load adjustment back to the plan.
+    ///
+    /// A **third** flag rather than a reuse of either above, for the same reason the second one
+    /// exists: the three answer three different questions, and one of them differs for exactly one
+    /// case again. `-demoSession` must not write — it runs a realistic plan with no account and no
+    /// backend, and the arrows have to be exercisable in it — so for a fixture the commit folds
+    /// into the engine and reports success without a request ever being made.
+    ///
+    /// This is the guard `docs/known-issues.md` §13 asks for on the history write and that the
+    /// HealthKit write already has: a fixture must not reach production data. A demo's step ids are
+    /// fabricated in a namespace that cannot name a real row, which is the second belt on this.
+    private let savesPlan: Bool
+
     private let audio: WorkoutAudio
     private let health: HealthWorkoutRecorder
+    private let repository = PlanRepository()
+
+    /// Told when a load adjustment has been written, so the app's own copy of the plan can follow
+    /// it. Set by the runner, which is the only thing that holds both this session and the store —
+    /// `applyLoadEdit` is what stops the plan list and the next session in this app run from
+    /// disagreeing with the server. See `PlanStore.applyLoadEdit`.
+    var onLoadEditCommitted: ((StepLoadEdit) -> Void)?
 
     /// Whether this session's outcome has already been offered to Health.
     ///
@@ -65,7 +110,8 @@ final class SessionController {
         audio: WorkoutAudio = WorkoutAudio(),
         health: HealthWorkoutRecorder = HealthWorkoutRecorder(),
         persistsRecord: Bool = true,
-        recordsHealth: Bool = true
+        recordsHealth: Bool = true,
+        savesPlan: Bool = true
     ) {
         self.planID = plan.id
         self.planName = plan.name
@@ -76,6 +122,7 @@ final class SessionController {
         )
         self.persistsRecord = persistsRecord
         self.recordsHealth = recordsHealth
+        self.savesPlan = savesPlan
         // Deliberately nothing here but construction.
         //
         // `SessionRunner` builds this as a `@State(initialValue:)`, and SwiftUI re-evaluates that
@@ -121,6 +168,7 @@ final class SessionController {
         // that writes one and `-demoRecord` is the only demo that does, but a *restored* session
         // is one that was already running when the app went away, so it is always real.
         self.recordsHealth = true
+        self.savesPlan = true
     }
 
     // MARK: - What the view reads
@@ -133,11 +181,26 @@ final class SessionController {
 
     var next: Interval? {
         let index = engine.currentIndex + 1
-        return engine.intervals.indices.contains(index) ? engine.intervals[index] : nil
+        let intervals = displayedIntervals
+        return intervals.indices.contains(index) ? intervals[index] : nil
     }
 
     var position: Int { engine.currentIndex + 1 }
     var totalCount: Int { engine.intervals.count }
+
+    /// The intervals as the user currently has them: the engine's, with any **unsaved** edit applied.
+    ///
+    /// Exactly two things read this — the screen and the snapshot the Watch is sent — and both do,
+    /// because the surfaces must not disagree about what you are about to lift. Reading
+    /// `engine.intervals` directly would show one surface the load the arrows have already moved and
+    /// the other the prescribed one, which is the divergence this whole vocabulary exists to prevent.
+    ///
+    /// The engine keeps the committed value; this only ever overrides it with what is pending, and
+    /// only until Adjust folds it in.
+    private var displayedIntervals: [Interval] {
+        guard let pendingLoadEdit else { return engine.intervals }
+        return pendingLoadEdit.applied(to: engine.intervals)
+    }
 
     /// The shared presentation model.
     ///
@@ -150,7 +213,7 @@ final class SessionController {
     /// while the model wants the engine's 0-based index.
     func screen(at now: Date) -> SessionScreen? {
         SessionPresentation.screen(
-            intervals: engine.intervals,
+            intervals: displayedIntervals,
             index: engine.currentIndex,
             // Paused holds the clock rather than clearing it. `Engine.pause` sets `intervalEnd`
             // to nil and keeps the remainder in `remainingWhenPaused`, so passing `intervalEnd`
@@ -163,8 +226,121 @@ final class SessionController {
             isFinished: isFinished,
             planName: planName,
             startedAt: engine.startedAt,
+            // The pending edit, so `Adjust` is drawn only over the step it is about — the button
+            // and the number above it are then guaranteed to be describing the same change.
+            pendingLoadEdit: pendingLoadEdit,
             now: now
         )
+    }
+
+    // MARK: - Adjusting the current step's load
+
+    /// One tap of a weight arrow. Unsaved, and about the step the user is on.
+    ///
+    /// The edit is seeded from the interval in front of the user, so the arrows start from the
+    /// number on screen — and the edit carries the step's *whole* load, which is what makes an
+    /// adjustment to one set an adjustment to all of them.
+    func nudgeWeight(up: Bool) {
+        guard var edit = editForCurrentStep(), let current = edit.weightKg else { return }
+        edit.weightKg = LoadDial.weight(current, up: up)
+        pendingLoadEdit = edit
+        loadEditState = .idle
+        pushState()
+    }
+
+    func nudgeIntensity(up: Bool) {
+        guard var edit = editForCurrentStep(), let current = edit.intensity else { return }
+        edit.intensity = LoadDial.intensity(current, up: up)
+        pendingLoadEdit = edit
+        loadEditState = .idle
+        pushState()
+    }
+
+    /// The pending edit if there is one, or a fresh one seeded from the step being performed.
+    ///
+    /// Nil when there is nothing to adjust — no current interval, no step row behind it, or no load
+    /// on it. `SessionScreen.Adjust` decides the same question for the *drawing*; this decides it
+    /// for the tap, and the two agreeing is what keeps a drawn arrow from doing nothing.
+    private func editForCurrentStep() -> StepLoadEdit? {
+        if let pendingLoadEdit, let current = engine.current, pendingLoadEdit.applies(to: current) {
+            return pendingLoadEdit
+        }
+        guard let current = engine.current, current.targetWeightKg != nil || current.intensity != nil
+        else { return nil }
+        return StepLoadEdit(interval: current)
+    }
+
+    /// The Adjust tap: writes the pending load to the step it belongs to.
+    ///
+    /// On success the edit stops being pending and becomes part of the session — folded into the
+    /// engine, so the screen, the Watch and the record all keep it, and a resumed session comes
+    /// back to the load that was actually being lifted.
+    ///
+    /// On failure **nothing is discarded**: the value stays on screen with the button, and the
+    /// reason is said out loud. A gym is exactly where the network is bad, and a change the user
+    /// watched themselves make disappearing without a word is the one outcome worse than an error.
+    func commitLoadEdit() {
+        guard let edit = pendingLoadEdit, loadEditState != .saving else { return }
+        loadEditState = .saving
+
+        Task { @MainActor in
+            do {
+                if savesPlan {
+                    try await writeLoad(edit)
+                } else {
+                    // A fixture: the value is real to the session and is never sent anywhere. See
+                    // `savesPlan` — this is what lets `-demoSession` exercise the arrows.
+                    Log.debug("load edit: fixture session, nothing written")
+                }
+                engine.applyLoadEdit(edit)
+                pendingLoadEdit = nil
+                loadEditState = .idle
+                onLoadEditCommitted?(edit)
+                pushState(force: true)
+            } catch {
+                loadEditState = .failed(Self.readable(error))
+            }
+        }
+    }
+
+    /// The one write, with one retry through a renewed session.
+    ///
+    /// Retrying is safe here in a way it is not for the history insert: this writes an absolute
+    /// value to a named row rather than appending one, so a second attempt cannot double anything.
+    private func writeLoad(_ edit: StepLoadEdit) async throws {
+        do {
+            try await repository.updateStepLoad(
+                stepID: edit.stepID, weightKg: edit.weightKg, intensity: edit.intensity
+            )
+        } catch {
+            guard await renewSession() else { throw error }
+            Log.debug("load edit: retrying after renewing the session")
+            try await repository.updateStepLoad(
+                stepID: edit.stepID, weightKg: edit.weightKg, intensity: edit.intensity
+            )
+        }
+    }
+
+    /// True when the session was renewed, so another attempt is worth making. The same shape as
+    /// `PlanStore.refresh`'s: a signed-out app has no session to renew, and that is `AuthStore`'s
+    /// state to report rather than this one's to retry.
+    private func renewSession() async -> Bool {
+        guard Backend.client.auth.currentSession != nil else { return false }
+        do {
+            try await Backend.client.auth.refreshSession()
+            return true
+        } catch {
+            Log.debug("load edit: could not renew the session: \(error)")
+            return false
+        }
+    }
+
+    /// The SDK's own words for a refused write are unreadable, and this one has a cause worth
+    /// naming instead. Everything else is passed through as it came, the same as the history save.
+    private static func readable(_ error: Error) -> String {
+        if error is PlanWriteError { return error.localizedDescription }
+        Log.debug("load edit failed: \(error.localizedDescription)")
+        return error.localizedDescription
     }
 
     // MARK: - Lifecycle
@@ -207,7 +383,7 @@ final class SessionController {
         // Deliberately ignoring the returned event: a beep the instant you press Start
         // would be noise, not information.
         _ = engine.start(at: .now)
-        refreshClocks()
+        refreshFromEngine()
         startTicking()
 
         // The watch gets the whole plan, so it can keep counting and buzzing even if this
@@ -275,7 +451,7 @@ final class SessionController {
     func pause() {
         guard isRunning else { return }
         _ = engine.pause(at: .now)
-        refreshClocks()
+        refreshFromEngine()
         // The clock is held, so nothing is due until someone resumes. Leaving the ticker running
         // would be a loop that wakes, finds nothing to do, and sleeps again for as long as the
         // session stays paused.
@@ -286,7 +462,7 @@ final class SessionController {
     func resume() {
         guard isPaused else { return }
         _ = engine.resume(at: .now)
-        refreshClocks()
+        refreshFromEngine()
         pushState()
         rearmTicking()
     }
@@ -295,7 +471,7 @@ final class SessionController {
     func advance(skipped: Bool = false) {
         guard !isFinished else { return }
         handle(engine.advance(at: .now, skipped: skipped))
-        refreshClocks()
+        refreshFromEngine()
         pushState()
         rearmTicking()
     }
@@ -303,7 +479,7 @@ final class SessionController {
     func goBack() {
         guard !isFinished else { return }
         _ = engine.goBack(at: .now)
-        refreshClocks()
+        refreshFromEngine()
         pushState()
         rearmTicking()
     }
@@ -405,7 +581,7 @@ final class SessionController {
     private func tick() {
         guard isRunning else { return }
         handle(engine.tick(now: .now))
-        refreshClocks()
+        refreshFromEngine()
         fireCountdownCue()
         // Only sends when something actually changed, so this is not 10 messages a second.
         pushState()
@@ -481,8 +657,25 @@ final class SessionController {
         }
     }
 
-    private func refreshClocks() {
+    private func refreshFromEngine() {
         remaining = engine.remaining(at: .now)
+        discardPendingLoadEditIfMoved()
+    }
+
+    /// **Leaving the step throws the unsaved edit away**, which is the whole of "Adjust is the only
+    /// commit". Everything that can move the session calls `refreshFromEngine`, so this is where a
+    /// path added later is covered too, rather than a call that has to be remembered in each one.
+    ///
+    /// It compares *steps*, not indices: moving between two sets of the same exercise is not
+    /// leaving anything, and an edit made on set two has to survive into set three — that is what
+    /// the feature is.
+    private func discardPendingLoadEditIfMoved() {
+        guard let pendingLoadEdit, let current = engine.current,
+              !pendingLoadEdit.applies(to: current)
+        else { return }
+        Log.debug("load edit: left the step without saving; the edit is discarded")
+        self.pendingLoadEdit = nil
+        loadEditState = .idle
     }
 
     /// Beeps on each of the last three seconds of a timed interval. A rep interval has no
@@ -535,6 +728,12 @@ final class SessionController {
     /// is the point — only the authorization *sheet* needs the foreground, not the write.
     private func complete(with session: CompletedSession) {
         completed = session
+        // An unsaved edit does not outlive the workout it was made in. Nothing reads it after this
+        // — the runner is replaced by the summary — but leaving it set would make that a fact about
+        // today's screens rather than about the edit, and the rule the arrows follow is that a load
+        // is pending only while the user is on the step they changed.
+        pendingLoadEdit = nil
+        loadEditState = .idle
         writeToHealth(session)
     }
 
@@ -562,8 +761,10 @@ final class SessionController {
         // answers, whenever that is.
         Task {
             do {
-                try await health.record(workout)
-                healthWrite = .written
+                // What the store confirmed, rather than a bare success: a locked phone finishes the
+                // workout without handing it back, and that is not the same answer as a workout the
+                // store returned. See `HealthWriteOutcome.unconfirmed`.
+                healthWrite = try await health.record(workout)
             } catch {
                 // The one state that means something went wrong on the phone rather than in the
                 // rule, so it carries the reason rather than a bare failure.
@@ -594,7 +795,7 @@ extension SessionController: AdvertisedSession {
         .session(
             SessionSnapshot(
                 planName: planName,
-                intervals: engine.intervals,
+                intervals: displayedIntervals,
                 startedAt: engine.startedAt ?? .now,
                 state: currentState
             )

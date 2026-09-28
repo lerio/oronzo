@@ -80,8 +80,28 @@ private struct RootView: View {
                     // down. It runs the full-length `DemoPlan.make()`, so the three-minute bar
                     // does not filter it, and a Health entry would outlive the phone: it would be
                     // a workout nobody did, sitting in the Fitness app, deleted by hand.
-                    recordsHealth: false
+                    recordsHealth: false,
+                    // And nothing about it goes to the **plan** either. The runner's arrows need a
+                    // demo to exercise them, so a fixture folds a load adjustment into its own
+                    // session and reports it saved without sending anything — a real plan's step
+                    // would otherwise be edited by a launch argument. See `SessionController.savesPlan`.
+                    savesPlan: false
                 )
+                // The adjust walkthrough, if it was asked for. Debug-only, like everything above
+                // it, and outside `begin` because the session has to exist before it can be nudged.
+                // See `DemoPlan.wantsAdjustWalkthrough` for why this route is the only one.
+                if DemoPlan.wantsAdjustWalkthrough, let running = session.controller {
+                    Task { @MainActor in
+                        // Onto the bench press — the demo's first weighted step, two intervals in.
+                        try? await Task.sleep(for: .seconds(2))
+                        running.advance()
+                        try? await Task.sleep(for: .seconds(2))
+                        running.nudgeWeight(up: true)
+                        // Long enough to look at the pending state, then the save that removes it.
+                        try? await Task.sleep(for: .seconds(4))
+                        running.commitLoadEdit()
+                    }
+                }
                 await auth.restore()
                 return
             }

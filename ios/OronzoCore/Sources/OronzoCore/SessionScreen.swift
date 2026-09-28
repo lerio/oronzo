@@ -73,6 +73,50 @@ public struct SessionScreen: Equatable, Sendable {
         }
     }
 
+    /// What the runner may adjust on this interval, or `nil` when there is nothing to adjust.
+    ///
+    /// **This is what could be adjusted, not what the surface offers.** The Watch draws from this
+    /// same model and offers no arrows at all — a 41 mm screen mid-set is where a workout is read,
+    /// not where a load is authored. The flags are here rather than in the phone's view because
+    /// the rules they encode are about the *interval*, and those rules are what this model exists
+    /// to state once.
+    public struct Adjust: Equatable, Sendable {
+
+        /// The load the weight arrows step, when the step prescribes one. The number drawn is
+        /// `weight` above; this is the same value as a number, because a tap has to do arithmetic
+        /// on it.
+        public let weightKg: Double?
+        /// The effort the effort arrows cycle, when the step prescribes one.
+        public let intensity: Intensity?
+        /// Whether `context` above is where the effort is drawn, so the arrows flank that line
+        /// rather than adding one of their own. See `Interval.contextLabelIsIntensity`.
+        public let intensityIsOnContextLine: Bool
+        /// Whether an edit is waiting to be saved. **This alone draws the Adjust button** — the
+        /// arrows are always there for a step that has something to adjust, and Adjust appears
+        /// only once there is something to commit.
+        public let isPending: Bool
+
+        /// Spoken labels for the arrows, in the value the other end of the tap produces.
+        ///
+        /// The drawn form is a bare number under a chevron, so the control has to say what the
+        /// number is and where the tap lands — the same asymmetry as the rep unit and the state
+        /// word, where the drawn form is compressed for a small screen and the spoken form is
+        /// written to be heard. Nil for a field this interval does not adjust.
+        public func weightLabel(up: Bool) -> String? {
+            guard let weightKg else { return nil }
+            let next = LoadDial.weight(weightKg, up: up)
+            let verb = up ? "Increase" : "Decrease"
+            return "\(verb) weight to \(MeasurementFormat.weight(next) ?? "")"
+        }
+
+        public func intensityLabel(up: Bool) -> String? {
+            guard let intensity else { return nil }
+            let next = LoadDial.intensity(intensity, up: up)
+            let verb = up ? "Increase" : "Decrease"
+            return "\(verb) intensity to \(next.rawValue)"
+        }
+    }
+
     public let stateWord: StateWord
     public let name: String
     /// `nil` where there is genuinely nothing to count — the view shows an em dash rather than
@@ -88,6 +132,9 @@ public struct SessionScreen: Equatable, Sendable {
     /// The set/round progress line, or the block name when there is no progress to report.
     public let context: String?
     public let next: Next?
+    /// What this interval offers to adjust. Nil on a rest, on a step with neither a weight nor an
+    /// effort, and on a step that has no `plan_steps` row to write to.
+    public let adjust: Adjust?
     /// Whether a pause control applies to this screen.
     ///
     /// Pause is a statement about a clock, so it is offered only where there is one to stop —
@@ -159,6 +206,7 @@ public enum SessionPresentation {
         planName: String?,
         startedAt: Date?,
         finishedAt: Date? = nil,
+        pendingLoadEdit: StepLoadEdit? = nil,
         now: Date
     ) -> SessionScreen? {
         guard intervals.indices.contains(index) else { return nil }
@@ -241,6 +289,7 @@ public enum SessionPresentation {
             weight: interval.weightDisplay,
             context: interval.contextLabel,
             next: nextLine,
+            adjust: adjust(of: interval, isFinished: isFinished, pending: pendingLoadEdit),
             allowsPause: !isFinished && (isPaused || interval.advancesAutomatically),
             accessibilityAnnouncement: announcement(
                 stateWord: stateWord,
@@ -250,6 +299,41 @@ public enum SessionPresentation {
                 progress: progress(of: interval),
                 next: nextLine
             )
+        )
+    }
+
+    /// What the runner may adjust here, or nil when nothing about this interval is adjustable.
+    ///
+    /// Three ways to be nil, and each is a real case rather than a guard for safety's sake:
+    ///
+    /// * **A rest** has no load of its own and no step behind it. It falls out of the two rules
+    ///   below rather than needing a `kind` test.
+    /// * **Nothing prescribed** — a hold, a bodyweight movement, a step nobody wrote a load for.
+    ///   This is the rule the request states: the arrows are for an exercise that *has* a weight
+    ///   or an effort. Nothing here invents one for a step that declared none.
+    /// * **No `plan_steps` row** — a step built in code, or a plan off a cache written before ids
+    ///   travelled with the intervals. There is nowhere to save an adjustment to, so offering the
+    ///   control would be offering a tap that cannot work. `docs/known-issues.md` §4's rule holds:
+    ///   what a missing field costs here is the arrows, not the workout.
+    ///
+    /// A finished session offers nothing: it is over, and the runner replaces this screen with the
+    /// summary anyway.
+    private static func adjust(
+        of interval: Interval,
+        isFinished: Bool,
+        pending: StepLoadEdit?
+    ) -> SessionScreen.Adjust? {
+        guard !isFinished, interval.stepID != nil else { return nil }
+        guard interval.targetWeightKg != nil || interval.intensity != nil else { return nil }
+
+        return SessionScreen.Adjust(
+            weightKg: interval.targetWeightKg,
+            intensity: interval.intensity,
+            intensityIsOnContextLine: interval.contextLabelIsIntensity,
+            // Only the step in front of the user. An edit left pending on the previous step is
+            // already discarded by the controller — this is what keeps the button from being
+            // drawn over a load it is not about, whatever the caller passes in.
+            isPending: pending?.applies(to: interval) == true
         )
     }
 

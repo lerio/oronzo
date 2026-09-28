@@ -63,7 +63,12 @@ public enum EngineEvent: Equatable, Sendable {
 ///    has no known length, so it has no end date and `tick` deliberately passes through it.
 public struct ExecutionEngine: Sendable {
 
-    public let intervals: [Interval]
+    /// The interval stream, flattened once at construction — with one exception, below.
+    ///
+    /// Positions are identity here (`Interval.id` is its index, and `outcomes` is keyed by it), so
+    /// nothing may ever insert, remove or reorder. The only thing that changes this array is a
+    /// load edit, which replaces intervals *in place* and leaves every index where it was.
+    public private(set) var intervals: [Interval]
     public private(set) var currentIndex: Int = 0
     public private(set) var phase: Phase = .idle
     /// Absolute end of the current interval. `nil` while paused, or on a rep interval.
@@ -301,6 +306,26 @@ public struct ExecutionEngine: Sendable {
     @discardableResult
     public mutating func abandon(at now: Date) -> CompletedSession {
         close(.abandoned, at: now)
+    }
+
+    // MARK: - The one thing that changes the interval list
+
+    /// Folds a committed load edit into the stream: every interval the edit is about is replaced,
+    /// and nothing else moves.
+    ///
+    /// **A committed edit lives here rather than beside the engine**, because everything a session
+    /// shows or keeps is derived from these intervals — the screen, the snapshot the Watch is sent,
+    /// and the record written on every change. One home means the phone, the wrist and a resumed
+    /// session cannot end up describing three different workouts.
+    ///
+    /// What it deliberately does **not** touch: `currentIndex`, `phase`, `intervalEnd` and
+    /// `outcomes`, all of which are keyed by or about positions, and no position moves. A load is
+    /// not a duration, so nothing about the schedule changes either.
+    ///
+    /// This is for the *committed* value. An edit the user has tapped arrows at but not yet saved
+    /// is held by `SessionController` and never reaches the engine — see that type for why.
+    public mutating func applyLoadEdit(_ edit: StepLoadEdit) {
+        intervals = edit.applied(to: intervals)
     }
 
     /// Ends the session normally, marking anything not reached. Production reaches

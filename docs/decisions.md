@@ -207,9 +207,10 @@ ones:**
 * **An ask nobody answers now says so** — "Your iPhone didn't answer" — and it is only reachable by
   holding the wrist up for the whole retry, about a minute, because looking away cancels it. It is
   the difference between a phone that has nothing and a phone that is not listening.
-* **The phone names a missing Watch app** (`No Watch app — run the OronzoWatch scheme`), which is
-  the one failure a wrist cannot report about itself: with no watch app installed there is no
-  process to draw the note.
+* **The phone names a missing Watch app** (`No Watch app — run the Oronzo scheme to the iPhone`),
+  which is the one failure a wrist cannot report about itself: with no watch app installed there is
+  no process to draw the note. **It used to name the OronzoWatch scheme, and that was the wrong half
+  of the pair** — see [A watch app that was installed and not installed](#a-watch-app-that-was-installed-and-not-installed).
 
 **A clear now carries the instant it was decided, and the watch checks that against the session on
 screen** (`WatchMessage.idle(at:)`, `SessionClear` in `OronzoCore`, `WireProtocol.current = 2`).
@@ -243,6 +244,46 @@ A `SessionController` advertises itself to `PhoneConnectivity` on `start` and re
 runner whose view SwiftUI re-created cannot erase a newer session's snapshot on its way out. The
 reference is weak, so a controller that is deallocated without a `teardown` cannot leave the link
 believing a workout is still running.
+
+## A watch app that was installed and not installed
+
+**28 September 2026.** The sixth "No workout", and the first one that was not a bug in this codebase
+at all — it was an install state, and the phone's own advice pointed away from the fix.
+
+What the wrist and the phone said:
+
+| Surface | What it showed |
+|---|---|
+| The iPhone | `No Watch app — run the OronzoWatch scheme` |
+| The Watch | `No workout` · `Your iPhone didn't answer` |
+
+`xcrun devicectl device info apps` showed `com.lerio.oronzo.watchkitapp` **installed on the watch**,
+and running. So the banner was not lying about a missing app — and the phone's log said what it
+actually meant:
+
+```
+activation: state=2 reachable=false paired=true watchAppInstalled=false error=none
+updateApplicationContext failed: WCErrorDomain Code=7006 "Watch app is not installed."
+```
+
+`watchAppInstalled=false` with the app present means the watch app is **not registered as *this*
+phone app's companion**. WatchConnectivity refuses every write with 7006, so nothing is ever sent and
+the wrist can only say it was never answered. Both screens are describing the same one fact.
+
+**The misdirection, which is the part worth keeping.** The banner named the **OronzoWatch** scheme.
+That is step 2 of the weekly re-sign and, on its own, cannot fix this: the watch app is embedded in
+the phone app, and it is installing *the phone app* that registers the companion relationship.
+Running OronzoWatch again would have reinstalled a watch app that was already there. The banner now
+names the **Oronzo** scheme to the iPhone, which covers both cases — the app cannot tell "not
+installed" from "installed but not paired", and installing the phone app fixes either.
+
+**How it was actually fixed.** Running the **Oronzo** scheme to the iPhone — the same visit that
+reinstalls the embedded watch app. It has not recurred.
+
+**What is not known.** *Why* the relationship was broken. The watch app was installed at some point
+without its companion being registered, and the likeliest route is a watch-scheme install that ran
+without the phone app being reinstalled alongside it — which is a hypothesis, not a finding. What is
+established is the state, the refusal code, and the step that repairs it.
 
 ## The session is written down, and `advertised != nil` was never the same question
 
@@ -300,7 +341,7 @@ which needed no lifting at all:** it was not true when it was written. See
 
 | Constraint | Consequence |
 |---|---|
-| ~~**No HealthKit** (signing fails on a personal team)~~ — **never was true** | HealthKit signs; the phone records finished workouts to Apple Health. What remains is that there is **no `HKWorkoutSession`**. The Watch stays alive via `WKExtendedRuntimeSession` with `WKBackgroundModes = [physical-therapy]` — a 1-hour cap, and **workouts do not close your Activity rings**. |
+| ~~**No HealthKit** (signing fails on a personal team)~~ — **never was true** | HealthKit signs; the phone records finished workouts to Apple Health. What remains is that there is **no `HKWorkoutSession`**. The Watch stays alive via `WKExtendedRuntimeSession` with `WKBackgroundModes = [physical-therapy]` — a 1-hour cap. ~~and **workouts do not close your Activity rings**~~ — **also never was true**, and measured so on 28 September 2026: a saved workout **does** move the Exercise ring. See [Twice, the same mistake](#twice-the-same-mistake). |
 | **No App Groups** | No shared container between iPhone and Watch. All data moves over WatchConnectivity. |
 | **No TestFlight** | Install from Xcode only. |
 | **Profiles expire every 7 days** | Re-run from Xcode weekly. See `runbook.md`. |
@@ -336,9 +377,10 @@ com.apple.developer.healthkit.access = [health-records]
 account is not required to write to Apple Health.**
 
 **What this settles, and what it does not.** It settles signing, and nothing else. The Watch's
-extended runtime session, its one-hour cap, and the absent Activity ring credit are all still in
-place — those follow from having no `HKWorkoutSession`, which is a separate decision. This entry
-exists so that the *next* person does not repeat the assumption, not to reopen the Watch runtime.
+extended runtime session, its one-hour cap, and ~~the absent Activity ring credit~~ are all still in
+place — the cap follows from having no `HKWorkoutSession`, which is a separate decision, and ring
+credit turned out not to follow from it at all. This entry exists so that the *next* person does not
+repeat the assumption, not to reopen the Watch runtime.
 
 ### The recording that follows from it
 
@@ -364,8 +406,59 @@ Two consequences worth stating plainly, because they are visible:
   wall-clock start and end, and a session with a long pause in it is recorded as longer than the
   work it contained.
 - **No heart rate and no active energy.** Oronzo measures neither, and writing invented ones would
-  be worse than writing none. Whether a saved workout earns Exercise ring credit is therefore
-  *unverified* until it has been checked on the phone — see `docs/known-issues.md`.
+  be worse than writing none. It was assumed this also meant **no Exercise ring credit** — untested,
+  and wrong: see [Twice, the same mistake](#twice-the-same-mistake).
+
+### Twice, the same mistake
+
+**Both of the constraints this file listed as consequences of having no `HKWorkoutSession` were
+assumed, and neither was tested. Both were false.**
+
+| Claim | Where it was written | What was true |
+|---|---|---|
+| "HealthKit will not sign on a free personal team" | This file, `AGENTS.md`, `README.md`, `ios/OronzoWatch/Info.plist`, `WatchRuntime.swift` | It signs. A throwaway target produced a profile carrying `com.apple.developer.healthkit`, and `com.lerio.oronzo` followed. |
+| "Workouts do not close your Activity rings" | This file, `AGENTS.md`, `docs/prd/0001-…` | They do. A saved workout moved the Exercise ring, measured on 28 September 2026. |
+
+The first was caught by testing it. The second survived **because** the first was fixed — the
+paragraph above kept asserting it under a heading about not asserting things, and the claim was
+carried forward into `AGENTS.md` and the PRD on the strength of its being written down.
+
+That is the pattern worth naming: **a constraint that reads as a consequence of another constraint
+is never re-examined when the first one falls.** The ring claim looked like it followed from "no
+`HKWorkoutSession`", so nobody asked it separately. It does not follow: HealthKit derives ring
+credit from the saved workout itself.
+
+What *is* still true, and still untested, is the one-hour `WKExtendedRuntimeSession` cap — which the
+Watch has not yet hit in use.
+
+## Adjusting a load mid-workout: one row, and no way for a fixture to reach it
+
+The runner's load arrows write `plan_steps.target_weight_kg` / `intensity` for the step being
+performed. Four things about that were decided rather than fallen into.
+
+**One row, not `save_plan`.** There are exactly two ways a step's load can change, and the other one
+is the wrong tool twice over: `save_plan` replaces the whole tree, so it mints new block and step
+ids — invalidating the very id the running session is holding — and it would write back a plan the
+web builder may have changed since the session started. A narrow `PATCH` needs no new SQL: the
+`for all` policy and the `update` grant on `plan_steps` both date from `0001`.
+
+**An empty echo is a failure.** PostgREST answers a `PATCH` that matched no rows with `200` and `[]`,
+which is what both a stale step id and an RLS-refused row look like from the client. Without checking
+the response the runner would report a save that went nowhere. It is reported as *"this plan changed
+elsewhere"*, and the stale id is the likelier cause by a distance — every web save mints new ones.
+
+**The interval carries its step id, and the id is optional.** `SessionRecord` holds the interval list
+and nothing else, so a map kept beside the session would be lost on relaunch — and a resumed workout
+is exactly the one you are standing in a gym wanting to adjust. Optional because `Interval` is
+`Codable`, rides to the Watch whole, and is cached to disk, so a snapshot written by an older build
+has to decode: the rule `docs/integration-contracts.md` states and `Interval.intensity` set.
+
+**A fixture cannot reach the write, for the third time.** `savesPlan` joins `persistsRecord` and
+`recordsHealth` — one flag each, because the three answer different questions and one of them differs
+again for exactly one case. `docs/known-issues.md` §13 records that the *history* write is kept out
+of production only incidentally, by the app happening to be signed out; this write does not repeat
+that. For a fixture the commit folds into the session and reports success without sending anything,
+which is also what makes the arrows exercisable by `-demoSession -demoAdjust` with no account.
 
 ## The Lock Screen surface: built, and removed
 

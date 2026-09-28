@@ -44,7 +44,8 @@ final class SessionHost {
         plan: Plan,
         exercises: [UUID: ExerciseInfo],
         persistsRecord: Bool = true,
-        recordsHealth: Bool = true
+        recordsHealth: Bool = true,
+        savesPlan: Bool = true
     ) -> SessionController {
         if let controller, controller.planID == plan.id { return controller }
 
@@ -54,7 +55,8 @@ final class SessionHost {
             plan: plan,
             exercises: exercises,
             persistsRecord: persistsRecord,
-            recordsHealth: recordsHealth
+            recordsHealth: recordsHealth,
+            savesPlan: savesPlan
         )
         controller = started
         Log.debug("host: began a session for \"\(plan.name)\"")

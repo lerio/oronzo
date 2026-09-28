@@ -120,6 +120,32 @@ final class SessionRecordTests: XCTestCase {
         XCTAssertEqual(back.intervals.first?.name, "Work 0", "the rest of the interval survives")
     }
 
+    /// `stepID`'s tolerance is the same inherited one, and it is the field that matters most for
+    /// it: a record is what a relaunched app resumes from, so a build that added the field has to
+    /// read a file written before it existed. Nil there costs the load arrows and nothing else.
+    func testAnIntervalInARecordWithNoStepIDStillDecodes() throws {
+        let step = UUID()
+        var engine = ExecutionEngine(intervals: [
+            Interval(
+                index: 0, kind: .exercise, name: "Press", mode: .reps, duration: nil,
+                reps: 8, targetWeightKg: 20, setIndex: 1, setCount: 1,
+                blockRound: 1, blockRoundCount: 1, blockName: nil, exerciseID: nil, stepID: step
+            ),
+        ])
+        _ = engine.start(at: t0)
+
+        let encoded = try WireCodec.encode(record(engine))
+        let stripped = try JSONSerialization.data(
+            withJSONObject: removing("stepID", from: try JSONSerialization.jsonObject(with: encoded))
+        )
+
+        let back = try WireCodec.decode(SessionRecord.self, from: stripped)
+
+        XCTAssertNil(back.intervals.first?.stepID, "an absent step id reads as absent, not as an error")
+        XCTAssertEqual(back.intervals.first?.targetWeightKg, 20, "the load itself survives")
+        XCTAssertEqual(back.intervals.first?.name, "Press")
+    }
+
     // MARK: - Restoring, and what is refused
 
     /// A record with no intervals can only arrive from a file, never from an engine — so this

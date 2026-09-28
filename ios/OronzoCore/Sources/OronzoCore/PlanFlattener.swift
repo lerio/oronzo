@@ -159,8 +159,10 @@ public enum PlanFlattener {
         exercises: [UUID: ExerciseInfo]
     ) -> Interval {
         // The side rides in the name rather than in a field of its own: `Interval` is `Codable`
-        // and shipped whole in every snapshot to the watch, so a new field would fail to decode
-        // the ones already in flight — which shows up as a silent "No workout" on the wrist.
+        // and shipped whole in every snapshot to the watch, so a new **required** field would fail
+        // to decode the ones already in flight — which shows up as a silent "No workout" on the
+        // wrist. `stepID` below is a new field of the kind that is allowed: optional, so a snapshot
+        // written before it existed decodes without it.
         let base = name(for: step, exercises: exercises)
         let name = side.map { "\(base) (\($0))" } ?? base
 
@@ -178,6 +180,9 @@ public enum PlanFlattener {
             blockRoundCount: blockRoundCount,
             blockName: block.name,
             exerciseID: step.exerciseID,
+            // Which `plan_steps` row this came from, so the runner can write a load back to it.
+            // Nil when the step was built in code rather than read from the database.
+            stepID: step.id,
             // Carried straight through: it is the step's own word, and nothing decides it here.
             intensity: step.intensity
         )
@@ -206,7 +211,10 @@ public enum PlanFlattener {
             blockRound: blockRound,
             blockRoundCount: blockRoundCount,
             blockName: block.name,
-            exerciseID: nil
+            exerciseID: nil,
+            // A rest comes from a step's `restAfter` rather than being one, so there is no row for
+            // it to belong to — the same reason it carries no exercise.
+            stepID: nil
         )
     }
 }

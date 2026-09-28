@@ -101,6 +101,11 @@ xcrun simctl launch booted com.lerio.oronzo -demoFinish        # 6 seconds, reac
 xcrun simctl launch booted com.lerio.oronzo.watchkitapp -demoSession
 ```
 
+**`-demoAdjust`** (with `-demoSession`) drives the runner's load arrows for you — a weight nudge,
+then the save two seconds later — because there is no way to tap a simulator from a desk: this
+machine has no `idb`, no `cliclick`, and no Simulator UI attached to the booted device. It is the
+only route to the pending state and the Adjust button, and it is how the layout was checked.
+
 Both are wrapped in `#if DEBUG` and have no entry point in a release build. The demo cannot save
 — with no signed-in session, finishing reports "Auth session missing" and offers a retry. That is
 the failure path working, not a bug.

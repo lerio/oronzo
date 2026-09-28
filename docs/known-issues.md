@@ -224,15 +224,14 @@ exactly the database activity that keeps the free project from pausing.
 
 ---
 
-## 12. The HealthKit write is proven to build, and not proven to work
+## 12. The HealthKit write — closed, verified on a device
 
 **What the code does.** `ios/Oronzo/Session/HealthWorkoutRecorder.swift` writes one
 `HKWorkout` (`.traditionalStrengthTraining`) for any session that ends after three minutes,
 via `HKWorkoutBuilder`. `OronzoCore.RecordableWorkout` decides *whether*, and is covered by
 `RecordableWorkoutTests` in `swift test`.
 
-**What has actually been measured — and what has not.** This is the entry to read before trusting
-the feature, because the gap is wider than usual here:
+**What has actually been measured.** This is the entry to read before trusting the feature:
 
 - **Verified.** HealthKit signs on this free personal team, and `com.lerio.oronzo` itself signs with
   `com.apple.developer.healthkit` in both its entitlements and its embedded profile — inspected on
@@ -242,27 +241,56 @@ the feature, because the gap is wider than usual here:
   and crashes with `NSInvalidArgumentException` if the string is not a real sentence. A probe app
   using `"Probe"` as a placeholder died at the authorization call; the same shape with a proper
   sentence raised the sheet normally. The string in `ios/Oronzo/Info.plist` is a real sentence.
-- **Not verified.** The save itself. The authorization sheet was reached on an iOS Simulator, but
-  this machine has no `Simulator.app` — only the headless CoreSimulator runtime — so the sheet could
-  not be tapped and the write could not complete. **No workout has been observed in Apple Health.**
+- **Verified on a device, 28 September 2026.** A real session of more than three minutes, ended with
+  the phone unlocked, reported **`Added to Apple Health`** and the workout was then visible in the
+  Health app. This is the first time any part of the save has been observed working; before it, the
+  furthest anyone had got was raising the sheet on a simulator that could not tap it.
+- **Verified on a device, the same day — and this is the ordinary case.** A session ended with the
+  phone **locked** in a pocket reported *"Added to Apple Health — not confirmed"*, and the workout
+  was in Health when the phone was unlocked. So the locked path works, and the app simply cannot see
+  that it did. See `.unconfirmed` below.
 
-**Why it matters.** Two things follow from the unverified part, and neither can be settled by
-reading the code. First, whether a workout that is saved *without* a live `HKWorkoutSession`, and
-with no heart-rate or energy samples, earns **Exercise ring credit** — `docs/decisions.md` claims
-workouts do not close the rings, and that claim rests on the same untested part. Second, whether a
-workout written from a phone that is locked and in a pocket is delivered at all; HealthKit permits
-background writes, but that has not been seen here.
+**A workout that was never recorded, and why it may stay unexplained.** A 49-minute session on
+28 September did not reach Health at all, under a build that could not say why: `prepare()` returned
+early whenever the permission sheet had already been answered and logged nothing, so a refused
+permission and a failed write were indistinguishable. That gap is closed — `prepare()` and `record()`
+now both log the authorization state, and a recurrence will name itself. The likeliest reading is
+that permission had not been granted when that session ran, since the very next one succeeded.
+
+**The bug that search turned up, and what proved it.** `record()` treated a `nil` workout with no
+error from `finishWorkout()` as *"nothing was written"*. Apple documents that pair as *"finishing
+the workout succeeded but the workout sample is not available because the device is locked"* — a
+success. So the app reported **`Not added to Apple Health — Health returned no workout`** over a save
+that had happened, on exactly the locked-phone path that is this app's normal case. Only a thrown
+error is evidence now. A `nil` is neither claimed as written nor reported as a failure: it has its
+own outcome, `.unconfirmed`, which the summary draws as *"Added to Apple Health — not confirmed"*.
+Not hedging — the same nil is also reported in the field as a write that genuinely did not happen,
+and the two are indistinguishable from inside the app. **The suspicion was confirmed the same day**:
+the locked session reported `.unconfirmed` and the workout was there, which is the case the old code
+would have called a failure.
 
 A failure is **not silent**: the summary reports the outcome beside the history line
-(`Added to Apple Health` / `Not added to Apple Health — …`), so a denied permission is visible
-rather than showing up as a workout that never appears. That is also why there is no "Try again" on
-that line, unlike the history one — a retry after a write that failed is the one path that could
-double-post if the failure landed after the store had already committed.
+(`Added to Apple Health` / `Added to Apple Health — not confirmed` / `Not added to Apple Health — …`),
+so a denied permission is visible rather than showing up as a workout that never appears. That is
+also why there is no "Try again" on that line, unlike the history one — a retry after a write that
+failed is the one path that could double-post if the failure landed after the store had already
+committed.
 
-**Question.** Do a real workout of more than three minutes on the phone, then check the Fitness app
-for the entry and the Activity rings for credit? If the summary says `Added to Apple Health` but the
-ring does not move, the escalation is a live `HKWorkoutSession` — a scoped follow-up, not a fix to
-this code.
+**Both questions are now answered, on a device, on 28 September 2026.**
+
+- **A locked phone at the end of a session still gets the workout into Health.** The summary said
+  *"Added to Apple Health — not confirmed"* — `finishWorkout()` returned no object, exactly as
+  documented for a locked device — and the workout was in Apple Health when the phone was unlocked.
+  So the `.unconfirmed` outcome is the ordinary one for this app and it is not bad news.
+- **Exercise ring credit: it moves.** A saved workout — no live `HKWorkoutSession`, no heart rate,
+  no active energy — earns credit on the Exercise ring. `docs/decisions.md` claimed the opposite for
+  the life of the project, on the reasoning that ring credit follows from having a workout session;
+  it does not follow, and that claim is now struck from `docs/decisions.md`, `AGENTS.md` and
+  `docs/prd/0001-…`. `docs/decisions.md` records the pattern, because it is the second time an
+  untested constraint in that table turned out to be false.
+
+What remains open is only the one-hour `WKExtendedRuntimeSession` cap, which the Watch has not hit
+in use, and which is a Watch-runtime question rather than a Health one.
 
 ---
 

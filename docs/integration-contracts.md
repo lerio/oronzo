@@ -146,8 +146,8 @@ The application context persists across launches and the two apps install separa
 written by any build may be read by any other. An optional is tolerant in both directions for free;
 a *non-optional* field with a default is not, because the synthesised decoder emits
 `decodeIfPresent` only for an optional — the default never runs and the snapshot fails to decode,
-which is a silent "No workout" on the wrist. `Interval.intensity` and `SessionSnapshot.protocolVersion`
-are the two examples.
+which is a silent "No workout" on the wrist. `Interval.intensity`, `Interval.stepID` and
+`SessionSnapshot.protocolVersion` are the three examples.
 
 **`protocolVersion` exists to make a mismatch legible, not to prevent one.** Prevention is the rule
 above; a non-optional addition breaks every older build whatever the version says, and no amount of

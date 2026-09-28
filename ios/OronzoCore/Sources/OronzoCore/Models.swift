@@ -18,6 +18,12 @@ public enum StepMode: String, Codable, Sendable {
 /// three, so a fourth cannot exist in the database and every surface can switch on this
 /// exhaustively rather than guessing at a string. Optional everywhere: a strength hold is just a
 /// hold, and the builder only offers it for a timed step.
+///
+/// **Declaration order is effort-ascending, and that is load-bearing.** `LoadDial.intensity` cycles
+/// `allCases`, so the runner's arrows step low → medium → hard and the order of these three lines
+/// decides what "harder" means. The database's check constraint only tests membership — it has no
+/// notion that `hard > medium` — so this enum is the sole statement of the ordering, and
+/// `LoadAdjustmentTests` pins it.
 public enum Intensity: String, Codable, Sendable, CaseIterable {
     case low
     case medium
@@ -29,6 +35,18 @@ public enum Intensity: String, Codable, Sendable, CaseIterable {
 /// used by `Interval` — the execution stream really does contain rests, emitted between
 /// sets. It is the *plan* that no longer pretends they are steps.)
 public struct PlanStep: Codable, Equatable, Sendable {
+    /// The `plan_steps` row this step came from, when it came from the database.
+    ///
+    /// Optional because a step can be built in code — `DemoPlan`, and every test fixture — with no
+    /// row behind it. It is the only identity that survives flattening far enough to write back to:
+    /// `exerciseID` is not it, since one plan can prescribe the same exercise twice at different
+    /// loads. See `Interval.stepID`.
+    ///
+    /// **Not stable across a save.** `save_plan` deletes and re-inserts the whole tree, so every
+    /// step id is minted anew each time the web builder saves — which is why a session holds this
+    /// only for as long as it is running, and why the write it makes checks that the row was
+    /// actually there. See `PlanRepository.updateStepLoad`.
+    public var id: UUID?
     public var exerciseID: UUID?
     public var label: String?
     /// How many times this exercise repeats — its set count. (A *block's* `rounds` repeats
@@ -46,6 +64,7 @@ public struct PlanStep: Codable, Equatable, Sendable {
     public var intensity: Intensity?
 
     public init(
+        id: UUID? = nil,
         exerciseID: UUID? = nil,
         label: String? = nil,
         sets: Int = 1,
@@ -56,6 +75,7 @@ public struct PlanStep: Codable, Equatable, Sendable {
         restAfter: TimeInterval? = nil,
         intensity: Intensity? = nil
     ) {
+        self.id = id
         self.exerciseID = exerciseID
         self.label = label
         self.sets = max(1, sets)
@@ -148,6 +168,16 @@ public struct Interval: Codable, Equatable, Sendable, Identifiable {
     public let blockRoundCount: Int
     public let blockName: String?
     public let exerciseID: UUID?
+    /// The `plan_steps` row this interval came from, when it came from one — the identity the
+    /// runner writes a load adjustment back through.
+    ///
+    /// **Why it is here and not in a table beside the session.** `SessionRecord` carries the
+    /// interval list and nothing else, so a side-map in the controller would be lost the moment the
+    /// app relaunched and a resumed workout would be the one you could not adjust. Optional
+    /// because the rests below have no step, because `PlanStep.id` is optional, and — the same rule
+    /// every field of this type follows — because a snapshot or a record written by an older build
+    /// has to decode. See `intensity` for the full statement of that rule.
+    public let stepID: UUID?
     /// How hard to go, for a timed interval whose step said so. Nil for everything else.
     ///
     /// **Optional, and that is the rule for this type.** `Interval` is `Codable` and travels to
@@ -177,9 +207,15 @@ public struct Interval: Codable, Equatable, Sendable, Identifiable {
         blockRoundCount: Int,
         blockName: String?,
         exerciseID: UUID?,
+        // Defaulted for the same reason `intensity` is: the fixtures in the tests hand-build
+        // intervals to exercise the engine and the watch projection, and none of them is about
+        // which plan row an interval came from. `PlanFlattener` and `withLoad` are the production
+        // call sites, which is why `withLoad` sitting beside this declaration matters.
+        stepID: UUID? = nil,
         // The one defaulted parameter: twelve fixtures hand-build intervals to test the engine and
-        // the watch projection, and none of them is about effort. `PlanFlattener` is the only
-        // production call site, and `PlanFlattenerTests` pins that it passes this through.
+        // the watch projection, and none of them is about effort. `PlanFlattener` and `withLoad`
+        // are the production call sites, and `PlanFlattenerTests` pins that the flattener passes
+        // this through.
         intensity: Intensity? = nil
     ) {
         self.index = index
@@ -195,7 +231,41 @@ public struct Interval: Codable, Equatable, Sendable, Identifiable {
         self.blockRoundCount = blockRoundCount
         self.blockName = blockName
         self.exerciseID = exerciseID
+        self.stepID = stepID
         self.intensity = intensity
+    }
+
+    // MARK: - Editing the load
+
+    /// This interval with its load replaced, and **every other field untouched**.
+    ///
+    /// It lives here, beside the property list it copies, rather than with the adjustment that
+    /// calls it. A full rebuild has to be kept in step with the fields above by hand, and a field
+    /// this forgot would be dropped on precisely the intervals a user had adjusted — silently, and
+    /// only for them. Anything added to `Interval` has to be added here, so this is where it will
+    /// be seen: the one place a change to the shape of this type is already being made.
+    ///
+    /// Not `var targetWeightKg`: nothing else may change an interval in place, and an edit is
+    /// applied to a whole step at once by `StepLoadEdit.applied(to:)`, which replaces rather than
+    /// mutates.
+    public func withLoad(weightKg: Double?, intensity: Intensity?) -> Interval {
+        Interval(
+            index: index,
+            kind: kind,
+            name: name,
+            mode: mode,
+            duration: duration,
+            reps: reps,
+            targetWeightKg: weightKg,
+            setIndex: setIndex,
+            setCount: setCount,
+            blockRound: blockRound,
+            blockRoundCount: blockRoundCount,
+            blockName: blockName,
+            exerciseID: exerciseID,
+            stepID: stepID,
+            intensity: intensity
+        )
     }
 
     // MARK: - Display
@@ -225,6 +295,20 @@ public struct Interval: Codable, Equatable, Sendable, Identifiable {
             return "Round \(blockRound) of \(blockRoundCount)"
         }
         return blockName
+    }
+
+    /// Whether `contextLabel` above is currently carrying **this interval's effort**, rather than
+    /// a set count, a round count or the block's name.
+    ///
+    /// It exists because the phone's effort arrows flank the line the effort is already on rather
+    /// than adding a second one saying the same word — so the runner has to know which of the four
+    /// things that line is. The two are two expressions of one precedence and live next to each
+    /// other for that reason; `SessionScreenTests` asserts they agree.
+    ///
+    /// The set count wins first, so a multi-set step hides its effort from that line — which is a
+    /// documented and deliberate precedence, not something the arrows may quietly change.
+    public var contextLabelIsIntensity: Bool {
+        intensity != nil && setCount <= 1
     }
 }
 

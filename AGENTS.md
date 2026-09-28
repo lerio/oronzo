@@ -109,8 +109,14 @@ Debug builds accept launch arguments that skip sign-in entirely:
 ```bash
 xcrun simctl launch booted com.lerio.oronzo -demoSession       # a realistic plan
 xcrun simctl launch booted com.lerio.oronzo -demoFinish        # 6 seconds, reaches the summary
+xcrun simctl launch booted com.lerio.oronzo -demoSession -demoAdjust   # drives the load arrows
 xcrun simctl launch booted com.lerio.oronzo.watchkitapp -demoSession
 ```
+
+`-demoAdjust` exists because **the arrows cannot otherwise be looked at**: nothing here can tap a
+simulator, so a nudge and then a save are performed for you, two seconds apart, which is what makes
+the pending state and the Adjust button reachable at all. It is a fixture, so the save changes the
+session and not the plan — see `SessionController.savesPlan`.
 
 ## Traps
 
@@ -179,18 +185,23 @@ Each of these cost real time. They are not hypothetical.
 - **Free personal team:** provisioning profiles expire every 7 days (the apps stop launching until
   rebuilt from Xcode), and there are no App Groups. **HealthKit signs** — see the next bullet. The
   Watch stays alive via `WKExtendedRuntimeSession` with `WKBackgroundModes = [physical-therapy]` — a
-  one-hour cap and no Activity ring credit. The iPhone stays alive via `UIBackgroundModes = [audio]`
-  and a silent looping tone.
+  one-hour cap. The iPhone stays alive via `UIBackgroundModes = [audio]` and a silent looping tone.
 - **HealthKit signs on this free personal team, and every doc here said it could not.** The claim
   "HealthKit will not sign" was recorded as a hard constraint in `AGENTS.md`, `README.md`,
   `docs/decisions.md`, `ios/OronzoWatch/Info.plist` and `WatchRuntime.swift` — and repeated, because
   it read as authoritative. **It was never tested**, and it is false: a throwaway target signed with
   this team produced a profile carrying `com.apple.developer.healthkit`, and `com.lerio.oronzo`
-  followed. So the phone now records a finished workout to Apple Health
-  (`ios/Oronzo/Session/HealthWorkoutRecorder.swift`). This is a trap of a particular kind — a
-  constraint that was *assumed* rather than bought — so when a doc here says something is
-  impossible, ask which failure taught it that. Note what is *not* reopened: no `HKWorkoutSession`,
-  so the Watch's one-hour cap and the missing Activity ring credit are unchanged, deliberately.
+  followed. So the phone records a finished workout to Apple Health
+  (`ios/Oronzo/Session/HealthWorkoutRecorder.swift`), and — measured on a device — it **moves the
+  Exercise ring**. Note what is *not* reopened: no `HKWorkoutSession`, so the Watch's one-hour cap
+  is unchanged, deliberately.
+- **The same mistake was made twice, and the second one is the lesson.** Alongside "HealthKit will
+  not sign" sat "workouts do not close your Activity rings" — written in the same three files, and
+  equally untested, because it *looked like it followed* from the first. It did not: the ring moves.
+  So a claim that reads as a consequence of another claim is not evidence for it, and fixing one
+  assumption does not retire the ones resting on it. `docs/decisions.md` has this in full. **When a
+  doc here says something is impossible, ask which failure taught it that** — and if the answer is
+  another doc, it has taught nothing.
 - **Xcode needs an Apple ID signed in and the licence accepted**, or every `xcodebuild` and
   `devicectl` invocation fails with errors that never mention accounts.
 - **The Watch must be registered with Xcode** (Devices and Simulators → prepare it), or install

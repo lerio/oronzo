@@ -157,6 +157,41 @@ final class PlanStore {
     private func invalidateIntervals() {
         intervalCache.removeAll(keepingCapacity: true)
     }
+
+    // MARK: - Following a load adjustment
+
+    /// Moves the app's own copy of a plan to match a load the runner has just written.
+    ///
+    /// **Without this the store contradicts the server.** `plans` is what `SessionHost.begin`
+    /// flattens from and what the plan list and detail screen draw, and it is cached to disk — so
+    /// an adjustment that reached the database and not this array would come back the next time
+    /// the plan was started, in the same app run, with the old weight. A round trip would fix it
+    /// too, but the write has already happened: re-fetching here would only add a race in which a
+    /// stale read can win.
+    ///
+    /// Only the step named is touched, and only its load — the same blast radius the write has.
+    func applyLoadEdit(_ edit: StepLoadEdit) {
+        var changed = false
+        let updated = plans.map { plan in
+            var plan = plan
+            for blockIndex in plan.blocks.indices {
+                for stepIndex in plan.blocks[blockIndex].steps.indices
+                where plan.blocks[blockIndex].steps[stepIndex].id == edit.stepID {
+                    plan.blocks[blockIndex].steps[stepIndex].targetWeightKg = edit.weightKg
+                    plan.blocks[blockIndex].steps[stepIndex].intensity = edit.intensity
+                    changed = true
+                }
+            }
+            return plan
+        }
+
+        guard changed else { return }
+        plans = updated
+        // The flattened intervals of that plan are now wrong — including the ones of the step
+        // itself, which is what the arrows are about to be drawn from.
+        invalidateIntervals()
+        cache.save(plans: plans, exercises: exercises)
+    }
 }
 
 #if DEBUG

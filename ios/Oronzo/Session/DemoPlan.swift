@@ -45,11 +45,40 @@ enum DemoPlan {
         ProcessInfo.processInfo.arguments.contains("-demoSummary")
     }
 
+    /// `-demoAdjust` drives the load arrows for you: a nudge, then a save.
+    ///
+    /// It exists because **the arrows cannot otherwise be looked at.** There is no way to tap a
+    /// simulator from here — the machine has no `idb`, no `cliclick`, and no Simulator UI attached
+    /// to the booted device — so the pending state and the Adjust button are unreachable by any
+    /// route except this one. Which is the same reason the three arguments above exist: the runner
+    /// has to be exercisable without an account, a backend, or a finger.
+    ///
+    /// Two seconds apart, so a screenshot taken in between catches the button that saving removes.
+    static var wantsAdjustWalkthrough: Bool {
+        ProcessInfo.processInfo.arguments.contains("-demoAdjust")
+    }
+
     /// Stable ids, because the plan and the info it resolves against are built separately.
     private static let benchID = UUID(uuidString: "00000000-0000-0000-0000-00000000B001")!
     private static let pulldownID = UUID(uuidString: "00000000-0000-0000-0000-00000000B002")!
     private static let squatID = UUID(uuidString: "00000000-0000-0000-0000-00000000B003")!
     private static let rowID = UUID(uuidString: "00000000-0000-0000-0000-00000000B004")!
+
+    /// Stable **step** ids, in a namespace of their own.
+    ///
+    /// A step id is what the runner writes a load adjustment back through, so a demo needs one to
+    /// exercise the arrows at all — but it must never be able to name a real `plan_steps` row,
+    /// even if a launch were somehow signed in. These are fabricated rather than random for
+    /// exactly that reason, the same way the exercise ids above are: `00000000-…-000000000001`
+    /// cannot collide with a `gen_random_uuid()`. Belt and braces with `SessionController.savesPlan`,
+    /// which stops the request being sent at all.
+    ///
+    /// They also let `make()` show why the id belongs to the *step* and not the exercise: it uses
+    /// `squatID` twice, at 120s and again at 6 × 30s, which is exactly the case keying on
+    /// `exerciseID` would get wrong.
+    private static func stepID(_ n: Int) -> UUID {
+        UUID(uuidString: String(format: "00000000-0000-0000-0000-%012d", n))!
+    }
 
     /// The exercise table as far as a demo needs it. The row is the one flagged two-sided, which
     /// is what lets a launch-argument session show the left/right pair on a simulator with no
@@ -68,16 +97,16 @@ enum DemoPlan {
             name: "Demo — Built in the web app",
             blocks: [
                 PlanBlock(name: "Warm-up", steps: [
-                    PlanStep(exerciseID: squatID, mode: .time, duration: 90),
+                    PlanStep(id: stepID(7), exerciseID: squatID, mode: .time, duration: 90),
                 ]),
                 PlanBlock(name: "Main work", steps: [
-                    PlanStep(exerciseID: benchID, sets: 4, mode: .reps, reps: 8,
+                    PlanStep(id: stepID(8), exerciseID: benchID, sets: 4, mode: .reps, reps: 8,
                              targetWeightKg: 20, restAfter: 90),
-                    PlanStep(exerciseID: pulldownID, sets: 3, mode: .reps, reps: 10,
+                    PlanStep(id: stepID(9), exerciseID: pulldownID, sets: 3, mode: .reps, reps: 10,
                              targetWeightKg: 50, restAfter: 60),
                 ]),
                 PlanBlock(name: "Finisher", rounds: 4, steps: [
-                    PlanStep(exerciseID: squatID, mode: .time, duration: 30, restAfter: 15),
+                    PlanStep(id: stepID(10), exerciseID: squatID, mode: .time, duration: 30, restAfter: 15),
                 ]),
             ]
         )
@@ -91,8 +120,8 @@ enum DemoPlan {
             name: "Demo — Finish",
             blocks: [
                 PlanBlock(steps: [
-                    PlanStep(label: "Sprint", mode: .time, duration: 3),
-                    PlanStep(label: "Breathe", mode: .time, duration: 3),
+                    PlanStep(id: stepID(11), label: "Sprint", mode: .time, duration: 3),
+                    PlanStep(id: stepID(12), label: "Breathe", mode: .time, duration: 3),
                 ]),
             ]
         )
@@ -105,23 +134,23 @@ enum DemoPlan {
             blocks: [
                 // Leads with a timed step so the countdown is the first thing shown.
                 PlanBlock(name: "Warm-up", steps: [
-                    PlanStep(label: "Warm-up", mode: .time, duration: 120, intensity: .low),
+                    PlanStep(id: stepID(1), label: "Warm-up", mode: .time, duration: 120, intensity: .low),
                 ]),
                 PlanBlock(name: "Main work", steps: [
-                    PlanStep(label: "Flat Dumbbell Bench Press", sets: 4, mode: .reps,
+                    PlanStep(id: stepID(2), label: "Flat Dumbbell Bench Press", sets: 4, mode: .reps,
                              reps: 8, targetWeightKg: 20, restAfter: 90),
-                    PlanStep(label: "Neutral-Grip Lat Pulldown", sets: 4, mode: .reps,
+                    PlanStep(id: stepID(3), label: "Neutral-Grip Lat Pulldown", sets: 4, mode: .reps,
                              reps: 6, targetWeightKg: 50, restAfter: 90),
                     // The one step carrying an exercise id rather than a label, so the session
                     // runs the two-sided path — left, right, rest — with no backend behind it.
-                    PlanStep(exerciseID: rowID, sets: 3, mode: .reps,
+                    PlanStep(id: stepID(4), exerciseID: rowID, sets: 3, mode: .reps,
                              reps: 10, targetWeightKg: 22, restAfter: 60),
                 ]),
                 // The effort used to be spelled into the labels ("Hard — 20 sec"), which was the
                 // only place it could live. It is a field now, and the label names the movement.
                 PlanBlock(name: "HIIT", rounds: 6, steps: [
-                    PlanStep(label: "Sprint", mode: .time, duration: 20, intensity: .hard),
-                    PlanStep(label: "Recover", mode: .time, duration: 40, intensity: .low),
+                    PlanStep(id: stepID(5), label: "Sprint", mode: .time, duration: 20, intensity: .hard),
+                    PlanStep(id: stepID(6), label: "Recover", mode: .time, duration: 40, intensity: .low),
                 ]),
             ]
         )
@@ -131,8 +160,11 @@ enum DemoPlan {
 #Preview("Session runner") {
     // Built here rather than by `SessionHost`, because a preview has no app lifetime to hang a
     // session on — and nothing in the runner needs one, now that it does not own its controller.
+    // The store is the one the app injects, and the runner reads it for the plan a saved
+    // adjustment changes.
     SessionRunner(
         controller: SessionController(plan: DemoPlan.make(), exercises: DemoPlan.builderExercises)
     )
+    .environment(PlanStore.seeded(DemoPlan.builderExercises))
 }
 #endif

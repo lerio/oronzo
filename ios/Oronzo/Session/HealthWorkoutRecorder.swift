@@ -10,8 +10,25 @@ import OronzoCore
 enum HealthWriteOutcome: Equatable, Sendable {
     /// Nothing was attempted: no session has ended, or this launch is a fixture.
     case notAttempted
-    /// Health accepted the workout.
+    /// The store handed the workout back. The strongest thing this app can know.
     case written
+    /// **Not refused, and not confirmed.** `finishWorkout()` returned no workout and no error.
+    ///
+    /// Apple documents that pair as *"finishing the workout succeeded but the workout sample is not
+    /// available because the device is locked"* — which is this app's ordinary case, since a
+    /// session usually ends with the phone in a pocket.
+    ///
+    /// **Observed on a device, 28 September 2026.** A session ended with the phone locked reported
+    /// this outcome, and the workout *was* in Apple Health. So for this app the documented reading
+    /// holds and the save happened.
+    ///
+    /// The outcome stays separate from `.written` rather than collapsing into it, because the app
+    /// still cannot tell the two apart from the inside: the same nil is reported in the field as a
+    /// write that genuinely did not happen, and a build that claimed `.written` here would be lying
+    /// in exactly the case worth being able to see. What it says on screen is "added, not
+    /// confirmed" — which is now known to be the common truth, and would be visibly wrong if the
+    /// rarer one ever occurred.
+    case unconfirmed
     /// A real session, but under `RecordableWorkout.minimumDuration`.
     case tooShort
     case failed(String)
@@ -21,14 +38,10 @@ enum HealthWriteOutcome: Equatable, Sendable {
 enum HealthWriteError: LocalizedError {
     /// No Health store here at all — an iPad, or a device without Health.
     case unavailable
-    /// `finishWorkout()` returned no workout and no error. Treated as a failure rather than a
-    /// silent success, because nothing was written either way.
-    case notSaved
 
     var errorDescription: String? {
         switch self {
         case .unavailable: "Health is not available on this device"
-        case .notSaved: "Health returned no workout"
         }
     }
 }
@@ -82,6 +95,13 @@ final class HealthWorkoutRecorder {
         guard !hasAsked else { return }
         hasAsked = true
 
+        // **Logged before any decision, and that is the point of the line.** Everything below can
+        // return without writing anything — a denied permission, a sheet already answered — and the
+        // state that decides which is otherwise invisible: a session that was never recorded looks
+        // exactly like one whose write failed, from every screen and every other log line. This is
+        // the one fact that separates "Health refused" from "Health was never asked".
+        Log.debug("health: write authorization is \(Self.describe(authorizationStatus))")
+
         do {
             // Ask only when the system would actually raise a sheet. `.unnecessary` means the
             // question has already been answered — granted *or* denied — and this is what stops a
@@ -90,9 +110,13 @@ final class HealthWorkoutRecorder {
                 toShare: Self.writable,
                 read: []
             )
-            guard status == .shouldRequest else { return }
+            guard status == .shouldRequest else {
+                Log.debug("health: no sheet to raise; authorization is \(Self.describe(authorizationStatus))")
+                return
+            }
 
             try await store.requestAuthorization(toShare: Self.writable, read: [])
+            Log.debug("health: the sheet was answered; authorization is now \(Self.describe(authorizationStatus))")
         } catch {
             // Not fatal and not worth a dialog: the workout simply will not be recorded. Note
             // that this says nothing about whether permission was *granted* — a refused request
@@ -101,14 +125,39 @@ final class HealthWorkoutRecorder {
         }
     }
 
-    /// Saves one finished workout, and throws if it was not saved.
+    /// What the store says about writing workouts, in words.
+    ///
+    /// Readable without raising anything, which is what makes it usable in a log line: it is the
+    /// answer to "is this app allowed to record at all", and the one thing a record that never
+    /// happened cannot be distinguished from without it.
+    private var authorizationStatus: HKAuthorizationStatus {
+        store.authorizationStatus(for: HKObjectType.workoutType())
+    }
+
+    private static func describe(_ status: HKAuthorizationStatus) -> String {
+        switch status {
+        case .notDetermined: "not determined (the sheet has not been answered)"
+        case .sharingDenied: "DENIED for writing"
+        case .sharingAuthorized: "authorized for writing"
+        @unknown default: "unknown (\(status.rawValue))"
+        }
+    }
+
+    /// Saves one finished workout. Throws when the store refused it, and otherwise reports what the
+    /// store confirmed — which, for a locked phone, is nothing.
     ///
     /// **There is no retry, however this fails.** A `finishWorkout` that threw wrote nothing — but
     /// a second attempt driven by a button is the one path that could plausibly double-write if a
     /// failure ever landed *after* the store had committed. One attempt per session is enforced by
     /// the caller, and the summary reports the outcome rather than offering to try again.
-    func record(_ workout: RecordableWorkout) async throws {
+    @discardableResult
+    func record(_ workout: RecordableWorkout) async throws -> HealthWriteOutcome {
         guard HKHealthStore.isHealthDataAvailable() else { throw HealthWriteError.unavailable }
+
+        // Stated at save time as well as at ask time, because the two can differ: a refusal made
+        // between a session starting and ending would otherwise only show up as an opaque error
+        // from the store.
+        Log.debug("health: saving \(Int(workout.finishedAt.timeIntervalSince(workout.startedAt)))s of work; authorization is \(Self.describe(authorizationStatus))")
 
         let configuration = HKWorkoutConfiguration()
         configuration.activityType = .traditionalStrengthTraining
@@ -126,11 +175,17 @@ final class HealthWorkoutRecorder {
 
         try await builder.beginCollection(at: workout.startedAt)
         try await builder.endCollection(at: workout.finishedAt)
-        // A nil workout with no error means nothing was written, so it is a failure rather than a
-        // silent success. The single thing `.written` is allowed to mean is that the store handed
-        // back a workout.
-        guard try await builder.finishWorkout() != nil else { throw HealthWriteError.notSaved }
+
+        // Only a thrown error is evidence that nothing was written. See `HealthWriteOutcome`
+        // for why a `nil` here is reported as unconfirmed rather than as either answer.
+        let finished = try await builder.finishWorkout()
+
+        if finished == nil {
+            Log.debug("health: finished the workout; the store returned no object (locked device, or a write that did not happen — see HealthWriteOutcome.unconfirmed)")
+            return .unconfirmed
+        }
 
         Log.debug("health: recorded the workout ending \(workout.finishedAt)")
+        return .written
     }
 }

@@ -193,6 +193,70 @@ final class PlanFlattenerTests: XCTestCase {
         )
     }
 
+    // MARK: - Which plan row an interval came from
+
+    /// The step's row id rides onto every interval it emits — all its sets, both sides, every
+    /// round — because they are one prescription and an adjustment to it is one adjustment.
+    func testStepIDReachesEveryIntervalOfTheStep() {
+        let step = UUID()
+        let lunges = UUID()
+        let plan = Plan(name: "P", blocks: [
+            PlanBlock(name: "Main", rounds: 2, steps: [
+                PlanStep(id: step, exerciseID: lunges, sets: 2, mode: .reps, reps: 8, restAfter: 60),
+            ]),
+        ])
+
+        let intervals = PlanFlattener.flatten(
+            plan, exercises: [lunges: ExerciseInfo(name: "Reverse Lunge", hasTwoSides: true)]
+        )
+
+        // 2 rounds × 2 sets × (left, right) = 8 exercise intervals, separated by 4 rests.
+        let done = intervals.filter { $0.kind == .exercise }
+        XCTAssertEqual(done.count, 8)
+        XCTAssertTrue(
+            done.allSatisfy { $0.stepID == step },
+            "every half of every set of every round belongs to the step that prescribed it"
+        )
+        XCTAssertTrue(
+            intervals.filter { $0.kind == .rest }.allSatisfy { $0.stepID == nil },
+            "a rest comes from a step's restAfter rather than being one, so it has no row"
+        )
+    }
+
+    /// **The reason the id is the step's and not the exercise's.** One plan may prescribe the same
+    /// movement twice at different loads, and an adjustment made mid-set has to land on the step
+    /// being performed rather than on every step that happens to use that exercise.
+    func testTwoStepsUsingTheSameExerciseKeepTheirOwnIDs() {
+        let warmUp = UUID()
+        let finisher = UUID()
+        let squat = UUID()
+        let plan = Plan(name: "P", blocks: [
+            PlanBlock(name: "Warm-up", steps: [
+                PlanStep(id: warmUp, exerciseID: squat, mode: .time, duration: 90),
+            ]),
+            PlanBlock(name: "Finisher", steps: [
+                PlanStep(id: finisher, exerciseID: squat, mode: .time, duration: 30),
+            ]),
+        ])
+
+        let intervals = PlanFlattener.flatten(plan, exercises: [squat: ExerciseInfo(name: "Goblet Squat")])
+
+        XCTAssertEqual(intervals.map(\.stepID), [warmUp, finisher])
+        XCTAssertEqual(intervals.map(\.exerciseID), [squat, squat], "same exercise, different steps")
+    }
+
+    /// A step built in code — a fixture, or a plan off an older cache — has no row behind it, and
+    /// that has to flatten rather than fail. What it costs is the arrows, not the workout.
+    func testAStepBuiltInCodeHasNoStepID() {
+        let plan = Plan(name: "P", blocks: [
+            PlanBlock(steps: [PlanStep(label: "Sprint", mode: .time, duration: 20)]),
+        ])
+
+        let intervals = PlanFlattener.flatten(plan, exercises: [:])
+
+        XCTAssertEqual(intervals.map(\.stepID), [nil])
+    }
+
     // MARK: - Block rounds ("6 x (20s hard, 40s easy)")
 
     /// A block is a *group* that repeats — the other shape a programme uses.
