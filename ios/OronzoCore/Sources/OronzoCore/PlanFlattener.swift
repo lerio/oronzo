@@ -14,6 +14,7 @@ import Foundation
 ///         for step in steps ordered by position:
 ///           for setIndex in 1...step.sets:
 ///             for side in sideSuffixes(of: step, exercises:):  // [nil], or [left, right]
+///               if step.prepareSeconds: emit prepare          // "Get in position"
 ///               emit step, named "… (left)" / "… (right)" when there is a side
 ///             if step.restAfter: emit rest        // once per set, after the pair
 ///         if blockRound < block.rounds and block.restBetweenRounds: emit rest
@@ -32,11 +33,26 @@ import Foundation
 ///   rest carries you into the next exercise. Four sets means four rests.
 /// * `restBetweenRounds` on a block fires **only between** rounds of that block, never
 ///   after the final one.
+///
+/// **The prepare is the third synthetic interval, and the only opt-in one.** `prepareSeconds`
+/// emits "Get in position" in front of a timed step that asks for it, before **each set** — and so
+/// before each side of a two-sided exercise, since the prepare is emitted inside the side loop
+/// while the rest stays outside it. It never applies to a rest, which is emitted from outside the
+/// step loop entirely, nor to a rep-based step, whose interval cannot count down.
 public enum PlanFlattener {
 
     /// What a rest is called, wherever it is drawn. Private because it is only ever written into an
     /// `Interval`'s name here — nothing outside needs to spell it a second way, which is the point.
     private static let restLabel = "Break"
+
+    /// The same for the prep interval a step's `prepareSeconds` asks for.
+    ///
+    /// It rides in the name for the reason the side suffix does: `Interval` is `Codable` and
+    /// crossed the Watch wire whole, so this is not a new `StepKind` case — an unknown raw value
+    /// is a decode failure of the *entire* snapshot for a build that predates it, which is a
+    /// silent "No workout" on the wrist. As a plain exercise interval it is a five-second
+    /// countdown with the right words already on it, and an older build draws it correctly.
+    private static let prepareLabel = "Get in position"
 
     /// What to call a step.
     ///
@@ -98,6 +114,26 @@ public enum PlanFlattener {
                         // falls once per set — after the pair, which is what "a set of lunges"
                         // means when you are the one doing them.
                         for side in sideSuffixes(of: step, exercises: exercises) {
+                            // In front of the interval it prepares for, and inside the side loop,
+                            // so a two-sided exercise gets one before the left and one before the
+                            // right — while the rest below still falls once for the pair. The
+                            // prepare is appended *first* so that both take their `index` from
+                            // `intervals.count` at the moment they are built: an index is an
+                            // interval's identity in the engine, and the two must stay contiguous.
+                            if let prepare = step.prepareSeconds, prepare > 0, isTimed(step) {
+                                intervals.append(
+                                    prepareInterval(
+                                        index: intervals.count,
+                                        duration: prepare,
+                                        setIndex: setIndex,
+                                        setCount: max(1, step.sets),
+                                        blockRound: blockRound,
+                                        blockRoundCount: blockRounds,
+                                        block: block
+                                    )
+                                )
+                            }
+
                             intervals.append(
                                 interval(
                                     for: step,
@@ -185,6 +221,47 @@ public enum PlanFlattener {
             stepID: step.id,
             // Carried straight through: it is the step's own word, and nothing decides it here.
             intensity: step.intensity
+        )
+    }
+
+    /// Whether the interval this step will emit runs against a clock — the same question
+    /// `interval(for:)` asks when it chooses between `duration` and `reps`. A step saying
+    /// `mode == .time` with no duration in it emits an interval that cannot count down, and a
+    /// prepare in front of one would be five seconds before nothing.
+    private static func isTimed(_ step: PlanStep) -> Bool {
+        step.mode == .time && (step.duration ?? 0) > 0
+    }
+
+    /// The synthetic "get in position" interval a step's `prepareSeconds` asks for.
+    ///
+    /// `kind` is `.exercise`, not a case of its own: see `prepareLabel`. It carries the context of
+    /// the interval it precedes, so the screen can say which set it is getting you ready for, and
+    /// no `stepID` — exactly as a rest has none, which is what keeps the runner's load arrows off
+    /// it.
+    private static func prepareInterval(
+        index: Int,
+        duration: TimeInterval,
+        setIndex: Int,
+        setCount: Int,
+        blockRound: Int,
+        blockRoundCount: Int,
+        block: PlanBlock
+    ) -> Interval {
+        Interval(
+            index: index,
+            kind: .exercise,
+            name: prepareLabel,
+            mode: .time,
+            duration: duration,
+            reps: nil,
+            targetWeightKg: nil,
+            setIndex: setIndex,
+            setCount: setCount,
+            blockRound: blockRound,
+            blockRoundCount: blockRoundCount,
+            blockName: block.name,
+            exerciseID: nil,
+            stepID: nil
         )
     }
 

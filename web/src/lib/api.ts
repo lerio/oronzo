@@ -5,7 +5,7 @@ import type { Exercise, Plan, PlanBlock, PlanStep, StepMode } from './types';
 const PLAN_SELECT =
   'id,name,updated_at,plan_blocks(id,position,name,rounds,rest_between_rounds_seconds,' +
   'plan_steps(id,position,exercise_id,label,sets,mode,duration_seconds,reps,' +
-  'target_weight_kg,rest_after_seconds,intensity))';
+  'target_weight_kg,rest_after_seconds,intensity,prepare_seconds))';
 
 type PlanRow = {
   id: string;
@@ -62,6 +62,7 @@ export async function savePlan(plan: Plan): Promise<string> {
         target_weight_kg: step.target_weight_kg,
         rest_after_seconds: step.rest_after_seconds,
         intensity: step.intensity,
+        prepare_seconds: step.prepare_seconds,
         position: stepIndex,
       })),
       position: blockIndex,

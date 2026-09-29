@@ -21,10 +21,10 @@ schema. Then run the `contract-auditor` agent.
 The flattening rule itself is stated in full in `AGENTS.md`. What follows is the field-level and
 wire-level detail that the pseudocode does not carry.
 
-## Current schema (post-`0013`)
+## Current schema (post-`0014`)
 
 Migrations are **cumulative and append-only**, so `0001` is not the current shape. This is the
-shape as of `0013_step_intensity.sql`; check the newest file before assuming.
+shape as of `0014_step_prepare_seconds.sql`; check the newest file before assuming.
 
 ```
 exercises      id, user_id, slug, name, muscle_group, default_mode,
@@ -34,7 +34,7 @@ plans          id, user_id, name, created_at, updated_at
 plan_blocks    id, plan_id, position, name, rounds, rest_between_rounds_seconds, created_at, updated_at
 plan_steps     id, block_id, exercise_id NOT NULL, position, label, sets, mode,
                duration_seconds, reps, target_weight_kg, rest_after_seconds,
-               intensity, created_at, updated_at
+               intensity, prepare_seconds, created_at, updated_at
 
 sessions       id, user_id, plan_id, plan_name, started_at, finished_at, status,
                total_duration_seconds, notes, created_at, updated_at
@@ -48,6 +48,13 @@ session_steps  id, session_id, position, set_index, block_round, block_name, kin
 `INTENSITIES` declare. It is nullable, and it rides to the screens as an *optional* field on
 `Interval`: an older snapshot decodes without it and a nil one is omitted from the JSON entirely,
 which is what `docs/decisions.md` records as the rule for adding anything to that type.
+
+`plan_steps.prepare_seconds` (`0014`) is the second column the flattener reads rather than passes
+through, after `has_two_sides`. Null means no preparation time; a positive number is the length of
+a synthetic "Get in position" interval before **each set** of a timed step, and before each side
+of a two-sided one. It is nullable and positive-only, and unlike `intensity` it reaches no screen
+as a field — the interval it produces is a plain exercise interval named for what it is. See
+`docs/decisions.md`, *"A prepare the plan asks for"*.
 
 One column changed meaning with `0012`: `session_steps.exercise_name` is now the *interval's*
 name, so a two-sided exercise logs two rows per set as `Reverse Lunge (left)` and `Reverse Lunge
@@ -92,7 +99,7 @@ per row plus aggregated to gate the Save button (`"Fix N step(s) before saving"`
 
 ## The `save_plan` payload
 
-The **only** way a plan is written. Defined in six migrations; the newest is in `0008`. It is a
+The **only** way a plan is written. Written eight times over — the newest is in `0014`. It is a
 whole-tree replace: it upserts `plans` by id (raising `42501` if the row is not the caller's),
 then `delete from plan_blocks where plan_id = …` and re-inserts every block and step.
 
@@ -105,7 +112,7 @@ then `delete from plan_blocks where plan_id = …` and re-inserts every block an
     "steps": [{
       "exercise_id": "<uuid>", "label": …, "sets": 4, "mode": "reps",
       "duration_seconds": …, "reps": 8, "target_weight_kg": …,
-      "rest_after_seconds": …
+      "rest_after_seconds": …, "intensity": …, "prepare_seconds": …
     }]
   }]
 }
@@ -281,5 +288,8 @@ session sleep: see `SessionController.nextWake` and `SessionRunner.runner`.
    a select string produces a **runtime 400 in an app on a device** — `tsc -b` cannot catch it.
 4. If the change makes the currently-deployed web bundle invalid, **deploy before migrating** —
    the deployed bundle is what breaks, not the new build. `/deploy` exists to make you answer this
-   question before shipping.
+   question before shipping. **An additive column is the opposite case and the quieter one**: the
+   deployed bundle keeps working, but a save from it writes null over the new column, because
+   `save_plan` replaces the whole tree and that bundle does not send the key. Migrate and deploy in
+   the same sitting, before anything is authored into it. `0014` is the worked example.
 5. Run `swift test`, then the `contract-auditor` agent.

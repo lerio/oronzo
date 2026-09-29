@@ -42,6 +42,8 @@ for block in blocks ordered by position:
     for step in steps ordered by position:
       for setIndex in 1...step.sets:
         for side in sideSuffixes(step):     # [null], or [left, right]
+          if step.prepareSeconds and the step is timed:
+            emit prepare                    # "Get in position"
           emit step, named "… (left)" / "… (right)" when there is a side
         if step.restAfter: emit rest        # once per set, after the pair
     if blockRound < block.rounds and block.restBetweenRounds: emit rest
@@ -64,6 +66,13 @@ being done, not to the step being planned, and the plan detail screen lists a pl
 
 The two rest mechanisms are deliberately asymmetric: `restAfter` fires after **every** set
 including the last, `restBetweenRounds` only **between** rounds. `docs/decisions.md` explains why.
+
+A **third synthetic interval** is `prepareSeconds`, emitted inside the *side* loop — so a timed
+step that asks for one gets it before each set and before each side, while the rest stays outside
+and still falls once for the pair. It is opt-in per step, because a timed step is not always work:
+the seeded HIIT blocks prescribe their recoveries as timed steps too, and nothing tells those apart
+from a hold. It carries no new type — `kind: .exercise` and the name — so a build that predates it
+draws a five-second countdown with the right words on it rather than failing to decode.
 
 Run the `contract-auditor` agent after changing anything about blocks, steps, sets, rounds, rest,
 or the plan/session schema.
@@ -93,7 +102,7 @@ Full detail in `docs/patterns.md`. The short version:
 ## Commands
 
 ```bash
-cd ios/OronzoCore && swift test      # 202 tests, no simulator or signing — run this first
+cd ios/OronzoCore && swift test      # 241 tests, no simulator or signing — run this first
 cd ios && xcodegen generate          # after editing ios/project.yml or adding files
 cd web && npm run dev                # localhost:5173
 cd web && npm run build              # tsc -b is what catches stale field references
@@ -181,7 +190,7 @@ Each of these cost real time. They are not hypothetical.
   line does not cover SwiftPM's directory. This exact mistake committed ~2,300 build files.
 - **Migrations are applied by hand**, pasted into the Supabase SQL Editor in filename order. They
   are **append-only**: never edit an applied migration's logic — write a new one. `save_plan` has
-  been redefined in six of them, so check the newest definition before changing that function.
+  been written eight times, so check the newest definition before changing that function.
 - **Free personal team:** provisioning profiles expire every 7 days (the apps stop launching until
   rebuilt from Xcode), and there are no App Groups. **HealthKit signs** — see the next bullet. The
   Watch stays alive via `WKExtendedRuntimeSession` with `WKBackgroundModes = [physical-therapy]` — a

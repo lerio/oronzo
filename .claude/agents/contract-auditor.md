@@ -36,13 +36,21 @@ when you build it and runs another way when you do it.
      for blockRound in 1...block.rounds:
        for step in steps ordered by position:
          for setIndex in 1...step.sets:
-           emit step; if step.restAfter: emit rest
+           for side in sideSuffixes(step):      # [null], or [left, right]
+             if step.prepareSeconds and the step is timed:
+               emit prepare                     # "Get in position"
+             emit step, named "… (left)" / "… (right)" when there is a side
+           if step.restAfter: emit rest         # once per set, after the pair
        if blockRound < block.rounds and block.restBetweenRounds: emit rest
    ```
 
    Look specifically for: loop nesting order, the 1-based vs 0-based set/round counters, whether
-   `restAfter` fires on the **final** set (it must — that is deliberate), and whether
-   `restBetweenRounds` is suppressed on the final round (it must be).
+   `restAfter` fires on the **final** set (it must — that is deliberate), whether
+   `restBetweenRounds` is suppressed on the final round (it must be), and **where the prepare sits
+   relative to the other two loops** — inside the side loop, so a two-sided timed exercise gets one
+   before each side rather than one for the pair, and outside the rest, which is emitted from
+   outside the step loop and so can never be preceded by one. The prepare carries the context of
+   the interval it precedes and no `stepID`; `kind` is `.exercise`, never a case of its own.
 
 2. **Field-by-field parity.** Walk every field of `PlanStep`, `PlanBlock`, `Plan` and `Interval`
    across Swift and TypeScript. For each, say whether it exists in both. Then check the SQL

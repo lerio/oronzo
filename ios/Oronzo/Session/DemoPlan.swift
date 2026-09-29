@@ -80,6 +80,15 @@ enum DemoPlan {
         UUID(uuidString: String(format: "00000000-0000-0000-0000-%012d", n))!
     }
 
+    /// The step the `-demoAdjust` walkthrough stops on: the demo's first weighted one, which is
+    /// what the load arrows need in order to be there at all.
+    ///
+    /// Named rather than counted, because the walk used to advance a fixed number of times and
+    /// that number is a fact about what the flattener emits — a "Get in position" interval in
+    /// front of the warm-up moved it, and the failure was silent: the arrows simply never
+    /// appeared, which is exactly the failure this fixture exists to remove.
+    static let adjustStepID = stepID(2)
+
     /// The exercise table as far as a demo needs it. The row is the one flagged two-sided, which
     /// is what lets a launch-argument session show the left/right pair on a simulator with no
     /// account, no backend and no migration applied.
@@ -132,9 +141,13 @@ enum DemoPlan {
             id: UUID(),
             name: "Demo — Upper Body A",
             blocks: [
-                // Leads with a timed step so the countdown is the first thing shown.
+                // Leads with a timed step so the countdown is the first thing shown — and it asks
+                // for preparation time, so the very first interval of a demo session is the
+                // "Get in position" one. That is the case worth looking at: a prepare in front of
+                // interval 0, with nothing before it to have emitted it.
                 PlanBlock(name: "Warm-up", steps: [
-                    PlanStep(id: stepID(1), label: "Warm-up", mode: .time, duration: 120, intensity: .low),
+                    PlanStep(id: stepID(1), label: "Warm-up", mode: .time, duration: 120,
+                             intensity: .low, prepareSeconds: 5),
                 ]),
                 PlanBlock(name: "Main work", steps: [
                     PlanStep(id: stepID(2), label: "Flat Dumbbell Bench Press", sets: 4, mode: .reps,
@@ -148,8 +161,13 @@ enum DemoPlan {
                 ]),
                 // The effort used to be spelled into the labels ("Hard — 20 sec"), which was the
                 // only place it could live. It is a field now, and the label names the movement.
+                //
+                // The work bout asks for preparation time and the recovery does not, which is the
+                // whole point of the field being per-step: both are timed steps, and nothing but
+                // the author can tell them apart. A demo session therefore shows both answers.
                 PlanBlock(name: "HIIT", rounds: 6, steps: [
-                    PlanStep(id: stepID(5), label: "Sprint", mode: .time, duration: 20, intensity: .hard),
+                    PlanStep(id: stepID(5), label: "Sprint", mode: .time, duration: 20,
+                             intensity: .hard, prepareSeconds: 5),
                     PlanStep(id: stepID(6), label: "Recover", mode: .time, duration: 40, intensity: .low),
                 ]),
             ]

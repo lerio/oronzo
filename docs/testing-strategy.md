@@ -2,7 +2,7 @@
 
 ## Where the tests are
 
-**All 202 tests live in `ios/OronzoCore/Tests/OronzoCoreTests/`.** Nothing else in the repository
+**All 241 tests live in `ios/OronzoCore/Tests/OronzoCoreTests/`.** Nothing else in the repository
 has a single automated test — not the iOS app target, not the watch app, not the web app.
 
 ```bash
@@ -11,17 +11,20 @@ cd ios/OronzoCore && swift test     # ~1 second, no simulator, no signing, no de
 
 | File | Tests | Covers |
 |---|---|---|
-| `PlanFlattenerTests.swift` | 30 | The flattening contract — sets, rounds, two-sided exercises, both rest mechanisms, naming, formatting |
-| `ExecutionEngineTests.swift` | 27 | The session state machine — start/tick/pause/resume/advance/goBack/finish/abandon/snapshot |
-| `SessionScreenTests.swift` | 35 | The presentation model both screens draw from — state words, `LAST`, what a rep interval shows |
-| `SessionRecordTests.swift` | 17 | The written-down session — the disk format, decode tolerance, what a restore refuses, and that a stale anchor cannot rewind |
+| `PlanFlattenerTests.swift` | 43 | The flattening contract — sets, rounds, two-sided exercises, all three synthetic intervals, naming, formatting |
+| `SessionScreenTests.swift` | 45 | The presentation model both screens draw from — state words, `LAST`, what a rep interval shows |
+| `ExecutionEngineTests.swift` | 31 | The session state machine — start/tick/pause/resume/advance/goBack/finish/abandon/snapshot |
+| `SessionRecordTests.swift` | 18 | The written-down session — the disk format, decode tolerance, what a restore refuses, and that a stale anchor cannot rewind |
 | `PlanSummaryTests.swift` | 16 | What the plan summary says about a plan, including the spoken meta line |
+| `LinkTests.swift` | 13 | The phone↔watch wire format — the control vocabulary, a whole snapshot, decode tolerance, and the version handshake |
 | `SessionScheduleTests.swift` | 13 | When a surface may next wake — the rule that replaced polling, and the wake counts that prove it |
-| `LinkTests.swift` | 12 | The phone↔watch wire format — the control vocabulary, a whole snapshot, decode tolerance, and the version handshake |
+| `LoadAdjustmentTests.swift` | 11 | The runner's load arrows — what a nudge is, and which interval it may be applied to |
 | `DesignTokenTests.swift` | 11 | The token scale — every role resolves, on both surfaces |
 | `HapticLanguageTests.swift` | 10 | Which transitions earn a cue, and which stay silent |
 | `WatchProjectionTests.swift` | 8 | Walking the interval list forward from an absolute anchor |
-| `AskScheduleTests.swift` | 5 | That the watch's recovery stays bounded — four attempts, never closer than five seconds |
+| `RecordableWorkoutTests.swift` | 8 | Whether a session is worth recording, and its payload — a pure function, so only the write itself needs the phone |
+| `SessionClearTests.swift` | 8 | When the phone may clear the watch's screen — the guard that must not read "no session in memory" as "no session" |
+| `AskScheduleTests.swift` | 6 | That the watch's recovery stays bounded — four attempts, never closer than five seconds |
 
 This is possible because `OronzoCore` is a **plain SwiftPM package** rather than a folder of shared
 sources inside the app target. That decision is stated in `ios/project.yml`: *"so that it can be

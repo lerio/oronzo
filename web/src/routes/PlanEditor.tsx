@@ -19,6 +19,10 @@ import {
 
 const blankPlan = (): Plan => ({ id: '', name: '', blocks: [] });
 
+/** What the "get in position" checkbox writes. The column is a duration so that a per-step value
+ * would need no second migration; five seconds is the only value there is for now. */
+const PREPARE_SECONDS = 5;
+
 function stepFromExercise(exercise?: Exercise): PlanStep {
   const isTime = exercise?.default_mode === 'time';
   return {
@@ -35,6 +39,10 @@ function stepFromExercise(exercise?: Exercise): PlanStep {
     // builder is where the effort is chosen; an exercise cannot dictate it, because a HIIT block
     // runs the same movement hard and easy.
     intensity: null,
+    // Opt-in, and off until somebody ticks it: a timed step is not always work — the seeded HIIT
+    // blocks prescribe their recoveries as timed steps too, and nothing tells those apart from a
+    // hold. See `flattenPlan`.
+    prepare_seconds: null,
   };
 }
 
@@ -413,6 +421,28 @@ export default function PlanEditor() {
                               </option>
                             ))}
                           </select>
+                        </label>
+
+                        {/* A timed step starts the moment the previous one ends, so the first
+                            seconds of the hold are spent getting into position. Ticking this puts
+                            a five-second "Get in position" in front of every set — and before
+                            each side of a two-sided exercise. The value is a duration in the
+                            database so a per-step one would need no migration; five seconds is
+                            the only value there is for now. */}
+                        <label
+                          className="inline-field"
+                          title="A five-second 'Get in position' before each set of this exercise"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={step.prepare_seconds != null}
+                            onChange={(e) =>
+                              updateStep(blockIndex, stepIndex, {
+                                prepare_seconds: e.target.checked ? PREPARE_SECONDS : null,
+                              })
+                            }
+                          />
+                          <span>Add time for getting in position</span>
                         </label>
                       </>
                     ) : (

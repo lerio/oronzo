@@ -141,9 +141,10 @@ cd web && K=$(grep VITE_SUPABASE_PUBLISHABLE_KEY .env.local | cut -d= -f2) \
 curl -s -o /dev/null -w "0011 dropped equipment:   %{http_code}\n" "$U/rest/v1/exercises?select=equipment&limit=1" -H "apikey: $K"
 curl -s -o /dev/null -w "0012 has_two_sides:       %{http_code}\n" "$U/rest/v1/exercises?select=has_two_sides&limit=1" -H "apikey: $K"
 curl -s -o /dev/null -w "0013 step intensity:      %{http_code}\n" "$U/rest/v1/plans?select=id,plan_blocks(plan_steps(intensity))&limit=1" -H "apikey: $K"
+curl -s -o /dev/null -w "0014 step prepare:        %{http_code}\n" "$U/rest/v1/plans?select=id,plan_blocks(plan_steps(prepare_seconds))&limit=1" -H "apikey: $K"
 ```
 
-`0011` expects **400** (the column is gone); `0012` and `0013` expect **200**.
+`0011` expects **400** (the column is gone); `0012`, `0013` and `0014` expect **200**.
 
 **`0010` cannot be probed this way** — it only deletes rows, and RLS means an anonymous
 caller sees nothing either way. Ask the SQL editor instead, where the answer is a number:
@@ -159,6 +160,12 @@ select count(*) from exercises where user_id is null;   -- 0 once 0010 has run
 | ahead of the code (a column was added) | its insert names a column that is not there → `400` on create | a named select over that column → every fetch `400`s, plan list falls back to the cache |
 | behind the code (a column was dropped) | it still writes the dropped column → `400` on create | unaffected: it selects by name and ignores what it does not ask for |
 
+**The third direction is the quiet one.** A column *added* to `plan_steps` does not break the
+deployed bundle — it simply does not send the key — but `save_plan` replaces the whole tree, so
+every save from that bundle writes null over it. Nothing 400s and nothing is logged; the values
+are just gone the next time a plan is saved. Apply an additive migration and `npm run deploy` in
+the same sitting, before anything is authored into the new column. (`0014` is the worked example.)
+
 So the rule is **migrations first, clients second**, and the client-side half is manual:
 `cd web && npm run deploy` publishes the web bundle (there is no git integration), and the
 phone takes a rebuild from Xcode (`cd ios && xcodegen generate && open Oronzo.xcodeproj`).
@@ -171,7 +178,7 @@ curl -s https://oronzo.valerio-donati.workers.dev/ | grep -o 'assets/index-[^"]*
 ```
 
 then fetch that file and grep it for a string literal only the newest code contains — for
-example `rest_after_seconds,intensity` (the plan select, `0013`), or `2 sides`. Zero hits
+example `intensity,prepare_seconds` (the plan select, `0014`), or `2 sides`. Zero hits
 means the live bundle predates that change, whatever is in the working tree.
 
 ## Seeing the session runner without a backend

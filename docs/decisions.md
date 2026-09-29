@@ -97,6 +97,51 @@ ever appears in one place. If the name slot ever needs the room back, an optiona
 `Interval` plus a `LinkTests` tolerance case is the escape hatch, and the `(left)`/`(right)`
 spelling would move with it.
 
+## Getting in position: the plan asks for it, and the interval has no type of its own
+
+A timed interval starts the instant the previous one ends, so the first seconds of a hold are spent
+getting into the hold. The fix is five seconds of "Get in position" in front of it — and four
+things about that were decided rather than fallen into.
+
+**It is opt-in per step, not a rule of the flattener.** The obvious rule — every timed interval
+gets one — was written, planned and then dropped, because a timed step is *not always work*. The
+seeded HIIT blocks prescribe their recoveries as timed steps (`Hard — 20 sec` alternating with
+`Easy — 40 sec`, and the demo's `Recover`), and nothing in the model distinguishes a recovery from
+a hold: `intensity` is optional and a warm-up is `.low` too, and there is no other candidate.
+Under the blanket rule Monday's plan gains twelve prepares and sixty seconds, six of them in front
+of a recovery. So the decision moved to where the knowledge is — `plan_steps.prepare_seconds`, and
+a checkbox on the timed rows of the builder.
+
+**A duration, not a flag.** `rest_after_seconds` is the shape being copied, and the ask was
+explicit that five seconds is only today's value: with seconds in the column, a per-step value is
+a builder change and not a ninth `save_plan`. The builder holds the `5`; the database does not care
+what it holds, so nothing has to be migrated to widen it.
+
+**No new `StepKind` case, and no new field on `Interval`.** This is the `0012` reasoning applied
+again. `Interval` crosses to the Watch whole inside a snapshot, and `kind` is non-optional with a
+synthesised decoder — so a third case is not a new possibility but a *decode failure of the entire
+snapshot* for any build that predates it, which lands as "No workout" on the wrist with nothing
+logged anywhere. The phone and the Watch are installed separately and a weekly re-sign can replace
+one and not the other, so that pairing is not hypothetical. Naming it instead costs nothing and
+degrades perfectly: an older build draws a five-second exercise interval whose name is already the
+right words. The escape hatch is the one `0012` recorded — an optional field plus a `LinkTests`
+tolerance case — if a surface ever needs to *reason* about the interval rather than draw it.
+
+**It is emitted inside the side loop.** So a two-sided timed exercise gets one before the left and
+one before the right — flipping over is not part of the hold — while the rest stays outside and
+still falls once for the pair. And it is emitted before the interval it precedes takes its `index`,
+because an index is an interval's identity in the engine: `outcomes` is keyed by it and
+`SessionRecord` refuses to restore a record whose keys fall outside the array.
+
+The costs are known and accepted. The `NEXT` line reads `NEXT · Get in position` during the
+interval before a timed one, so the exercise name arrives five seconds early rather than at the
+start of the rest. The Watch buzzes `start` entering the prepare and again entering the work —
+"get ready", then "go" — where a boundary used to buzz once. A finished session logs it as an
+`exercise` row named "Get in position" with no `exercise_id`, since `session_steps.kind` allows
+only `exercise|rest`. And a pending load nudge is discarded when a prepare begins, because a
+prepare carries no `stepID` and the discard rule compares steps — which is already true today
+whenever `restAfter` is set, so it is existing behaviour reached by one more route.
+
 ## A session is not lost because a refresh failed
 
 `AuthStore.restore()` decides "signed in" by whether the **keychain holds a session**, and then

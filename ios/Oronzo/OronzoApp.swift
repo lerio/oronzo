@@ -92,9 +92,16 @@ private struct RootView: View {
                 // See `DemoPlan.wantsAdjustWalkthrough` for why this route is the only one.
                 if DemoPlan.wantsAdjustWalkthrough, let running = session.controller {
                     Task { @MainActor in
-                        // Onto the bench press — the demo's first weighted step, two intervals in.
+                        // Onto the bench press — the demo's first weighted step, and the one the
+                        // arrows are for. Found by its step id rather than by counting intervals:
+                        // how many intervals come before it is a fact about the flattener, and a
+                        // walk that assumes a number goes wrong silently when that changes. The
+                        // bound is a backstop, so a fixture that loses its step cannot spin.
                         try? await Task.sleep(for: .seconds(2))
-                        running.advance()
+                        for _ in 0..<8 {
+                            if running.current?.stepID == DemoPlan.adjustStepID { break }
+                            running.advance()
+                        }
                         try? await Task.sleep(for: .seconds(2))
                         running.nudgeWeight(up: true)
                         // Long enough to look at the pending state, then the save that removes it.

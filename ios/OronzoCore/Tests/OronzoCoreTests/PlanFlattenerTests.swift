@@ -367,6 +367,170 @@ final class PlanFlattenerTests: XCTestCase {
         XCTAssertEqual(intervals[6].blockRound, 2)
     }
 
+    // MARK: - "Get in position" (a step's `prepareSeconds`)
+
+    /// The whole feature: a timed step that asks for preparation time gets it, immediately in
+    /// front of the interval it prepares for.
+    func testATimedStepAskingForPrepareIsPrecededByOne() {
+        let plan = Plan(name: "P", blocks: [
+            PlanBlock(steps: [PlanStep(label: "Plank", mode: .time, duration: 30, prepareSeconds: 5)]),
+        ])
+
+        let intervals = PlanFlattener.flatten(plan, exercises: [:])
+
+        XCTAssertEqual(intervals.map(\.name), ["Get in position", "Plank"])
+        XCTAssertEqual(intervals.map(\.duration), [5, 30])
+        XCTAssertEqual(intervals.map(\.index), [0, 1], "indices stay contiguous")
+    }
+
+    /// Opt-in, and the default is what every plan had before the field existed.
+    func testAStepThatDoesNotAskGetsNoPrepare() {
+        let plan = Plan(name: "P", blocks: [
+            PlanBlock(steps: [PlanStep(label: "Plank", mode: .time, duration: 30)]),
+        ])
+
+        XCTAssertEqual(PlanFlattener.flatten(plan, exercises: [:]).map(\.name), ["Plank"])
+    }
+
+    /// The prepare is emitted inside the set loop, so each set gets its own — and the rest is
+    /// emitted outside it, so the rest still falls once per set.
+    func testEverySetOfATimedStepGetsItsOwnPrepare() {
+        let plan = Plan(name: "P", blocks: [
+            PlanBlock(steps: [
+                PlanStep(label: "Plank", sets: 3, mode: .time, duration: 30, restAfter: 60, prepareSeconds: 5),
+            ]),
+        ])
+
+        let intervals = PlanFlattener.flatten(plan, exercises: [:])
+
+        XCTAssertEqual(intervals.map(\.name), [
+            "Get in position", "Plank", "Break",
+            "Get in position", "Plank", "Break",
+            "Get in position", "Plank", "Break",
+        ])
+        XCTAssertEqual(intervals.map(\.setIndex), [1, 1, 1, 2, 2, 2, 3, 3, 3])
+    }
+
+    /// It is emitted inside the *side* loop, so a two-sided timed exercise gets one before the
+    /// left and one before the right — flipping over is not part of the hold. The pair is still
+    /// one set, so the rest is still one rest.
+    func testATwoSidedTimedStepGetsAPrepareBeforeEachSide() {
+        let plank = UUID()
+        let plan = Plan(name: "P", blocks: [
+            PlanBlock(steps: [
+                PlanStep(exerciseID: plank, sets: 1, mode: .time, duration: 45,
+                         restAfter: 30, prepareSeconds: 5),
+            ]),
+        ])
+
+        let intervals = PlanFlattener.flatten(
+            plan,
+            exercises: [plank: ExerciseInfo(name: "Side Plank", hasTwoSides: true)]
+        )
+
+        XCTAssertEqual(intervals.map(\.name), [
+            "Get in position", "Side Plank (left)",
+            "Get in position", "Side Plank (right)",
+            "Break",
+        ])
+        XCTAssertEqual(intervals.map(\.setIndex), [1, 1, 1, 1, 1], "the pair is still one set")
+    }
+
+    /// A block round repeats the whole group, and a prepare is part of the group.
+    func testABlockRoundRepeatsThePrepare() {
+        let plan = Plan(name: "P", blocks: [
+            PlanBlock(rounds: 2, steps: [PlanStep(label: "Plank", mode: .time, duration: 20, prepareSeconds: 5)]),
+        ])
+
+        XCTAssertEqual(
+            PlanFlattener.flatten(plan, exercises: [:]).map(\.name),
+            ["Get in position", "Plank", "Get in position", "Plank"]
+        )
+    }
+
+    /// Not a rest, and never in front of one: the prepare belongs to the step loop and a rest
+    /// is emitted from outside it.
+    func testARestIsNeverImmediatelyPrecededByAPrepare() {
+        let plan = Plan(name: "P", blocks: [
+            PlanBlock(steps: [
+                PlanStep(label: "Plank", mode: .time, duration: 30, restAfter: 60, prepareSeconds: 5),
+            ]),
+        ])
+
+        let intervals = PlanFlattener.flatten(plan, exercises: [:])
+
+        XCTAssertEqual(intervals.map(\.name), ["Get in position", "Plank", "Break"])
+        for (previous, next) in zip(intervals, intervals.dropFirst()) {
+            XCTAssertFalse(
+                previous.name == "Get in position" && next.kind == .rest,
+                "a prepare was emitted in front of a rest"
+            )
+        }
+    }
+
+    /// The guard is the flattener's, not the builder's: a value that got onto a step the builder
+    /// never offers the checkbox for must not produce an interval.
+    func testARepStepAskingForPrepareGetsNone() {
+        let plan = Plan(name: "P", blocks: [
+            PlanBlock(steps: [PlanStep(label: "Squat", mode: .reps, reps: 10, prepareSeconds: 5)]),
+        ])
+
+        XCTAssertEqual(PlanFlattener.flatten(plan, exercises: [:]).map(\.name), ["Squat"])
+    }
+
+    /// A timed step with no duration emits an interval that cannot count down, so there is
+    /// nothing to get ready for.
+    func testATimedStepWithNoDurationGetsNoPrepare() {
+        let plan = Plan(name: "P", blocks: [
+            PlanBlock(steps: [PlanStep(label: "Plank", mode: .time, prepareSeconds: 5)]),
+        ])
+
+        XCTAssertEqual(PlanFlattener.flatten(plan, exercises: [:]).map(\.name), ["Plank"])
+    }
+
+    /// **An exercise interval, deliberately.** A new `StepKind` case would fail to decode every
+    /// snapshot already written for a build that predates it — a silent "No workout" on the
+    /// wrist — so the prepare rides as a plain timed interval and is named, like the side suffix
+    /// in `0012`. An older build draws it correctly; this pins that it stays that way.
+    func testThePrepareIsAPlainExerciseIntervalWithNoStepBehindIt() {
+        let plan = Plan(name: "P", blocks: [
+            PlanBlock(name: "Main", steps: [
+                PlanStep(id: UUID(), exerciseID: UUID(), label: "Plank", mode: .time, duration: 30,
+                         targetWeightKg: 10, intensity: .hard, prepareSeconds: 5),
+            ]),
+        ])
+
+        let prepare = PlanFlattener.flatten(plan, exercises: [:])[0]
+
+        XCTAssertEqual(prepare.kind, .exercise)
+        XCTAssertEqual(prepare.mode, .time)
+        XCTAssertEqual(prepare.name, "Get in position")
+        XCTAssertEqual(prepare.duration, 5)
+        XCTAssertNil(prepare.exerciseID)
+        XCTAssertNil(prepare.stepID, "no row behind it — which is what keeps the load arrows off it")
+        XCTAssertNil(prepare.reps)
+        XCTAssertNil(prepare.targetWeightKg)
+        XCTAssertNil(prepare.intensity, "the step's effort is not the prepare's")
+    }
+
+    func testThePrepareCarriesTheContextOfTheSetItPreparesFor() {
+        let plan = Plan(name: "P", blocks: [
+            PlanBlock(name: "Circuit", rounds: 2, steps: [
+                PlanStep(label: "Plank", sets: 3, mode: .time, duration: 30, prepareSeconds: 5),
+            ]),
+        ])
+
+        let intervals = PlanFlattener.flatten(plan, exercises: [:])
+
+        // Round 2, set 2 of 3 — the third prepare of the second round.
+        let secondOfRoundTwo = intervals.filter { $0.name == "Get in position" }[4]
+        XCTAssertEqual(secondOfRoundTwo.setIndex, 2)
+        XCTAssertEqual(secondOfRoundTwo.setCount, 3)
+        XCTAssertEqual(secondOfRoundTwo.blockRound, 2)
+        XCTAssertEqual(secondOfRoundTwo.blockRoundCount, 2)
+        XCTAssertEqual(secondOfRoundTwo.blockName, "Circuit")
+    }
+
     // MARK: - Rests are emitted, not authored
 
     /// A rest is no longer something you put in a plan — it is emitted between sets, and

@@ -56,6 +56,12 @@ export interface PlanStep {
   rest_after_seconds: number | null;
   /** How hard this step is meant to be, for a timed one. Null means nobody said. */
   intensity: Intensity | null;
+  /** Seconds of "Get in position" before each set of a timed step — and before each side of a
+   * two-sided one. Null means none, which is every step until somebody ticks the box.
+   *
+   * A duration rather than a flag so a per-step value would need no second migration; the
+   * builder offers five seconds and nothing else. */
+  prepare_seconds: number | null;
 }
 
 export interface PlanBlock {
@@ -152,6 +158,9 @@ export const MUSCLE_GROUPS = [
 
 const REST_LABEL = 'Break';
 
+/** The same for the prep interval a step's `prepare_seconds` asks for. */
+const PREPARE_LABEL = 'Get in position';
+
 /**
  * Flatten a plan into the ordered interval sequence the session engine executes.
  *
@@ -160,6 +169,7 @@ const REST_LABEL = 'Break';
  *       for step in steps ordered by position:
  *         for setIndex in 1..step.sets:
  *           for side in sideSuffixes(step):        // [null], or [left, right]
+ *             if step.prepare_seconds: emit prepare   // "Get in position"
  *             emit step, named "… (left)" / "… (right)" when there is a side
  *           if step.rest_after_seconds: emit rest  // once per set, after the pair
  *       if blockRound < block.rounds and block.rest_between_rounds_seconds: emit rest
@@ -172,6 +182,12 @@ const REST_LABEL = 'Break';
  * The two rest mechanisms differ deliberately: `rest_after_seconds` fires after EVERY set
  * including the last, so an exercise's rest carries you into the next exercise, whereas
  * `rest_between_rounds_seconds` fires only BETWEEN a block's rounds.
+ *
+ * **The prepare is the third synthetic interval, and the only opt-in one.** It is emitted inside
+ * the *side* loop, so a two-sided exercise gets one before the left and one before the right,
+ * while the rest stays outside it and still falls once for the pair. It never applies to a
+ * rep-based step — whose interval cannot count down — nor to a rest, which is emitted from
+ * outside the step loop entirely.
  *
  * `exercises` carries the name *and* whether the exercise is done per side, which is why it is a
  * map of `Exercise` rather than of strings. No default: a missing map here is not a visible
@@ -194,6 +210,19 @@ export function flattenPlan(plan: Plan, exercises: Map<string, Exercise>): Inter
           // A two-sided exercise emits both sides here, so the rest below still falls once per
           // set — after the pair, which is what "a set of lunges" means when you are doing them.
           for (const side of sideSuffixes(step, exercises)) {
+            // In front of the interval it prepares for, and inside the side loop, so a two-sided
+            // exercise gets one before the left and one before the right. Pushed *first* so both
+            // take their index from `intervals.length` at the moment they are built: an index is
+            // an interval's identity in the engine, and the two must stay contiguous.
+            if (step.prepare_seconds && step.prepare_seconds > 0 && isTimed(step)) {
+              intervals.push(
+                prepareInterval(
+                  intervals.length, step.prepare_seconds, setIndex, Math.max(1, step.sets),
+                  blockRound, blockRounds,
+                ),
+              );
+            }
+
             intervals.push(
               toInterval(step, intervals.length, setIndex, side, blockRound, blockRounds, exercises),
             );
@@ -237,6 +266,16 @@ function sideSuffixes(step: PlanStep, exercises: Map<string, Exercise>): (string
   return exercise?.has_two_sides ? ['left', 'right'] : [null];
 }
 
+/**
+ * Whether the interval this step will emit runs against a clock — the same question `toInterval`
+ * asks when it chooses between a duration and reps. A step saying `mode: 'time'` with no duration
+ * in it emits an interval that cannot count down, and a prepare in front of one would be five
+ * seconds before nothing.
+ */
+function isTimed(step: PlanStep): boolean {
+  return step.mode === 'time' && (step.duration_seconds ?? 0) > 0;
+}
+
 function toInterval(
   step: PlanStep,
   index: number,
@@ -268,6 +307,39 @@ function toInterval(
     // Carried straight through: it is the step's own word, and the side above is the only thing
     // this function decides.
     intensity: step.intensity,
+  };
+}
+
+/**
+ * The synthetic "get in position" interval a step's `prepare_seconds` asks for.
+ *
+ * `kind` is `'exercise'`, not a kind of its own: the interval crosses to the Watch whole inside a
+ * snapshot, and an unknown `StepKind` would fail to decode *every* snapshot written for a build
+ * that predates it — a silent "No workout" on the wrist. As a plain timed interval it is a
+ * five-second countdown with the right words already on it, and an older build draws it
+ * correctly. It carries the context of the interval it precedes, so the preview can say which set
+ * it is getting you ready for, and no step behind it.
+ */
+function prepareInterval(
+  index: number,
+  duration: number,
+  setIndex: number,
+  setCount: number,
+  blockRound: number,
+  blockRoundCount: number,
+): Interval {
+  return {
+    index,
+    kind: 'exercise',
+    name: PREPARE_LABEL,
+    duration_seconds: duration,
+    reps: null,
+    target_weight_kg: null,
+    set_index: setIndex,
+    set_count: setCount,
+    block_round: blockRound,
+    block_round_count: blockRoundCount,
+    intensity: null,
   };
 }
 

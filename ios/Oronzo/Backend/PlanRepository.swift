@@ -38,6 +38,9 @@ private struct StepRow: Decodable {
     /// rather than failing the whole step, because a plan that will not load is worse than a plan
     /// whose effort is missing.
     let intensity: String?
+    /// Optional for the same reason every column on this row is: an older database — or a
+    /// response that predates `0014` — must still decode.
+    let prepare_seconds: Int?
 }
 
 private struct ExerciseRow: Decodable {
@@ -109,7 +112,8 @@ private extension PlanRow {
                                     reps: step.reps,
                                     targetWeightKg: step.target_weight_kg,
                                     restAfter: step.rest_after_seconds.map(TimeInterval.init),
-                                    intensity: step.intensity.flatMap(Intensity.init(rawValue:))
+                                    intensity: step.intensity.flatMap(Intensity.init(rawValue:)),
+                                    prepareSeconds: step.prepare_seconds.map(TimeInterval.init)
                                 )
                             }
                     )
@@ -127,7 +131,7 @@ struct PlanRepository: Sendable {
     private static let planSelect =
         "id,name,plan_blocks(id,position,name,rounds,rest_between_rounds_seconds,"
         + "plan_steps(id,position,exercise_id,label,sets,mode,duration_seconds,reps,"
-        + "target_weight_kg,rest_after_seconds,intensity))"
+        + "target_weight_kg,rest_after_seconds,intensity,prepare_seconds))"
 
     func fetchPlans() async throws -> [Plan] {
         let rows: [PlanRow] = try await Backend.client

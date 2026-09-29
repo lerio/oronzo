@@ -62,6 +62,16 @@ public struct PlanStep: Codable, Equatable, Sendable {
     public var restAfter: TimeInterval?
     /// How hard this step is meant to be, for a timed one. Nil means nobody said.
     public var intensity: Intensity?
+    /// A "Get in position" interval of this many seconds before each set — and before each side
+    /// of a two-sided exercise. Nil means none, which is what an untimed step always has.
+    ///
+    /// **Opt-in, and it is the plan's decision rather than a rule of the flattener**, because a
+    /// timed step is not always work: the seeded HIIT blocks prescribe their recoveries as timed
+    /// steps too ("Easy — 40 sec"), and nothing in the model tells those apart from a hold.
+    ///
+    /// A duration rather than a flag so that a per-step value needs no second migration; the
+    /// builder offers five seconds and nothing else. See `PlanFlattener`.
+    public var prepareSeconds: TimeInterval?
 
     public init(
         id: UUID? = nil,
@@ -73,7 +83,8 @@ public struct PlanStep: Codable, Equatable, Sendable {
         reps: Int? = nil,
         targetWeightKg: Double? = nil,
         restAfter: TimeInterval? = nil,
-        intensity: Intensity? = nil
+        intensity: Intensity? = nil,
+        prepareSeconds: TimeInterval? = nil
     ) {
         self.id = id
         self.exerciseID = exerciseID
@@ -85,6 +96,7 @@ public struct PlanStep: Codable, Equatable, Sendable {
         self.targetWeightKg = targetWeightKg
         self.restAfter = restAfter
         self.intensity = intensity
+        self.prepareSeconds = prepareSeconds
     }
 
     // MARK: - Display
