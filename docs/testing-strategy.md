@@ -137,6 +137,26 @@ you just started.
 For the web app, screenshot it with headless Chrome. Arithmetic alone missed real CSS bugs twice
 on this project — a selector that never matched, and a placeholder clipped in a narrow field.
 
+**Dragging a plan is the one thing on this list that nothing here can check.** There is no web
+test framework, and a headless screenshot cannot perform an HTML5 drag — the events are the whole
+feature, and `swift test` never sees the plans list. So the drag is verified by hand, and the
+sequence matters because the order lives in the database rather than in the page. Step 1 is not
+optional and comes first for the reason `docs/runbook.md` gives: both clients order by a column
+that does not exist until it is applied, so until then the plan list is a `400`.
+
+1. Apply `0015` in the SQL Editor, then read the probe in `docs/runbook.md` — `0015` must be `200`
+   where it was `400`.
+2. `cd web && npm run build && npm run lint`.
+3. `cd web && npm run dev`, drag a row, then **reload** — the order must survive, which is what
+   proves the RPC ran rather than the array merely moving on screen.
+4. Drag a row and **drop it where it started** — no request should be sent at all.
+5. On the phone, **pull to refresh** the plans list. The order is read on fetch, so nothing about
+   it is live: there is no push channel, and a phone left showing an old order is a phone that has
+   not refetched, not a phone that disagreed.
+
+Step 5 is the only one that proves the feature's actual claim — *"the same order in the iPhone
+app"* — and it needs the device. A simulator cannot get past sign-in without an account.
+
 ## How to use this when something breaks
 
 **If a workout advances wrongly, prove it in `OronzoCore` first.** The flattener and the state

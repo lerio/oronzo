@@ -54,10 +54,17 @@ Web:    Route component → lib/api.ts → supabase client
 - `web/src/lib/api.ts` — every Supabase call for the SPA. No route or component imports
   `supabase` directly.
 
-**Read ordering is normalised client-side.** PostgREST does not guarantee embed order, so both
-clients sort blocks and steps by `position` after fetching (`PlanRepository.swift:52,59`,
-`api.ts` `toPlan`). The live preview's `normalize()` re-indexes `position` from array order after
-every mutation, because positions must be contiguous per parent.
+**Read ordering is normalised client-side — except the plan list, which the server orders.**
+PostgREST does not guarantee embed order, so both clients sort blocks and steps by `position`
+after fetching (`PlanRepository.swift:96,103`, `api.ts` `toPlan`). The live preview's `normalize()`
+re-indexes `position` from array order after every mutation, because positions must be contiguous
+per parent.
+
+The **top-level** query is different: `order` there is a real `ORDER BY` on the outer query, so it
+is a guarantee rather than a hint, and both clients let the database do it — `plans.position`, the
+order the user drags plans into. That column is deliberately absent from both select strings: a
+column a client only orders by need not be returned (verified against the live API), which keeps
+the payload and the iOS `PlanCache` shape unchanged. See `docs/decisions.md`.
 
 **Defensive coercion at the boundary.** A malformed row degrades rather than throwing:
 `max(1, block.rounds)`, `StepMode(rawValue: step.mode ?? "reps") ?? .reps`.

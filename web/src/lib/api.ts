@@ -28,10 +28,34 @@ function toPlan(row: PlanRow): Plan {
   };
 }
 
+/**
+ * The user's plans, in the order they arranged them.
+ *
+ * `position` is not in `PLAN_SELECT` and does not need to be: PostgREST applies `order` to the
+ * outer query independently of the select list, so ordering by a column that is not returned is
+ * legal. Keeping it out of the select keeps the payload — and therefore `PlanRow`, `Plan` and the
+ * iOS `PlanCache` — unchanged.
+ */
 export async function listPlans(): Promise<Plan[]> {
-  const { data, error } = await supabase.from('plans').select(PLAN_SELECT).order('updated_at', { ascending: false });
+  const { data, error } = await supabase.from('plans').select(PLAN_SELECT).order('position', { ascending: true });
   if (error) throw error;
   return (data as unknown as PlanRow[]).map(toPlan);
+}
+
+/**
+ * Saves a new order for the plans list. The array **is** the order: index 0 is the top.
+ *
+ * One RPC rather than N row updates, for the reason `savePlan` is one: a reorder that half
+ * applies leaves two plans claiming the same position, and the list order stops meaning anything.
+ *
+ * The ids must be *every* plan the user has — `reorder_plans` refuses a partial list, because the
+ * positions it would leave behind collide. A plan created in another tab since this list was
+ * fetched therefore fails here rather than corrupting the order, and the caller reverts to the
+ * order it had before the drag. Reloading is the recovery: the refusal means this list is stale.
+ */
+export async function reorderPlans(ids: string[]): Promise<void> {
+  const { error } = await supabase.rpc('reorder_plans', { p_ids: ids });
+  if (error) throw error;
 }
 
 export async function getPlan(id: string): Promise<Plan | null> {

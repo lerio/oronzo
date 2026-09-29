@@ -11,11 +11,11 @@ ask for one rather than inventing it.
 Read, in this order:
 
 1. `ls supabase/migrations/` — take the **highest** number and use the next one. Right now that
-   is `0014_step_prepare_seconds.sql`, so the new file is `0015_$0.sql`. Zero-padded to four
+   is `0015_plan_position.sql`, so the new file is `0016_$0.sql`. Zero-padded to four
    digits, matching the existing files.
 2. **The newest definition of anything you are about to touch.** `save_plan` has been written
-   eight times — `0001`, `0003`, `0004`, `0005`, `0006`, `0008`, `0013`, `0014`; the *newest* one
-   is the current shape, not the one in `0001`. Copy from there, never from memory.
+   nine times — `0001`, `0003`, `0004`, `0005`, `0006`, `0008`, `0013`, `0014`, `0015`; the *newest*
+   one is the current shape, not the one in `0001`. Copy from there, never from memory.
 3. `docs/decisions.md` — the "Workout model" section, if the change touches blocks, steps, sets,
    rounds or rest. Several earlier attempts were removed on purpose and are documented as such.
 

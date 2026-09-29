@@ -95,16 +95,33 @@ declare
   v_user  uuid;
   v_plan  uuid;
   v_block uuid;
+  v_position integer;
 begin
   select id into v_user from auth.users order by created_at limit 1;
   if v_user is null then
     raise exception 'No account found. Create one under Authentication -> Users first.';
   end if;
 
+  -- Re-running this resets the plan's contents, not its place in the list: the position it already
+  -- held is carried over, and only a plan that was not there lands at the end. Appending rather
+  -- than taking a top spot is deliberate — these scripts restore a plan the user already had, so
+  -- they must not reorder the rest. `plans.position` has no default since `0015`, and `save_plan`
+  -- is its only other writer.
+  select position into v_position
+    from public.plans where user_id = v_user and name = 'Tuesday — Lower Body A';
+
   delete from public.plans where user_id = v_user and name = 'Tuesday — Lower Body A';
 
-  insert into public.plans (user_id, name)
-  values (v_user, 'Tuesday — Lower Body A')
+  insert into public.plans (user_id, name, position)
+  values (
+    v_user,
+    'Tuesday — Lower Body A',
+    coalesce(
+      v_position,
+      (select max(p.position) + 1 from public.plans p where p.user_id = v_user),
+      0
+    )
+  )
   returning id into v_plan;
 
   -- Warm-up — one pass through, no rest between the movements -----------------

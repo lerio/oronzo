@@ -190,7 +190,7 @@ Each of these cost real time. They are not hypothetical.
   line does not cover SwiftPM's directory. This exact mistake committed ~2,300 build files.
 - **Migrations are applied by hand**, pasted into the Supabase SQL Editor in filename order. They
   are **append-only**: never edit an applied migration's logic — write a new one. `save_plan` has
-  been written eight times, so check the newest definition before changing that function.
+  been written nine times, so check the newest definition before changing that function.
 - **Free personal team:** provisioning profiles expire every 7 days (the apps stop launching until
   rebuilt from Xcode), and there are no App Groups. **HealthKit signs** — see the next bullet. The
   Watch stays alive via `WKExtendedRuntimeSession` with `WKBackgroundModes = [physical-therapy]` — a

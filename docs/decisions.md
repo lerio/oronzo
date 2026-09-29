@@ -505,6 +505,65 @@ of production only incidentally, by the app happening to be signed out; this wri
 that. For a fixture the commit folds into the session and reports success without sending anything,
 which is also what makes the arrows exercisable by `-demoSession -demoAdjust` with no account.
 
+## The plan list's order is content, and it belongs to the user
+
+The list of plans was ordered by `updated_at desc` — not by a decision, but by what a timestamp
+will do if you let it. It meant the order could not be chosen at all (the only way to move a plan
+up was to edit it), and that editing a plan *did* move it, which is a different thing wearing the
+same clothes. The list is the picker you scroll on your way into a workout, so its order is
+content, and content the user cannot arrange is content that is wrong.
+
+`plans.position` (`0015`) stores that order, and both clients read it. Three choices inside it are
+worth the ink, because each looks like an accident and is not:
+
+**The first is that it is in the database at all.** `localStorage` would have been less work and
+correct on a desktop — and would have been wrong the moment the order had to mean anything on the
+phone, which is the whole point. The iPhone fetches the plans and has no way to ask the browser
+what it thinks.
+
+**The second is the deferrable constraint.** `unique (user_id, position)` is the only deferrable
+constraint in the schema, because it is the only one whose rows are renumbered **in place**:
+`plan_blocks` and `plan_steps` get a fresh tree on every save, so their constraints never see a
+transient collision. PostgreSQL checks a non-deferrable unique constraint per row, so renumbering
+0,1,2 to 1,2,0 fails on a state that is never committed. Deferring moves the check to COMMIT,
+which PostgREST makes the end of the request — with the honest consequence that a violation
+arrives as a `500` from the commit rather than from the function that caused it. That is why
+`reorder_plans` refuses a partial list rather than trusting one: a list it cannot complete is a
+failure it cannot report.
+
+**The third is that the backfill runs with `plans_set_updated_at` disabled.** The trigger is
+`new.updated_at = now()` with no condition, so a plain `update … set position` would have stamped
+every plan with the migration's own timestamp — destroying the ordering the backfill exists to
+preserve, and doing it most invisibly on a phone that has not been rebuilt yet, which still orders
+by that column. It is the only place in the schema where a trigger is switched off, and the reason
+is that this migration must not have a side effect.
+
+**What is accepted.** Reordering, and creating a plan at the top, both bump `updated_at` on every
+plan the user owns — the same trigger fires, and there is no way to write a position without it.
+The backfill is the one write that does not, because it runs with the trigger disabled, and the
+worth of that is bounded and worth stating exactly: it keeps the *pre-migration* order readable by
+a phone that has not been rebuilt yet, and it stops being true the first time anything writes a
+position. Nothing reads `updated_at` for ordering afterwards, and nothing renders it, so the cost
+is a column whose meaning is now "last time the list was touched" rather than "last edited". If
+something ever needs to know when a plan was last *edited*, that will have to be a `WHEN` clause on
+the trigger or a second column — and this paragraph is here so that the difference is found before
+it is relied on.
+
+**What it forecloses.** A new plan goes to the top, which means `save_plan` shifts the whole list
+down on the insert path. That is O(n) writes for a rare event on a personal account, and it buys
+two things the sibling tables also keep: positions are **non-negative**, and inserting never
+requires a negative one. The alternative — giving a new plan `min(position) - 1` and dropping the
+check — is cheaper and would have made `plans` the one table whose positions can go below zero.
+
+Contiguity is *not* on that list, and the difference is worth stating because it is the sort of
+claim that gets built on: **deleting a plan leaves a gap.** `deletePlan` is a bare delete and
+nothing renumbers, so removing the middle of three plans leaves `{0, 2}`. That is harmless — the
+order is still a total order, uniqueness is about equality rather than adjacency, and the shift
+and the seed scripts' append are both gap-safe — and the next drag heals it, because a reorder
+renumbers `0..n-1`. But it is why nothing should ever "tidy up" gaps with a
+`set position = position - 1`: that collides on the way, and being deferred it would surface as a
+failure at COMMIT, after the function had returned.
+
 ## The Lock Screen surface: built, and removed
 
 A Live Activity showing the current interval on the iPhone's Lock Screen was specified (PRD 0001's

@@ -442,7 +442,7 @@ export default function PlanEditor() {
                               })
                             }
                           />
-                          <span>Add time for getting in position</span>
+                          <span>Get in position</span>
                         </label>
                       </>
                     ) : (

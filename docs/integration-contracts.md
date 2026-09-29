@@ -16,21 +16,22 @@ schema. Then run the `contract-auditor` agent.
 | Exercise facts the flattener needs | `OronzoCore/Models.swift` (`ExerciseInfo`) | the `Exercise` record itself | `exercises.name`, `exercises.has_two_sides` |
 | Plan shape | `OronzoCore/Models.swift` (`Intensity`) | `types.ts` (`Plan`/`PlanBlock`/`PlanStep`, `INTENSITIES`) | `plans`, `plan_blocks`, `plan_steps` |
 | Reading a plan | `PlanRepository.swift` select string | `api.ts` `PLAN_SELECT` | the column names themselves |
+| Read order of the plan list | `PlanRepository.fetchPlans` `.order("position")` | `api.ts` `listPlans` `.order('position')` | `plans.position` |
 | Writing a session | `SessionLogger.swift` wire types | — | `sessions`, `session_steps` |
 
 The flattening rule itself is stated in full in `AGENTS.md`. What follows is the field-level and
 wire-level detail that the pseudocode does not carry.
 
-## Current schema (post-`0014`)
+## Current schema (post-`0015`)
 
 Migrations are **cumulative and append-only**, so `0001` is not the current shape. This is the
-shape as of `0014_step_prepare_seconds.sql`; check the newest file before assuming.
+shape as of `0015_plan_position.sql`; check the newest file before assuming.
 
 ```
 exercises      id, user_id, slug, name, muscle_group, default_mode,
                default_duration_seconds, default_reps, has_two_sides, notes, created_at, updated_at
 
-plans          id, user_id, name, created_at, updated_at
+plans          id, user_id, name, position, created_at, updated_at
 plan_blocks    id, plan_id, position, name, rounds, rest_between_rounds_seconds, created_at, updated_at
 plan_steps     id, block_id, exercise_id NOT NULL, position, label, sets, mode,
                duration_seconds, reps, target_weight_kg, rest_after_seconds,
@@ -55,6 +56,16 @@ a synthetic "Get in position" interval before **each set** of a timed step, and 
 of a two-sided one. It is nullable and positive-only, and unlike `intensity` it reaches no screen
 as a field — the interval it produces is a plain exercise interval named for what it is. See
 `docs/decisions.md`, *"A prepare the plan asks for"*.
+
+`plans.position` (`0015`) is the one ordering column **no client ever sends**. It exists because
+the list was ordered by `updated_at desc`, which made the order a side effect of editing; now the
+user arranges it in the builder and both clients read it. It is `not null` with no default, and
+`unique (user_id, position)` **deferrable initially deferred** — the only deferrable constraint in
+the schema, because `reorder_plans` and `save_plan` both renumber a whole list in one statement and
+a non-deferrable constraint is checked per row. Two consequences: a violation surfaces at COMMIT,
+from neither function, so it arrives as a PostgREST `500`; and the column is read only by `order`,
+never named in a select string — PostgREST applies `order` independently of `select`, verified
+against the live API. See `docs/decisions.md`, *"The plan list's order is content"*.
 
 One column changed meaning with `0012`: `session_steps.exercise_name` is now the *interval's*
 name, so a two-sided exercise logs two rows per set as `Reverse Lunge (left)` and `Reverse Lunge
@@ -99,9 +110,14 @@ per row plus aggregated to gate the Save button (`"Fix N step(s) before saving"`
 
 ## The `save_plan` payload
 
-The **only** way a plan is written. Written eight times over — the newest is in `0014`. It is a
+The **only** way a plan is written by an app — the three hand-run scripts in `supabase/plans/`
+write one directly, and are the only other writer that exists. Written nine times over — the
+newest is in `0015`. It is a
 whole-tree replace: it upserts `plans` by id (raising `42501` if the row is not the caller's),
-then `delete from plan_blocks where plan_id = …` and re-inserts every block and step.
+then `delete from plan_blocks where plan_id = …` and re-inserts every block and step. Since `0015`
+it also decides where a plan sits: a **new** plan is inserted at `position = 0` and every other
+plan of that user is shifted down one, while an **edit** leaves the position untouched, so saving a
+plan no longer moves it in the list.
 
 ```jsonc
 {
@@ -120,9 +136,11 @@ then `delete from plan_blocks where plan_id = …` and re-inserts every block an
 
 Three things about this that surprise people:
 
-- **`position` is ignored.** The web sends it; the RPC overwrites it from its own loop counters
-  (`v_block_pos`, `v_step_pos`). Array order *is* position order. Don't add position handling
-  server-side.
+- **`position` is ignored — the ones *inside* the payload, that is.** The web sends block and step
+  positions; the RPC overwrites them from its own loop counters (`v_block_pos`, `v_step_pos`).
+  Array order *is* position order. Don't add position handling server-side. This is a different
+  column from `plans.position`, which is the *list's* order, is never sent by any client, and **is**
+  computed server-side — see `reorder_plans` below.
 - **Every save mints new block and step UUIDs**, because the tree is deleted and re-inserted.
   Never hold a `plan_steps.id` across a save. (The `id?` fields on `PlanBlock`/`PlanStep` in
   `types.ts` are therefore vestigial on the web path.)
@@ -133,6 +151,24 @@ Three things about this that surprise people:
 statement inside it. A redefined function needs its grant re-stated —
 `grant execute on function public.save_plan(jsonb) to authenticated;` — which is why every
 migration that redefines it repeats the line.
+
+## `reorder_plans`
+
+`reorder_plans(p_ids uuid[]) returns void` — `0015`, `security invoker`, `set search_path =
+public`, granted to `authenticated`. The array **is** the new order: index 0 is the top. Called
+by the web builder after a drag; nothing else calls it, and iOS has no reorder path at all.
+
+**It is a whole-list operation, and refuses anything else.** Two checks, both explicit because RLS
+alone would make a foreign or repeated id a *silent no-op* rather than an error:
+
+- every id must be the caller's (counted, so a repeated id fails too) — `42501`;
+- the array must name **every** plan the caller has — `22023`.
+
+The second is not tidiness. If a plan the caller did not name kept an old position, the loop would
+hand that number to another row, and the deferred `unique (user_id, position)` would abandon the
+request **at COMMIT** — after the function had already returned `void`. So a refused reorder is not
+something the client can retry into working: `Plans.tsx` puts the dragged rows back where they were
+and reports it, and the list is stale until it is reloaded.
 
 ## The Watch wire format
 
@@ -286,10 +322,17 @@ session sleep: see `SessionController.nextWake` and `SessionRunner.runner`.
 2. Update all three: `Models.swift`, `types.ts`, and the newest `save_plan`.
 3. Update both hand-written select strings. A column dropped from the database but still named in
    a select string produces a **runtime 400 in an app on a device** — `tsc -b` cannot catch it.
+   The exception is a column a client only ever **orders** by: `order` is applied to the outer
+   query independently of `select`, so a column may be ordered without being returned, and
+   `plans.position` is exactly that case. Adding one to a select string it does not need would
+   change the payload for no reason — and, on iOS, invalidate every device's `PlanCache` file.
 4. If the change makes the currently-deployed web bundle invalid, **deploy before migrating** —
    the deployed bundle is what breaks, not the new build. `/deploy` exists to make you answer this
    question before shipping. **An additive column is the opposite case and the quieter one**: the
    deployed bundle keeps working, but a save from it writes null over the new column, because
    `save_plan` replaces the whole tree and that bundle does not send the key. Migrate and deploy in
-   the same sitting, before anything is authored into it. `0014` is the worked example.
+   the same sitting, before anything is authored into it. `0014` is the worked example. **A column
+   no client writes is quieter still, and that is `0015`**: a stale bundle saves exactly as it did,
+   and the only thing it cannot do is read the new order — which for a *read* is a `400` and an
+   empty list, so migrate before deploying either client.
 5. Run `swift test`, then the `contract-auditor` agent.

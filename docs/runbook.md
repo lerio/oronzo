@@ -95,6 +95,13 @@ deploys are manual; a push to `main` does not publish.
 Editor, in filename order. They are idempotent — `0002` upserts on `slug`, so re-running it
 corrects the seed rather than duplicating it.
 
+**The plan scripts in `supabase/plans/` are not migrations** — they are user data, pasted by
+hand once an account exists, and safe to re-run (each deletes and recreates only its own plan by
+name). They follow the migrations rather than leading them: since `0015` each names
+`plans.position`, so pasting one into a database that has not had `0015` applied fails on a
+column that does not exist. They append the plan to the end of the list rather than putting it at
+the top, because a re-seed restores a plan the user already had and must not reorder the rest.
+
 **The free project pauses after 7 days of low inactivity**, and a paused project is
 entirely unavailable until you restore it by hand from the dashboard. Normal use keeps it
 awake on its own; `ops/keepalive/` covers the stretches when you are away.
@@ -142,9 +149,23 @@ curl -s -o /dev/null -w "0011 dropped equipment:   %{http_code}\n" "$U/rest/v1/e
 curl -s -o /dev/null -w "0012 has_two_sides:       %{http_code}\n" "$U/rest/v1/exercises?select=has_two_sides&limit=1" -H "apikey: $K"
 curl -s -o /dev/null -w "0013 step intensity:      %{http_code}\n" "$U/rest/v1/plans?select=id,plan_blocks(plan_steps(intensity))&limit=1" -H "apikey: $K"
 curl -s -o /dev/null -w "0014 step prepare:        %{http_code}\n" "$U/rest/v1/plans?select=id,plan_blocks(plan_steps(prepare_seconds))&limit=1" -H "apikey: $K"
+curl -s -o /dev/null -w "0015 plan position:       %{http_code}\n" "$U/rest/v1/plans?select=id&order=position.asc&limit=1" -H "apikey: $K"
 ```
 
-`0011` expects **400** (the column is gone); `0012`, `0013` and `0014` expect **200**.
+`0011` expects **400** (the column is gone); `0012`, `0013`, `0014` and `0015` expect **200**.
+The `0015` line reads nothing but the id, so it also proves the `order` — PostgREST applies it to
+the outer query independently of `select`, which is what lets both clients order by a column they
+never fetch.
+
+**`reorder_plans` cannot be probed this way.** These curls carry no session, and the function
+raises `28000` on a null `auth.uid()` exactly as `save_plan` does — so whatever status comes back
+is an answer about authentication rather than about the function, and a `403` looks the same
+whether the function is absent or merely refusing an anonymous caller. Ask the SQL editor instead,
+where the answer is a row rather than a number:
+
+```sql
+select proname from pg_proc where proname in ('save_plan', 'reorder_plans');
+```
 
 **`0010` cannot be probed this way** — it only deletes rows, and RLS means an anonymous
 caller sees nothing either way. Ask the SQL editor instead, where the answer is a number:
@@ -166,6 +187,12 @@ every save from that bundle writes null over it. Nothing 400s and nothing is log
 are just gone the next time a plan is saved. Apply an additive migration and `npm run deploy` in
 the same sitting, before anything is authored into the new column. (`0014` is the worked example.)
 
+**The fourth is quieter still, and `0015` is it**: a column no client ever *writes*. A stale bundle
+saves exactly as it did, so there is nothing to lose — but it also cannot *read* the new order, and
+a read naming a column that is not there is a `400` with an empty list rather than an error anyone
+would recognise. On the phone that is indistinguishable from having no plans. So the rule holds and
+gets stricter: migrate first, then deploy, then rebuild.
+
 So the rule is **migrations first, clients second**, and the client-side half is manual:
 `cd web && npm run deploy` publishes the web bundle (there is no git integration), and the
 phone takes a rebuild from Xcode (`cd ios && xcodegen generate && open Oronzo.xcodeproj`).
@@ -178,8 +205,9 @@ curl -s https://oronzo.valerio-donati.workers.dev/ | grep -o 'assets/index-[^"]*
 ```
 
 then fetch that file and grep it for a string literal only the newest code contains — for
-example `intensity,prepare_seconds` (the plan select, `0014`), or `2 sides`. Zero hits
-means the live bundle predates that change, whatever is in the working tree.
+example `intensity,prepare_seconds` (the plan select, `0014`), `reorder_plans` (the reorder RPC,
+`0015`), or `2 sides`. Zero hits means the live bundle predates that change, whatever is in the
+working tree.
 
 ## Seeing the session runner without a backend
 

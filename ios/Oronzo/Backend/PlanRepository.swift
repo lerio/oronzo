@@ -137,7 +137,11 @@ struct PlanRepository: Sendable {
         let rows: [PlanRow] = try await Backend.client
             .from("plans")
             .select(Self.planSelect)
-            .order("updated_at", ascending: false)
+            // The order the user arranged the list in on the web, not when it was last edited.
+            // `position` is deliberately absent from `planSelect`: PostgREST applies `order`
+            // independently of the select list, and leaving it out keeps `PlanRow` — and the
+            // unversioned `PlanCache` file written from it — byte-for-byte what it was.
+            .order("position", ascending: true)
             .execute()
             .value
         return rows.map { $0.toDomain() }
