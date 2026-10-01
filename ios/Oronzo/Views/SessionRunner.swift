@@ -643,6 +643,12 @@ struct SessionRunner: View {
     /// And there is no "Try again" here, unlike the history line: a retry after a write that
     /// failed is the one path that could double-post if the failure landed after the store had
     /// already committed.
+    ///
+    /// **It can still change under the user's eyes**, without a button and without this screen
+    /// doing anything: an owed write is offered again when the app comes forward, and a summary
+    /// left open across an unlock is exactly that. `healthWrite` is observed, so the line the app
+    /// could not confirm is replaced by one it can — which is the screen agreeing with the ledger
+    /// rather than a second opinion about it.
     @ViewBuilder
     private var healthStatus: some View {
         switch controller.healthWrite {

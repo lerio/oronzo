@@ -81,7 +81,6 @@ final class SessionController {
     private let savesPlan: Bool
 
     private let audio: WorkoutAudio
-    private let health: HealthWorkoutRecorder
     private let repository = PlanRepository()
 
     /// Told when a load adjustment has been written, so the app's own copy of the plan can follow
@@ -90,12 +89,16 @@ final class SessionController {
     /// disagreeing with the server. See `PlanStore.applyLoadEdit`.
     var onLoadEditCommitted: ((StepLoadEdit) -> Void)?
 
-    /// Whether this session's outcome has already been offered to Health.
+    /// Whether this session's outcome has already been offered to Health **by this process**.
     ///
     /// Both places `completed` is set are single-shot by construction — each sits behind a
     /// `!isFinished` guard, and the engine emits `.finished` once. This is what makes that an
     /// invariant rather than a fact about today's call sites, in the spirit of the file's other
     /// cheap guards.
+    ///
+    /// **In-process only, and deliberately so.** A workout Health never confirmed is offered again
+    /// by a later launch, which is a different question with a different guard: the owed ledger on
+    /// disk, which is what makes an unconfirmed write survivable at all. See `HealthWriteQueue`.
     private var hasWrittenToHealth = false
 
     private let link = PhoneConnectivity.shared
@@ -108,7 +111,6 @@ final class SessionController {
         plan: Plan,
         exercises: [UUID: ExerciseInfo],
         audio: WorkoutAudio = WorkoutAudio(),
-        health: HealthWorkoutRecorder = HealthWorkoutRecorder(),
         persistsRecord: Bool = true,
         recordsHealth: Bool = true,
         savesPlan: Bool = true
@@ -116,7 +118,6 @@ final class SessionController {
         self.planID = plan.id
         self.planName = plan.name
         self.audio = audio
-        self.health = health
         self.engine = ExecutionEngine(
             intervals: PlanFlattener.flatten(plan, exercises: exercises)
         )
@@ -152,16 +153,11 @@ final class SessionController {
     /// this is a constructor, and `SessionController.init` has been side-effect-free since the
     /// `@State(initialValue:)` trap — SwiftUI builds these on every re-render, so anything done here
     /// is done to a copy that is about to be discarded.
-    init?(
-        restoring record: SessionRecord,
-        audio: WorkoutAudio = WorkoutAudio(),
-        health: HealthWorkoutRecorder = HealthWorkoutRecorder()
-    ) {
+    init?(restoring record: SessionRecord, audio: WorkoutAudio = WorkoutAudio()) {
         guard let engine = ExecutionEngine(restoring: record) else { return nil }
         self.planID = record.planID
         self.planName = record.planName
         self.audio = audio
-        self.health = health
         self.engine = engine
         self.persistsRecord = true
         // A record on disk is a real workout by definition — the demo fixtures are the only thing
@@ -435,6 +431,10 @@ final class SessionController {
         audio.stop()
         // The workout is over and its history is written, so there is nothing left to be durable
         // about. Clearing this is what stops a finished session from answering the watch forever.
+        //
+        // **The Health ledger is deliberately not cleared here**, and that asymmetry is the point:
+        // a workout Health never confirmed is still owed after the summary is dismissed, and it is
+        // `health-owed.json` — not this record — that carries the obligation across the launch.
         SessionRecordFile.clear()
 
         // `resign` refuses if a newer session has already advertised itself, which is the case
@@ -740,7 +740,13 @@ final class SessionController {
     /// Hands a finished session to Apple Health, if it was a workout.
     ///
     /// Guarded on `recordsHealth` so no fixture ever reaches the store, and on
-    /// `hasWrittenToHealth` so this is single-shot whatever calls it.
+    /// `hasWrittenToHealth` so this is single-shot **in this process** whatever calls it.
+    ///
+    /// **The obligation is written down before it is attempted.** That order is the whole repair:
+    /// a session whose write Health never confirms — a locked phone is the ordinary way — leaves
+    /// an entry in `health-owed.json`, and a later launch offers it again once the phone is awake
+    /// and unlocked, which is exactly when the answer stops being ambiguous. The first attempt is
+    /// unchanged otherwise; it is simply no longer the only one.
     private func writeToHealth(_ session: CompletedSession) {
         guard recordsHealth, !hasWrittenToHealth else { return }
         hasWrittenToHealth = true
@@ -749,38 +755,38 @@ final class SessionController {
             // A mis-tap, or a plan tapped through faster than three minutes. Reported rather than
             // hidden: the summary explains the absence, instead of leaving it to be guessed at.
             healthWrite = .tooShort
-            Log.debug(
+            Log.health(
                 "health: not recorded — \(Int(session.totalDuration.rounded()))s is under the \(Int(RecordableWorkout.minimumDuration))s minimum"
             )
             return
+        }
+
+        let owed = HealthOwedEntry(planName: planName, workout: workout, createdAt: .now)
+        HealthWriteQueue.shared.owe(owed)
+
+        // What became of *this* entry, whenever it is answered — including by a retry that runs
+        // long after this screen was drawn. Filtered by id, so a retry of an older workout, or a
+        // controller SwiftUI has since discarded, cannot write to a screen showing something else.
+        HealthWriteQueue.shared.onOutcome = { [weak self] id, outcome in
+            guard let self, id == owed.id else { return }
+            self.healthWrite = outcome
         }
 
         // Unstructured on purpose. The write has to outlive the screen that shows the summary —
         // the runner can be dismissed while it is still in flight — so this cannot be awaited by
         // whoever set `completed`. `healthWrite` is observed, so the line fills in when Health
         // answers, whenever that is.
-        Task {
-            do {
-                // What the store confirmed, rather than a bare success: a locked phone finishes the
-                // workout without handing it back, and that is not the same answer as a workout the
-                // store returned. See `HealthWriteOutcome.unconfirmed`.
-                healthWrite = try await health.record(workout)
-            } catch {
-                // The one state that means something went wrong on the phone rather than in the
-                // rule, so it carries the reason rather than a bare failure.
-                healthWrite = .failed(error.localizedDescription)
-                Log.debug("health: could not write the workout — \(error.localizedDescription)")
-            }
-        }
+        Task { await HealthWriteQueue.shared.resolve(owed.id) }
     }
 
     /// Asks for permission to write workouts, the first time a real one starts.
     ///
     /// Idempotent at both ends — `hasAsked` in the recorder, and the store's own
-    /// `statusForAuthorizationRequest` — which is what lets `reassert` call it unconditionally.
+    /// `statusForAuthorizationRequest` — which is what lets `reassert` call it unconditionally,
+    /// and why a retry running at launch never has to ask.
     private func requestHealthAuthorization() {
         guard recordsHealth else { return }
-        Task { await health.prepare() }
+        Task { await HealthWriteQueue.shared.prepare() }
     }
 }
 

@@ -36,4 +36,24 @@ public enum Log {
         logger.debug("\(text, privacy: .public)")
         #endif
     }
+
+    /// The health write's trail, at a level the system **keeps**.
+    ///
+    /// `debug` is memory-only: the system does not persist it, so it is visible while streaming
+    /// and gone afterwards — `log collect` on 30 September 2026 returned nothing for this app at
+    /// all, on the morning a workout failed to reach Apple Health. `notice` is persisted, which is
+    /// the difference between a diagnosis and a shrug.
+    ///
+    /// Its own category because it is the one thing here that must outlive the process, and
+    /// because the question it answers — *did Health take this workout?* — is asked days later,
+    /// from Settings or from a desk, never from the app.
+    private static let healthLogger = Logger(subsystem: subsystem, category: "health")
+
+    public static func health(_ message: @autoclosure () -> String) {
+        #if DEBUG
+        let text = message()
+        print("[Oronzo] \(text)")
+        healthLogger.notice("\(text, privacy: .public)")
+        #endif
+    }
 }

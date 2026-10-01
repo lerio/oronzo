@@ -298,6 +298,18 @@ It fails silently, so the log lines *are* the diagnosis. Both apps print with `L
 compiles out of release builds — check you are running a Debug build before concluding there is
 nothing to see.
 
+**Reading them after the fact.** `Log.debug` writes at os_log *debug* level, which the system never
+persists — those lines are visible only while streaming (`log stream --device --predicate 'subsystem
+== "com.lerio.oronzo"'`) and are gone afterwards. `log collect` returned nothing at all for this app
+on 30 September 2026, on the morning a workout failed to reach Apple Health. The `health:` lines
+alone go through `Log.health`, at *notice* level, which **is** persisted, so a health question can
+be answered the next day:
+
+```bash
+sudo log collect --device-udid <iphone-udid> --last 12h --output /tmp/oronzo.logarchive
+log show --archive /tmp/oronzo.logarchive --predicate 'subsystem == "com.lerio.oronzo"'
+```
+
 **Phone** (`xcrun simctl launch --console-pty <phone> com.lerio.oronzo -demoSession`, or the Xcode
 console):
 
@@ -312,7 +324,11 @@ console):
 | `session: re-asserted by …` | A runner reappeared onto a session that was already running. Normal, and the fix for a wrist that was cleared and never told again. |
 | `health: recorded the workout ending …` | Health accepted the finished workout. **The only proof the write worked** — the app requests write-only access, so it can never read its own sample back to check. |
 | `health: not recorded — Ns is under the 180s minimum` | The three-minute rule declined the session. Ordinary for a mis-tap, or a plan tapped through faster than it runs. |
-| `health: could not write the workout — …` | Health refused the save. The summary shows this line too. The usual cause is permission: Settings → Health → Data Access & Devices → Oronzo. There is no retry by design, so fixing permission only affects the *next* session. |
+| `health: could not write the workout — …` | Health refused the save. The summary shows this line too. The usual cause is permission: Settings → Health → Data Access & Devices → Oronzo. A refused save is offered again by a later launch (see the owed write below), so fixing permission can still rescue a workout that is still inside its window. |
+| `health: owed the workout ending …` | The obligation was written to `health-owed.json` before the attempt. Every real session that clears three minutes logs this, and most are settled moments later. |
+| `health: offering … (attempt N of 3, version V)` | An attempt is being made — the first one from the summary, or a later one from launch/foreground. The version only ever climbs; that is what keeps a second attempt from becoming a second workout. |
+| `health: the workout ending … is still owed` | Health did not confirm it and the policy allows another try. The next launch or unlock will offer it again. |
+| `health: gave up on the workout ending … after N attempts` | The app has stopped asking. **It cannot tell whether the workout reached Health**, so this line means *unconfirmed*, never *missing* — check the Health app, not this line. |
 | `health: the authorization request failed — …` | The permission sheet could not be raised at all. This says nothing about whether permission was *granted* — a refused request still succeeds here, and is discovered at save time. |
 | `watch build mismatch: …` | The watch is a different build from this phone. The same thing is shown on screen; see the stale-watch row below. |
 | `send skipped: no session` | `activate()` has not run — the link was never started. |
@@ -330,6 +346,20 @@ the watch from when it has nothing in memory, and what it resumes from. If a wri
 `"phase":"running"` means the phone knows about the workout and the watch is the problem; an
 absent record means the phone lost it and the watch is right.
 
+**The owed write.** `Library/Application Support/health-owed.json` — the same directory — holds the
+workouts Apple Health has not confirmed, and **an absent file means nothing is owed**, because
+saving an empty ledger removes it. Each entry is one workout: a UUID that is also its HealthKit
+sync identifier, when it happened, and how many attempts it has had. This is not the same file as
+the record above and has the *opposite* lifetime — the record describes the workout running now and
+is cleared when the summary is dismissed; this one describes a workout that is over and outlives
+the session on purpose. Read it off a device with:
+
+```bash
+xcrun devicectl device copy from --device <iphone-udid> --domain-type appDataContainer \
+  --domain-identifier com.lerio.oronzo --source 'Library/Application Support/health-owed.json' \
+  --destination /tmp/
+```
+
 | Symptom | Cause |
 |---|---|
 | `No Accounts: Add a new account in Accounts settings` | Xcode has no Apple ID signed in. Re-add it under Settings → Accounts. |
@@ -338,6 +368,6 @@ absent record means the phone lost it and the watch is right.
 | `xcodebuild` can't find the Apple Watch destination | The watch has never been prepared. Devices and Simulators → select it → wait for "Preparing device for development" to finish. |
 | The watch shows **"No workout"** while a session runs on the phone, and the phone's log shows `sent session` and, once the wrist wakes, `answer: a session` | **The watch app on the watch is stale.** Regenerating the project or changing a target does not reliably replace the watch app that is already installed — watchOS keeps the old one, which receives nothing and shows its idle screen. Fix: run the **OronzoWatch** scheme to the watch. Cost several hours to find once. **It now says so for itself**: a mismatched watch shows *"Can't read your iPhone — reinstall the Watch app"* on the wrist, and the phone shows *"Your Watch app is out of date — run the OronzoWatch scheme"* under the session header. The phone's banner appears for any version difference, including a stale watch that still happens to work — updating the watch clears it. |
 | The watch shows **"No workout"** and the phone logs `updateApplicationContext failed` | The write was refused — usually the session had not finished activating. The phone re-sends the moment activation completes, so this should self-clear within a second; if it does not, the link is not coming up at all and the `activation:` line says why. |
-| **The phone says `No Watch app — run the Oronzo scheme to the iPhone`, the wrist says `No workout` / `Your iPhone didn't answer`, and `devicectl device info apps` shows the watch app IS installed** | **The watch app is installed and not registered as this phone app's companion.** The `activation:` line is the proof: `paired=true watchAppInstalled=false`, and every push is refused with `WCErrorDomain Code=7006 "Watch app is not installed."` Both screens are describing that one fact — nothing was ever sent, so the wrist can only say it was never answered. **Fix: run the `Oronzo` scheme to the iPhone.** It reinstalls the embedded watch app and registers the pairing; running `OronzoWatch` on its own does *not* fix this, because the watch app is already there — its problem is which phone app it belongs to. Hit on 28 September 2026, and the banner used to name the wrong scheme. See `docs/decisions.md`, *"A watch app that was installed and not installed"*. |
+| **The phone says `No Watch app — reinstall the Watch app from Xcode`, the wrist says `No workout` / `Your iPhone didn't answer`, and `devicectl device info apps` shows the watch app IS installed** | **The watch app is installed and not registered as this phone app's companion.** The `activation:` line is the proof: `paired=true watchAppInstalled=false`, and every push is refused with `WCErrorDomain Code=7006 "Watch app is not installed."` Both screens are describing that one fact — nothing was ever sent, so the wrist can only say it was never answered. **Fix: replace the watch app on the watch.** What clears this is the *watch* app on the wrist being replaced by a build from the current install — not which scheme carried it. Running the `Oronzo` scheme to the iPhone does this **only when the watch is connected at that moment**; on 28 September 2026 it did, and on 30 September 2026 it did not (`devicectl list devices` showed the watch as *available (paired)*, not *connected*), and the same state persisted. Reinstalling the watch app repaired it immediately both times, whichever route was used: either run the `OronzoWatch` scheme to the Watch from Xcode, or `cd ios && xcodebuild -project Oronzo.xcodeproj -scheme OronzoWatch -destination 'id=<watch-udid>' -configuration Debug -allowProvisioningUpdates build` followed by `xcrun devicectl device install app --device <watch-udid> ~/Library/Developer/Xcode/DerivedData/Oronzo-*/Build/Products/Debug-watchos/OronzoWatch.app`. **Verify with the `activation:` line, never by which scheme you ran.** See `docs/decisions.md`, *"A watch app that was installed and not installed"*. |
 | The watch logs `could not decode an incoming message` | The two apps are different builds. Install both from the same run — the phone scheme embeds the watch app, but does not reliably replace one already on the watch. |
 | The watch shows a session that ended (or that no phone is running) | A phantom, from the application context having no expiry. The phone clears it on coming forward, and answers "nothing running" whenever the watch asks. If it persists, the watch is not reaching the phone at all. |

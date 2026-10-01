@@ -146,19 +146,26 @@ final class PhoneConnectivity: NSObject {
         // `isPaired` is required, not decoration: a phone with no watch at all must not be told to
         // install an app for it.
         if isPaired, !isWatchAppInstalled, session?.activationState == .activated {
-            // **Names the *phone* scheme, and that is the correction of a costly misdirection.**
-            // This used to say "run the OronzoWatch scheme", which is the second of the two steps
-            // the weekly re-sign prescribes and, on its own, does not fix this: on 28 September 2026
-            // the watch app was installed and running on the wrist while this banner showed, and
-            // WatchConnectivity was refusing every write with `WCErrorCodeSessionNotInstalled`
-            // (7006) because the watch app was not registered as *this* app's companion. Running
-            // OronzoWatch again would have changed nothing — the fix was running the **Oronzo**
-            // scheme to the iPhone, which reinstalls the embedded watch app and repairs the pairing.
+            // **Names no scheme, and that is the correction of two misdirections.**
             //
-            // The app cannot tell the two cases apart from here, so it names the step that covers
-            // both: the watch app is embedded in the phone app, so installing the phone app installs
-            // it. There is no state in which this advice is wrong and the old advice was right.
-            return "No Watch app — run the Oronzo scheme to the iPhone"
+            // It used to say "run the OronzoWatch scheme". On 28 September 2026 that was judged
+            // wrong: the watch app was installed and running on the wrist while this banner showed,
+            // and WatchConnectivity was refusing every write with `WCErrorCodeSessionNotInstalled`
+            // (7006) because the watch app was not registered as *this* app's companion. The step
+            // that repaired it that day was running the **Oronzo** scheme to the iPhone, so the copy
+            // was changed to name that instead.
+            //
+            // On 30 September 2026 it happened again, and the phone scheme did *not* repair it: the
+            // same state persisted, and installing the watch app onto the watch fixed it on the
+            // first attempt. Both observations are true and neither step is reliable on its own —
+            // Xcode pushes the embedded watch app from the phone install only when the watch is
+            // reachable at that moment, and what clears this is the *watch* app on the wrist being
+            // replaced, not the scheme that carried it.
+            //
+            // So the copy names the condition and the action rather than a step. It stays a
+            // maintenance instruction rather than an alarm — the countdown on this phone is
+            // unaffected either way — and `docs/runbook.md` carries the diagnosis and the commands.
+            return "No Watch app — reinstall the Watch app from Xcode"
         }
 
         guard hasHeardFromWatch else { return nil }

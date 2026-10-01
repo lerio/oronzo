@@ -252,10 +252,13 @@ ones:**
 * **An ask nobody answers now says so** — "Your iPhone didn't answer" — and it is only reachable by
   holding the wrist up for the whole retry, about a minute, because looking away cancels it. It is
   the difference between a phone that has nothing and a phone that is not listening.
-* **The phone names a missing Watch app** (`No Watch app — run the Oronzo scheme to the iPhone`),
-  which is the one failure a wrist cannot report about itself: with no watch app installed there is
-  no process to draw the note. **It used to name the OronzoWatch scheme, and that was the wrong half
-  of the pair** — see [A watch app that was installed and not installed](#a-watch-app-that-was-installed-and-not-installed).
+* **The phone names a missing Watch app** (`No Watch app — reinstall the Watch app from Xcode`),
+  which is the one failure a wrist cannot report about itself: with no watch app *registered* there
+  is no process to draw the note. **The copy named a scheme twice and was wrong both times** — it
+  began as "run the OronzoWatch scheme", was changed to "run the Oronzo scheme to the iPhone" on 28
+  September 2026, and on 30 September 2026 neither step alone proved reliable. It now names the
+  condition and the action rather than a step — see
+  [A watch app that was installed and not installed](#a-watch-app-that-was-installed-and-not-installed).
 
 **A clear now carries the instant it was decided, and the watch checks that against the session on
 screen** (`WatchMessage.idle(at:)`, `SessionClear` in `OronzoCore`, `WireProtocol.current = 2`).
@@ -329,6 +332,48 @@ reinstalls the embedded watch app. It has not recurred.
 without its companion being registered, and the likeliest route is a watch-scheme install that ran
 without the phone app being reinstalled alongside it — which is a hypothesis, not a finding. What is
 established is the state, the refusal code, and the step that repairs it.
+
+### The second occurrence, and what it corrects — 30 September 2026
+
+**It recurred two days later, and the step this section names as the fix did not work.** The
+identical state was reproduced on the desk — both apps installed, the watch app launching normally
+on the wrist, and:
+
+```
+activation: state=2 reachable=false paired=true watchAppInstalled=false error=none
+updateApplicationContext failed: WCErrorDomain Code=7006 "Watch app is not installed."
+```
+
+Running the **Oronzo** scheme to the iPhone changed nothing. Installing the **watch app** repaired
+it on the first attempt — a freshly built `OronzoWatch.app` written straight to the watch, replacing
+its container:
+
+```
+activation: state=2 reachable=false paired=true watchAppInstalled=true error=none
+sent idle (32 bytes)
+```
+
+**So the rule this section used to state is wrong, and the shape of the error matters more than the
+rule.** It was never "the phone scheme, not the watch scheme". It is **the watch app on the wrist
+being replaced by a build from the current install.** On 28 September the phone run happened to
+carry the embedded watch app across, which is why it looked like the fix; on 30 September it did
+not, and `devicectl list devices` showed the watch as *available (paired)* rather than *connected*.
+Xcode pushes the embedded watch app only when the watch is reachable at that moment — so the same
+command that repairs this one day silently does half its job the next.
+
+**The trap, stated plainly.** Two conclusions were drawn from single observations, two days apart,
+and each was wrong the same way: a step that worked once was written down as *the* step. A procedure
+that holds only under a condition nobody checked — *is the watch connected right now?* — is not a
+procedure. Both entries should have read *"this repaired it, on this occasion"*, and the second
+afternoon is what that costs.
+
+**A lead on the trigger, and only a lead.** The two apps are signed by provisioning profiles on
+independent 7-day cycles, and on 30 September they had drifted apart — the phone's expired 2
+October, the watch's 5 October, issued three days apart. Nothing here establishes that a profile
+refresh unregisters a companion, and this has not been tested. It is recorded because it is the
+first candidate that does not require an install to have happened at the moment the pairing broke,
+and because *"which profile is each half on?"* is now a question worth asking before attributing
+this a third time. **Lead, not finding — do not act on it as though it were established.**
 
 ## The session is written down, and `advertised != nil` was never the same question
 
@@ -453,6 +498,52 @@ Two consequences worth stating plainly, because they are visible:
 - **No heart rate and no active energy.** Oronzo measures neither, and writing invented ones would
   be worse than writing none. It was assumed this also meant **no Exercise ring credit** — untested,
   and wrong: see [Twice, the same mistake](#twice-the-same-mistake).
+
+### The owed write is durable, and a retry is safe for a reason HealthKit owns
+
+**A locked phone can lose a workout, and until now the app could only say that it might have.** A
+`finishWorkout()` against a locked device answers with a nil workout and *no error*, which Apple's
+header documents as a save that happened — and on 30 September 2026 the same answer sat over a
+workout that was **not** in Health, with the permission granted and everything else unchanged. The
+two are indistinguishable from inside the app, so the app no longer tries to tell them apart. A
+finished workout is written to `health-owed.json` **before** it is offered to Health, and offered
+again when the app next comes forward — which is the moment the ambiguity ends, because the cure
+for a locked write is an unlocked phone and that is exactly when `scenePhase` becomes `.active`.
+
+**Why not read Health back?** Because that is the permission this app deliberately does not ask
+for. There is no `NSHealthShareUsageDescription` in `Info.plist`, and the recorder requests
+`toShare: [workout], read: []`. Oronzo has no use for your health data; adding read access to check
+on a write it just made would be a real expansion, asked of the user to answer a question the
+platform already answers another way.
+
+**The platform answers it with the sync identifier.** `HKMetadataKeySyncIdentifier` and
+`HKMetadataKeySyncVersion` are documented in HealthKit's own header: a save *"will replace an
+existing HKObject with the same HKMetadataKeySyncIdentifier value if the new HKObject has a greater
+HKMetadataKeySyncVersion"*. So one owed workout is saved under one identifier, and **every attempt
+sends a strictly greater version** — the first sends 1, the second 2. Each attempt therefore either
+creates the workout or replaces the previous identical copy, and never leaves two. Only the
+*greater version* rule is documented; the equal-version case is not, which is exactly why the
+version climbs rather than being reused. The version is taken from the attempt count **before** the
+attempt and saved with it, so it stays monotonic even across a crash.
+
+**What changed about the old rule.** `HealthWorkoutRecorder` used to say "there is no retry, however
+this fails", and it was right about the danger: a second attempt could double-post if a failure
+landed after the store had already committed. What has changed is whose job that danger is.
+**Within one run of the app** a session is still offered exactly once — no button, no second
+attempt — and `HealthWriteQueue` enforces it. **Across runs** an unconfirmed workout is offered
+again, at most three times and only within 48 hours, because the identifier makes that safe.
+
+**What exhaustion means, and does not.** Three attempts, because the second is the one with an
+ordinary chance of landing and the third is the backstop for a phone put down again. Past that, the
+entry stays in the ledger and this app stops asking. **That is not the same as "the workout is not
+in Health"** — the app cannot know — so every line written about one says "gave up", never
+"missing". The visibility question is deliberately unsolved for now: the log line and the ledger
+are the record, and nothing is drawn on screen.
+
+**Documented, not yet observed.** The identifier rule above is Apple's, from the SDK header. That
+*this* device's HealthKit behaves that way — that a second attempt under a greater version leaves
+one workout and not two — has not been measured yet. The first locked completion after this change
+is the observation, and `docs/known-issues.md` §12 is where it gets written down.
 
 ### Twice, the same mistake
 

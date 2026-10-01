@@ -102,7 +102,7 @@ Full detail in `docs/patterns.md`. The short version:
 ## Commands
 
 ```bash
-cd ios/OronzoCore && swift test      # 241 tests, no simulator or signing — run this first
+cd ios/OronzoCore && swift test      # 262 tests, no simulator or signing — run this first
 cd ios && xcodegen generate          # after editing ios/project.yml or adding files
 cd web && npm run dev                # localhost:5173
 cd web && npm run build              # tsc -b is what catches stale field references
@@ -244,7 +244,10 @@ registered, the scan is manual. See `docs/known-issues.md`.
   is absent; a `200` means it exists. This caught a migration the user believed had been applied.
 - **WatchConnectivity is the flakiest part of the system and it fails silently.** A workout that
   never reached the watch looks exactly like one that never started. `OronzoCore.Log.debug` is
-  debug-only and compiles out of release builds — use it rather than `print`.
+  debug-only and compiles out of release builds — use it rather than `print`. **It is also
+  memory-only**: the system never persists a debug line, so `log collect` cannot retrieve one after
+  the fact. Anything that must still be readable tomorrow — the `health:` lines are the case that
+  exists — goes through `Log.health`, which is written at *notice* level and survives.
 
 ## Reading list
 

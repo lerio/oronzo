@@ -64,6 +64,19 @@ private struct RootView: View {
             }
         }
         .task {
+            // **Before the demo branch, and that is not tidiness.** A workout the last run could
+            // not confirm is owed to Apple Health, and this is the moment the ambiguity ends: the
+            // app is awake and the phone is unlocked, which is the cure for the locked-write case
+            // the whole ledger exists for. A desk launch of `-demoRecord` is exactly the launch
+            // that follows a real workout, so placing this after the demo `return` would mean the
+            // retry never ran on the launches most likely to owe one. A fixture resolves real
+            // obligations and creates none — `recordsHealth` is false for every demo.
+            //
+            // Not awaited: nothing on screen is waiting for Health, and this must not hold up the
+            // resume below — a live session coming back is the more urgent of the two, and a slow
+            // store must not be able to delay it.
+            Task { await HealthWriteQueue.shared.resolveAll() }
+
             #if DEBUG
             if let demo = DemoPlan.launchArgumentPlan {
                 // A fixture must not inherit a workout, and — unless it is the one flag that asks
@@ -126,7 +139,14 @@ private struct RootView: View {
             // Guarded by `hasActiveSession` inside the link, which now counts the session this app
             // *has* rather than only the one that has claimed the link — so a workout that is
             // still starting cannot be cleared. See `PhoneConnectivity.currentWatchMessage`.
-            if phase == .active { PhoneConnectivity.shared.clearIfIdle() }
+            if phase == .active {
+                PhoneConnectivity.shared.clearIfIdle()
+                // Coming forward is also when an owed Health write stops being ambiguous — the
+                // phone was just unlocked, which is the one thing a locked write was waiting for.
+                // Cheap to call unconditionally: the ledger is empty unless something is owed,
+                // and an attempt made seconds ago is not repeated.
+                Task { await HealthWriteQueue.shared.resolveAll() }
+            }
         }
     }
 

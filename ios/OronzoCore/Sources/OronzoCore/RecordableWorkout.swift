@@ -60,4 +60,16 @@ public struct RecordableWorkout: Equatable, Sendable {
         self.startedAt = completed.startedAt
         self.finishedAt = completed.finishedAt
     }
+
+    /// The same workout, rebuilt from the two dates an `OronzoCore.HealthOwedEntry` carries.
+    ///
+    /// **Internal on purpose.** `init?(completed:)` is the only public way to make one of these,
+    /// so the three-minute bar cannot be bypassed from the app; this exists so a retry can *replay*
+    /// a decision instead of re-making it. Re-deciding would be wrong as well as impossible: an
+    /// entry carries a span, and a span includes paused time, so a session with a long pause in it
+    /// would fail a bar it genuinely cleared.
+    internal init(startedAt: Date, finishedAt: Date) {
+        self.startedAt = startedAt
+        self.finishedAt = finishedAt
+    }
 }

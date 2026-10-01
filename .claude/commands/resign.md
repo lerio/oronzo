@@ -22,10 +22,28 @@ cd ios && xcodegen generate && open Oronzo.xcodeproj
 
 Then, in Xcode:
 
-1. Run the **Oronzo** scheme to the iPhone. This also installs the embedded Watch app.
-2. Run the **OronzoWatch** scheme to the Apple Watch, if it did not follow automatically.
+1. Run the **Oronzo** scheme to the iPhone.
+2. Run the **OronzoWatch** scheme to the Apple Watch. **Do not skip this** because the phone step
+   "usually" covers it — and do not skip it because the watch shows the app as installed.
 
-The Watch is the one that usually needs the second step.
+**Step 1 installs the embedded Watch app only when the watch is connected at that moment.** If it
+is not (`devicectl list devices` shows the watch as *available (paired)* rather than *connected*),
+the phone app is re-signed and the watch app is left on the previous install — which is the state
+that reads as **"No Watch app"** on the phone with a perfectly good-looking app on the wrist. It has
+cost this project two afternoons, on 28 and 30 September 2026.
+
+**Then verify, because neither step reports whether it worked.** With the app running:
+
+```bash
+xcrun devicectl device process launch --console --terminate-existing \
+  --device <iphone-udid> com.lerio.oronzo
+```
+
+`watchAppInstalled=true` and no `7006` means both halves are registered. `watchAppInstalled=false`
+means the watch app must be reinstalled — see the row in `docs/runbook.md`. The two apps are signed
+by provisioning profiles on **independent 7-day cycles** (`~/Library/Developer/Xcode/UserData/
+Provisioning Profiles/`), so they go stale on different days and the pair is not self-maintaining.
+See `docs/decisions.md`, *"A watch app that was installed and not installed"*.
 
 ## If it fails
 

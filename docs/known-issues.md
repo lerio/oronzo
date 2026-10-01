@@ -224,7 +224,7 @@ exactly the database activity that keeps the free project from pausing.
 
 ---
 
-## 12. The HealthKit write — closed, verified on a device
+## 12. The HealthKit write — durable, and offered again when Health does not confirm it
 
 **What the code does.** `ios/Oronzo/Session/HealthWorkoutRecorder.swift` writes one
 `HKWorkout` (`.traditionalStrengthTraining`) for any session that ends after three minutes,
@@ -272,9 +272,10 @@ would have called a failure.
 A failure is **not silent**: the summary reports the outcome beside the history line
 (`Added to Apple Health` / `Added to Apple Health — not confirmed` / `Not added to Apple Health — …`),
 so a denied permission is visible rather than showing up as a workout that never appears. That is
-also why there is no "Try again" on that line, unlike the history one — a retry after a write that
-failed is the one path that could double-post if the failure landed after the store had already
-committed.
+also why there is no "Try again" on that line, unlike the history one — a *button* is a second
+attempt within one run of the app, the one path that could double-post if a failure landed after
+the store had already committed. What a later launch does instead is automatic and bounded, and it
+is safe for a reason the app does not own — the sync identifier. See below.
 
 **Both questions are now answered, on a device, on 28 September 2026.**
 
@@ -289,6 +290,34 @@ committed.
   `docs/prd/0001-…`. `docs/decisions.md` records the pattern, because it is the second time an
   untested constraint in that table turned out to be false.
 
+**30 September 2026: the same nil, over a workout that was not there.** A real session ended with
+the phone locked; the summary said *"Added to Apple Health — not confirmed"*; the workout was **not**
+in Health. Write permission had been granted and was checked in Settings, the session was well past
+three minutes, and permission had been granted when the sheet was raised. So both meanings of the
+nil had now been seen on this device, two days apart, from the same code path — which is precisely
+what `HealthWriteOutcome.unconfirmed` says it cannot resolve from inside.
+
+**What changed, and what did not.** The app no longer treats an unconfirmed write as final. A
+finished workout is written down in `health-owed.json` (Application Support, beside
+`session-record.json`) **before** it is offered to Health, and offered again at launch and whenever
+the app comes forward — most usefully on the unlock that follows a locked completion, which is when
+the answer stops being ambiguous. At most three attempts, within 48 hours; then the entry stays and
+the app stops asking. **The summary's wording is unchanged, and every attempt is the same workout**:
+each carries the same `HKMetadataKeySyncIdentifier` and a strictly greater
+`HKMetadataKeySyncVersion`, which HealthKit documents as a replace rather than an add. The rule, and
+why it is the app's safety rather than the app's cleverness, is in `docs/decisions.md`.
+
+**The part that is still assumed.** That a second attempt under a greater version leaves one
+workout on this device has not been observed — it is Apple's documented behaviour, and the first
+locked completion after this change is where it gets measured. If a duplicate ever appears, this
+paragraph is what is wrong.
+
+**A note on the evidence, because its absence cost an afternoon.** The app's lines are `Log.debug`
+— os_log *debug* level, which the system never persists. `log collect` on the morning of 30
+September returned nothing for this app at all, and the summary line was the only evidence that
+survived. The `health:` lines now go through `Log.health` (notice level, which *is* persisted), so
+the next occurrence leaves a trail that outlives the process. See `docs/runbook.md`.
+
 What remains open is only the one-hour `WKExtendedRuntimeSession` cap, which the Watch has not hit
 in use, and which is a Watch-runtime question rather than a Health one.
 
@@ -296,7 +325,7 @@ in use, and which is a Watch-runtime question rather than a Health one.
 
 ## 13. The history write has no demo guard, and a fixture can reach production
 
-**What the code does.** `SessionRunner.persist` (`ios/Oronzo/Views/SessionRunner.swift:482`) calls
+**What the code does.** `SessionRunner.persist` (`ios/Oronzo/Views/SessionRunner.swift:695`) calls
 `SessionLogger().log(...)`, which inserts into Supabase `sessions` + `session_steps`. It consults
 nothing about whether this launch is a fixture. `SessionController.persistsRecord` — the flag that
 does distinguish them — is `private`, so the view cannot read it.
@@ -314,3 +343,27 @@ paths should not differ in whether they can be reached by a fixture.
 
 **Question.** Guard `persist` the way `writeToHealth` is guarded — expose the flag the controller
 already holds and skip the write for a fixture — rather than leaving the FK to catch it by luck?
+
+### The Health guard has a hole, and it is the restore path
+
+Found on 30 September 2026 while making the Health write durable, and written down rather than
+fixed, because the fix touches `SessionRecord`.
+
+**What happens.** `recordsHealth` is `false` for every demo launch — but `SessionController`'s
+**restoring** initialiser hardcodes it to `true` (`SessionController.swift:166`), on the reasoning
+that a record on disk is a real workout by definition. It is not: `-demoRecord` is the one fixture
+that *writes* a record (it exists to exercise resume), so a `-demoRecord` run that is killed
+mid-session leaves `session-record.json` describing `DemoPlan.make()` — and the next ordinary
+launch resumes it as a real session. Completing it clears the three-minute bar comfortably and
+offers a workout nobody did to Apple Health.
+
+**What is new.** The leak is not new; the *durability* is. That write used to happen once and be
+forgotten. It now leaves an entry in `health-owed.json` and is offered again for up to 48 hours and
+three attempts — so a demo mistake is retried into production data rather than merely landing there
+once.
+
+**The fix, if it is worth making.** `SessionRecord` gains an optional `recordsHealth: Bool?`,
+written from the controller and read back by the restoring initialiser (`?? true`, so every record
+already on disk keeps today's meaning). A few lines in a file that already has a documented
+tolerance pattern for exactly this, plus a test. Not done here because it is a schema change to the
+record that answers the Watch, and this change did not need it.

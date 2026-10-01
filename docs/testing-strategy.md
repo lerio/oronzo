@@ -2,7 +2,7 @@
 
 ## Where the tests are
 
-**All 241 tests live in `ios/OronzoCore/Tests/OronzoCoreTests/`.** Nothing else in the repository
+**All 262 tests live in `ios/OronzoCore/Tests/OronzoCoreTests/`.** Nothing else in the repository
 has a single automated test — not the iOS app target, not the watch app, not the web app.
 
 ```bash
@@ -14,6 +14,7 @@ cd ios/OronzoCore && swift test     # ~1 second, no simulator, no signing, no de
 | `PlanFlattenerTests.swift` | 43 | The flattening contract — sets, rounds, two-sided exercises, all three synthetic intervals, naming, formatting |
 | `SessionScreenTests.swift` | 45 | The presentation model both screens draw from — state words, `LAST`, what a rep interval shows |
 | `ExecutionEngineTests.swift` | 31 | The session state machine — start/tick/pause/resume/advance/goBack/finish/abandon/snapshot |
+| `HealthOwedLedgerTests.swift` | 21 | The Health retry policy — when a workout may be offered again, when the app stops, and the climbing version that keeps a second attempt from becoming a second workout |
 | `SessionRecordTests.swift` | 18 | The written-down session — the disk format, decode tolerance, what a restore refuses, and that a stale anchor cannot rewind |
 | `PlanSummaryTests.swift` | 16 | What the plan summary says about a plan, including the spoken meta line |
 | `LinkTests.swift` | 13 | The phone↔watch wire format — the control vocabulary, a whole snapshot, decode tolerance, and the version handshake |
@@ -57,9 +58,13 @@ Be explicit about this rather than implying coverage that does not exist:
 - **Anything touching a device.** Signing, WatchConnectivity, haptics, the extended runtime
   session, the audio keep-alive, and the **HealthKit write** cannot be tested here at all. If a
   change touches `ios/Oronzo/Session/` or `ios/OronzoWatch/`, say plainly that a device run is
-  still needed. The HealthKit *decision* is the deliberate exception, and is exactly why it lives
-  in `OronzoCore`: `RecordableWorkout` is a pure function and fully covered by
-  `RecordableWorkoutTests`, so only the write itself needs the phone. (Signing the entitlement
+  still needed. The HealthKit *decisions* are the deliberate exception, and are exactly why they
+  live in `OronzoCore`: `RecordableWorkout` (whether a session is worth recording) and
+  `HealthOwedEntry` (whether an unconfirmed one may be offered again, and with which version) are
+  pure functions covered by their tests — so only the write itself needs the phone. **The one
+  thing that cannot be proven from a desk is that a retry does not duplicate**: that a second save
+  under the same sync identifier and a greater version leaves one workout is Apple's documented
+  behaviour, not something this repository has observed. (Signing the entitlement
   *can* be checked from a desk — `codesign -d --entitlements` on a device build — and was.)
 - **Every SwiftUI view.** No view has a test. `SessionRunner`, `PlanEditor`, `PlanListView` and
   friends are verified by looking at them.
