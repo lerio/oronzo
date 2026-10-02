@@ -1,9 +1,9 @@
 ---
-description: The weekly re-sign — rebuild from Xcode so the iPhone and Watch apps launch again
+description: The weekly re-sign — reissue provisioning profiles so the iPhone and Watch apps launch again
 ---
 
 The free personal team expires provisioning profiles **every 7 days**, after which the apps stop
-launching. This is the ritual that fixes it. It is a monthly-or-so chore, not a bug.
+launching. This is the ritual that fixes it. It is a weekly chore, not a bug.
 
 ## How you know you need it
 
@@ -12,9 +12,25 @@ provisioning profile has expired. The apps do not warn you in advance.
 
 ## What to do
 
-**These steps need a human at Xcode.** You cannot do this by running `xcodebuild` in the
-background — the point is a fresh signed install onto physical devices. So surface the
-instructions and let the user run them, rather than attempting them.
+```bash
+./scripts/resign.sh
+```
+
+That is the whole thing. It backs up and deletes the two Oronzo profiles, rebuilds and installs
+both apps, and verifies. `--verify-only` checks the link without changing anything.
+
+**This section used to say the steps needed a human at Xcode and that `xcodebuild` could not do
+it. It was never tested, and it is false** — the CLI route is how the Watch app was repaired on
+28 and 30 September 2026, and how both apps were re-signed on 2 October 2026. It is the same
+mistake `AGENTS.md` records under *"HealthKit signs"*: an impossibility claim whose only evidence
+was another doc. What genuinely needs a human is narrower — a device that has never been prepared
+for development, no Apple ID signed in to Xcode, or the licence not accepted. The table below
+covers those.
+
+**Deleting the profiles is the point, and it is not obvious.** Xcode reuses a provisioning profile
+while it is still valid, so a plain rebuild re-embeds the same one and the expiry does not move.
+
+### By hand, in Xcode
 
 ```bash
 cd ios && xcodegen generate && open Oronzo.xcodeproj
@@ -32,7 +48,18 @@ the phone app is re-signed and the watch app is left on the previous install —
 that reads as **"No Watch app"** on the phone with a perfectly good-looking app on the wrist. It has
 cost this project two afternoons, on 28 and 30 September 2026.
 
-**Then verify, because neither step reports whether it worked.** With the app running:
+### Then verify, because no scheme reports whether it worked
+
+```bash
+./scripts/resign.sh --verify-only
+```
+
+Exit `0` means the pairing is registered; `1` that it could not be determined — **most often a
+locked iPhone, which is not a broken pairing**, and reading it as one is a mistake this script has
+already made once; `2` that it is genuinely broken. Prefer it to guessing, and run it *before*
+reinstalling anything.
+
+The raw command behind it, if you want to watch it live:
 
 ```bash
 xcrun devicectl device process launch --console --terminate-existing \
@@ -40,10 +67,8 @@ xcrun devicectl device process launch --console --terminate-existing \
 ```
 
 `watchAppInstalled=true` and no `7006` means both halves are registered. `watchAppInstalled=false`
-means the watch app must be reinstalled — see the row in `docs/runbook.md`. The two apps are signed
-by provisioning profiles on **independent 7-day cycles** (`~/Library/Developer/Xcode/UserData/
-Provisioning Profiles/`), so they go stale on different days and the pair is not self-maintaining.
-See `docs/decisions.md`, *"A watch app that was installed and not installed"*.
+means the watch app must be reinstalled — see the row in `docs/runbook.md`. See `docs/decisions.md`,
+*"A watch app that was installed and not installed"*.
 
 ## If it fails
 

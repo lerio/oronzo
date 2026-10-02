@@ -4,18 +4,56 @@ Operational chores. Most of these exist because of the free Apple personal team.
 
 ## The weekly re-sign (every 7 days)
 
-Free-team provisioning profiles expire after 7 days, at which point the apps stop launching
-on your devices. Fix:
+Free-team provisioning profiles expire after 7 days, at which point the apps stop launching on
+your devices. Symptoms: the app icon is still there but tapping it does nothing, or Xcode says
+the profile has expired.
+
+```bash
+./scripts/resign.sh
+```
+
+It backs up and deletes the two Oronzo profiles, rebuilds and installs **both** apps so they carry
+fresh 7-day profiles, then verifies the link. `--verify-only` checks without changing anything.
+
+**Deleting the profiles is the point, and it is not obvious.** Xcode reuses a provisioning profile
+while it is still valid, so a plain rebuild re-embeds the same one and the expiry does not move.
+Measured on 2 October 2026: a rebuild at 08:49 embedded the 25 September profile, which still
+expired that same evening.
+
+**The Watch step is not optional.** The iPhone app embeds the Watch app, but only replaces the one
+already on the wrist when the Watch is *connected* at that moment. When it is not, you get a
+freshly signed phone app beside an old Watch app — which the phone reports as **"No Watch app"**,
+with a perfectly good-looking app on the wrist. It has cost this project two afternoons, on 28 and
+30 September 2026.
+
+The two apps are signed by profiles on **independent 7-day cycles**
+(`~/Library/Developer/Xcode/UserData/Provisioning Profiles/`), so they go stale on different days
+and the pair is not self-maintaining. Reissuing both together is what puts them back on one clock.
+
+### By hand, in Xcode
+
+Still works, and it is the route to take when a device needs preparing:
 
 ```bash
 cd ios && xcodegen generate && open Oronzo.xcodeproj
 ```
 
-Then run the **Oronzo** scheme to your iPhone (this also installs the embedded Watch app),
-and the **OronzoWatch** scheme to your Apple Watch if it doesn't follow automatically.
+Then run the **Oronzo** scheme to your iPhone, and the **OronzoWatch** scheme to your Apple Watch.
+Do not skip the second because the phone step "usually" covers it — see above.
 
-Symptoms that you've hit this: the app icon is still there but tapping it does nothing, or
-Xcode says the provisioning profile has expired.
+### Day-to-day changes are not this
+
+Reinstalling after a code change does **not** need any of this, and running the resign for it is
+worse than wasted: it is the operation that can leave the pair mismatched. Use
+
+```bash
+./scripts/install.sh phone    # changed ios/Oronzo/
+./scripts/install.sh watch    # changed ios/OronzoWatch/
+./scripts/install.sh both     # changed ios/OronzoCore/ — always both
+```
+
+It installs without touching profiles, which is correct because the existing one is still valid.
+Only `ios/OronzoCore/` forces `both`: both targets link that package.
 
 ## Regenerating the Xcode project
 
