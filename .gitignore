@@ -50,3 +50,12 @@ ops/**/.dev.vars
 # Claude Code adds this to your *global* git excludes when it creates the file itself, which
 # is not enough for a public repo — so the rule is stated here too.
 .claude/settings.local.json
+
+# --- TypeSafe experiments ---
+# Throwaway harness for the "intelligent judgement" exploration: it probes a paid
+# third-party API with real plan data, so it is local-only. `cache.json` is the
+# recorded responses — re-running an experiment replays from it and spends nothing.
+# The path is stated exactly, not as `experiments/`, so a write-up worth committing
+# can still live beside it.
+experiments/typesafe/
+experiments/**/__pycache__/

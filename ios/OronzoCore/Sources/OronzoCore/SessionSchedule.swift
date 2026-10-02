@@ -115,4 +115,34 @@ public enum SessionSchedule {
         else { return .rest }
         return .at(next)
     }
+
+    // MARK: - How precisely a wake is asked for
+
+    /// The tolerance every sleep that ends on one of the instants above must be given.
+    ///
+    /// **`nil` is not "no tolerance", and that is the whole reason this constant exists.** A sleep
+    /// asked for without one runs under the tolerance the *system* picks — on Darwin, one the
+    /// kernel decides from the app's state — and its documented purpose is the opposite of what a
+    /// cue needs. `ContinuousClock` says so in as many words: *"If no tolerance is specified then
+    /// the system may adjust the deadline to coalesce CPU wake-ups to more efficiently process the
+    /// wake-ups in a more power efficient manner."*
+    ///
+    /// **A deadline the system may move does not delay this loop's cue — it deletes it.** The loop
+    /// visits each of the four instants *once*, and what it plays at that visit is decided by the
+    /// clock at the wake, so a deadline pushed past the next instant means the instant it was
+    /// woken for is never visited again. One click goes missing, or two. Reported from a workout
+    /// as a countdown that arrives late and thin — *"sometimes I just hear one countdown, not
+    /// three"* — and it is the one failure the move from polling to this schedule introduced,
+    /// because a loop that re-read the clock ten times a second caught every instant whole, if
+    /// sometimes late.
+    ///
+    /// **Zero, rather than a small allowance.** A cue has to land inside its second, because that
+    /// second is what the screen is showing — see `MeasurementFormat.countdownSecond(remaining:)`,
+    /// and the test in `SessionScheduleTests` that pins the two together — and nothing is served by
+    /// letting the system spend part of it. What the battery is actually paying for — the *number*
+    /// of wakes, four per interval against the three thousand six hundred of the poll this
+    /// replaced — is untouched: only the leeway goes. The sleeps whose deadline carries no cue —
+    /// the ask retry in `WatchLink.askForState`, the watch runtime's restart delay — keep the
+    /// default, deliberately.
+    public static let cueTolerance: Duration = .zero
 }

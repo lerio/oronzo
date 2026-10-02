@@ -38,6 +38,41 @@ final class SessionScheduleTests: XCTestCase {
         XCTAssertEqual(next(at: justAfter, end: end), end.addingTimeInterval(-1))
     }
 
+    /// **The instants the schedule wakes for are the instants the countdown's seconds change at,
+    /// and a cue is for the second the screen is showing.**
+    ///
+    /// The three clicks and the 3-2-1 clock are one idea written in two places, and until this
+    /// test they were only *described* as agreeing (`nextEvent`'s doc). What makes the agreement
+    /// worth pinning rather than asserting is how it fails: a wake can only ever land a little
+    /// *late*, so what has to hold is that a late wake is still inside the second its cue belongs
+    /// to — otherwise the click plays over the wrong number, and the countdown reads as out of
+    /// step with the screen beside it. `MeasurementFormat.countdownSecond` is the one place that
+    /// "which second is it" is decided, for exactly this reason.
+    func testEachCountdownWakeIsInsideTheSecondItsCueIsFor() {
+        let end = t0.addingTimeInterval(60)
+        var cursor = t0
+        var seconds: [Int] = []
+
+        while case .at(let instant) = SessionSchedule.wake(
+            after: cursor, end: end, isPaused: false, isFinished: false, hasSession: true
+        ) {
+            cursor = instant
+            let remaining = end.timeIntervalSince(instant)
+            // The boundary instant belongs to the transition, not to the countdown.
+            guard remaining > 0, remaining <= 3 else { continue }
+            // A millisecond late, because that is the only direction a wake can be — and the
+            // second it lands in must not have moved.
+            seconds.append(MeasurementFormat.countdownSecond(remaining: remaining - 0.001))
+        }
+
+        XCTAssertEqual(seconds, [3, 2, 1], "the three clicks, in the seconds the clock shows them")
+        XCTAssertEqual(
+            [3.0, 2.0, 1.0].map { MeasurementFormat.clock(remaining: $0 - 0.001) },
+            ["0:03", "0:02", "0:01"],
+            "and those are the seconds the clock draws"
+        )
+    }
+
     /// The countdown reads three, two, one — so the last quarter of a minute is the only part of
     /// it that needs more than one wake.
     func testTheThreeCountdownStepsAreOneSecondApart() {

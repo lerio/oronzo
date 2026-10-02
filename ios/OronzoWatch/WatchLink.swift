@@ -269,7 +269,11 @@ final class WatchLink: NSObject {
                 // newer `now`.
                 let delay = next.timeIntervalSinceNow
                 guard delay > 0 else { continue }
-                try? await Task.sleep(for: .seconds(delay))
+                // **Pinned, not defaulted.** What this loop does at the wake is read the clock
+                // and click for the second it lands in, and each of these instants is visited
+                // once — so a deadline the system is free to move does not delay a click, it
+                // deletes one. See `SessionSchedule.cueTolerance`.
+                try? await Task.sleep(for: .seconds(delay), tolerance: SessionSchedule.cueTolerance)
             }
         }
     }
@@ -321,15 +325,25 @@ final class WatchLink: NSObject {
         guard !state.isPaused else { return }
 
         // Three clicks on the way into a transition, as on the phone.
+        //
+        // The second comes from `MeasurementFormat`, not from a rounding done here, because the
+        // click is *for* the second the screen is showing — the same rule the phone's beeps
+        // follow, and the instants `SessionSchedule` wakes this loop for are exactly its
+        // boundaries.
         guard let end else { return }
         let remaining = end.timeIntervalSince(now)
         guard remaining > 0, remaining <= 3 else {
             lastCountdownSecond = nil
             return
         }
-        let second = Int(remaining.rounded(.up))
+        let second = MeasurementFormat.countdownSecond(remaining: remaining)
         guard second != lastCountdownSecond else { return }
         lastCountdownSecond = second
+        // Logged for the same reason the transition cues above are, and it is the countdown that
+        // needed it more: a click that arrives late and a click that never arrives are the same
+        // observation on a wrist. The clock reading makes the timing measurable — see the phone's
+        // twin line in `SessionController.fireCountdownCue`.
+        Log.debug(String(format: "click: %d with %.2fs left", second, remaining))
         WKInterfaceDevice.current().play(.click)
     }
 
@@ -354,7 +368,12 @@ final class WatchLink: NSObject {
             Task { @MainActor in
                 // Long enough to read as two taps, short enough to feel like one idea. Tuned
                 // against a wrist: at 180ms they blurred together.
-                try? await Task.sleep(for: .milliseconds(220))
+                //
+                // Pinned for the same reason the countdown is, and against the same failure: this
+                // gap *is* the cue, so a gap the system may stretch by a fifth of a second is the
+                // blur the 220ms was tuned away from, arriving as a delay instead of a texture.
+                // See `SessionSchedule.cueTolerance`.
+                try? await Task.sleep(for: .milliseconds(220), tolerance: SessionSchedule.cueTolerance)
                 WKInterfaceDevice.current().play(.directionUp)
             }
 

@@ -150,6 +150,19 @@ are stated where they are set — and **both surfaces now draw their clock from 
 exists purely to repaint a countdown. A timeline also stops when it is not on screen, which is the
 half that matters for a phone locked in a pocket.
 
+**And the sleep is asked for *precisely*, because a cue's deadline is not a look-again.**
+`Task.sleep(for:)` with no tolerance is not "no tolerance": it runs under one the *system* picks,
+and on Darwin the system is explicitly allowed to move that deadline — the documented reason is
+CPU wake-up coalescing. Harmless where the deadline only means "look again"; fatal where it means
+*play the cue*, because these loops visit each of their four instants exactly once and decide what
+to play from the clock at the wake — so a deadline pushed past the next instant does not delay the
+click, it deletes it. That is `SessionSchedule.cueTolerance`, and it is why every sleep ending on
+one of those instants passes it: the countdown arrived late and thin in the field, and a countdown
+that disagrees with the clock beside it is the one failure a cue cannot have. The
+tolerance is zero rather than small because a cue has to land inside the second the screen is
+showing (`MeasurementFormat.countdownSecond`), and the *number* of wakes — the term the battery is
+actually paying — is untouched by any of it.
+
 **A message is not one event, so count deliveries rather than calls.** Every message between the
 two apps is written to the application context *and* sent directly, and on a watch holding an
 extended runtime session both land — so one thing the phone said arrives twice, and the phone

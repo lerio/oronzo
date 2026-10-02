@@ -333,10 +333,22 @@ public enum MeasurementFormat {
         value == value.rounded() ? String(Int(value)) : String(format: "%.1f", value)
     }
 
+    /// The whole second the countdown is *showing* — the number `clock(remaining:)` draws.
+    ///
+    /// **One function, because a cue is for the second on the screen.** Both cue loops —
+    /// `SessionController.fireCountdownCue` and `WatchLink.announce` — ask this rather than
+    /// rounding a "3" of their own: the click that belongs to 0:03 has to play while the screen
+    /// says 0:03, and the four instants `SessionSchedule` wakes a surface for are exactly the
+    /// boundaries at which this value changes. Two roundings would eventually be two answers, and
+    /// a countdown that disagrees with the clock beside it is the whole failure being fixed here.
+    public static func countdownSecond(remaining: TimeInterval) -> Int {
+        max(0, Int(remaining.rounded(.up)))
+    }
+
     /// "1:05". Rounded **up**, so the clock only reaches 0:00 when the interval is really
     /// over — reading 0:00 while a second still remains looks like a stalled timer.
     public static func clock(remaining: TimeInterval) -> String {
-        let total = max(0, Int(remaining.rounded(.up)))
+        let total = countdownSecond(remaining: remaining)
         return String(format: "%d:%02d", total / 60, total % 60)
     }
 

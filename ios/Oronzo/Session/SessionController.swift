@@ -535,7 +535,11 @@ final class SessionController {
                 // re-reads the clock, and the next answer is always ahead of it, so it cannot spin.
                 let delay = next.timeIntervalSinceNow
                 guard delay > 0 else { continue }
-                try? await Task.sleep(for: .seconds(delay))
+                // **Pinned, not defaulted.** What this loop does at the wake is read `remaining`
+                // and play the cue for the second it lands in, and each of these instants is
+                // visited once — so a deadline the system is free to move does not delay a beep,
+                // it deletes one. See `SessionSchedule.cueTolerance`.
+                try? await Task.sleep(for: .seconds(delay), tolerance: SessionSchedule.cueTolerance)
 
                 guard !Task.isCancelled else { return }
                 self.tick()
@@ -680,14 +684,23 @@ final class SessionController {
 
     /// Beeps on each of the last three seconds of a timed interval. A rep interval has no
     /// end, so there is nothing to count down.
+    ///
+    /// The second comes from `MeasurementFormat`, not from a rounding done here, because the beep
+    /// is *for* the second the screen is showing — the same rule the watch's clicks follow, and
+    /// the instants `SessionSchedule` wakes this loop for are exactly its boundaries.
     private func fireCountdownCue() {
         guard let remaining, remaining > 0, remaining <= 3 else {
             lastCountdownSecond = nil
             return
         }
-        let second = Int(remaining.rounded(.up))
+        let second = MeasurementFormat.countdownSecond(remaining: remaining)
         guard second != lastCountdownSecond else { return }
         lastCountdownSecond = second
+        // Logged for the reason the watch logs its cues: a beep is invisible to every tool we have,
+        // so "it fired late" and "it never fired" are the same observation in the field. The clock
+        // reading is what makes the timing *measurable* rather than felt — a `3` arriving with 2.9s
+        // left is late, and how late is the whole of the bug this line exists to catch.
+        Log.debug(String(format: "tick: %d with %.2fs left", second, remaining))
         audio.playCountdownTick()
     }
 
