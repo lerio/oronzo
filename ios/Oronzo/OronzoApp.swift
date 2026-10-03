@@ -140,6 +140,11 @@ private struct RootView: View {
             // *has* rather than only the one that has claimed the link — so a workout that is
             // still starting cannot be cleared. See `PhoneConnectivity.currentWatchMessage`.
             if phase == .active {
+                // Re-read the registration facts before anything draws the banner: this is the
+                // moment the plan screens come forward, and a drop that happened while the app
+                // was suspended is only visible if someone asks — `sessionWatchStateDidChange`
+                // cannot fire into a process that was not running.
+                PhoneConnectivity.shared.refreshWatchState()
                 PhoneConnectivity.shared.clearIfIdle()
                 // Coming forward is also when an owed Health write stops being ambiguous — the
                 // phone was just unlocked, which is the one thing a locked write was waiting for.

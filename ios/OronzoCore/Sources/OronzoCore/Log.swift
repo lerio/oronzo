@@ -56,4 +56,21 @@ public enum Log {
         healthLogger.notice("\(text, privacy: .public)")
         #endif
     }
+
+    /// The watch link's trail, at a level the system **keeps** — the counterpart of `health`.
+    ///
+    /// `debug` is memory-only. The question this category answers is asked days later, from a
+    /// desk: *when did the companion registration go down, and did it come back?* On 3 October
+    /// 2026 that question cost a 30-hour log archive to answer; every transition now writes a
+    /// line here (`PhoneConnectivity.recordWatchState`), so the next one is a grep.
+    ///
+    /// The same `link` category the streaming lines already use — a separate logger for the same
+    /// category would be a second thing to keep in step with the runbook's predicates.
+    public static func link(_ message: @autoclosure () -> String) {
+        #if DEBUG
+        let text = message()
+        print("[Oronzo] \(text)")
+        logger.notice("\(text, privacy: .public)")
+        #endif
+    }
 }

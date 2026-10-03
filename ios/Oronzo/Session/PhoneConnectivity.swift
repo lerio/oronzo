@@ -129,8 +129,16 @@ final class PhoneConnectivity: NSObject {
     /// therefore a maintenance instruction rather than an alarm — it says what to do, not that the
     /// workout is in trouble, because it is not: the countdown on this phone is unaffected either
     /// way.
-    /// What the link knows about the watch as a *place to install to*, refreshed whenever the
-    /// session is consulted — both facts move, and neither is available from the watch's side.
+    /// What the link knows about the watch as a *place to install to* — both facts move, and
+    /// neither is available from the watch's side.
+    ///
+    /// Refreshed from three places, because one is not enough (3 October 2026): `send()` when a
+    /// session talks to the watch, `activationDidCompleteWith` on a cold launch, and
+    /// `sessionWatchStateDidChange` — the delegate the device logs long showed the framework
+    /// wishing this class implemented. That delegate and the scene-forward refresh in `RootView`
+    /// matter because the pre-workout banner is drawn from these two facts, and a phone suspended
+    /// through a drop would otherwise wake holding stale ones on exactly the screen a workout is
+    /// started from.
     private(set) var isPaired = false
     private(set) var isWatchAppInstalled = false
 
@@ -162,16 +170,20 @@ final class PhoneConnectivity: NSObject {
             // reachable at that moment, and what clears this is the *watch* app on the wrist being
             // replaced, not the scheme that carried it.
             //
-            // So the copy names the condition and the action rather than a step. It stays a
+            // So the copy names the condition and the action rather than a step. A third
+            // misdirection waited on 3 October 2026: the *action* changed. The fix is one script
+            // — `scripts/install.sh watch` — which pushes the copy of the Watch app embedded in
+            // the phone, because two copies that differ is what the phone's own sync trips over;
+            // every path that builds the Watch app separately recreates the problem. It stays a
             // maintenance instruction rather than an alarm — the countdown on this phone is
             // unaffected either way — and `docs/runbook.md` carries the diagnosis and the commands.
-            return "No Watch app — reinstall the Watch app from Xcode"
+            return "No Watch app — reinstall the Watch app from the Mac"
         }
 
         guard hasHeardFromWatch else { return nil }
         switch WireProtocol.mismatch(watchProtocolVersion) {
         case .some(.peerIsOlder):
-            return "Your Watch app is out of date — run the OronzoWatch scheme"
+            return "Your Watch app is out of date — reinstall the Watch app from the Mac"
         case .some(.peerIsNewer):
             return "Update the Oronzo app to match your Watch"
         case .none:
@@ -279,8 +291,7 @@ final class PhoneConnectivity: NSObject {
             Log.debug("send skipped: no session")
             return
         }
-        isPaired = session.isPaired
-        isWatchAppInstalled = session.isWatchAppInstalled
+        recordWatchState(paired: session.isPaired, installed: session.isWatchAppInstalled)
         guard let data = try? WireCodec.encode(message) else {
             Log.debug("send skipped: encode failed")
             return
@@ -304,6 +315,32 @@ final class PhoneConnectivity: NSObject {
         if session.isReachable {
             session.sendMessage(["message": data], replyHandler: nil, errorHandler: nil)
         }
+    }
+
+    /// Re-reads the registration facts when the app comes forward.
+    ///
+    /// `sessionWatchStateDidChange` only fires while the process is alive to receive it — a phone
+    /// suspended through a drop wakes holding whatever it last knew, on the plan screen the next
+    /// workout is chosen from. One property read on a scene activation is the whole cost.
+    func refreshWatchState() {
+        guard let session else { return }
+        recordWatchState(paired: session.isPaired, installed: session.isWatchAppInstalled)
+    }
+
+    /// The one place the two facts are written, and the one place a change is logged.
+    ///
+    /// Persisted, at notice level, in the `link` category — not `debug`, which is memory-only.
+    /// A registration that drops while nobody is looking is exactly the event an archive has to
+    /// show (`docs/decisions.md`, "The third occurrence, and the cause"), so transitions go
+    /// through `Log.link`. Logged on change only: `send()` runs this on every push, and a line
+    /// per push would drown the archive it exists to serve. The first read after a launch is
+    /// itself a change — the in-memory defaults are false — so expect one line per launch
+    /// recording the real values.
+    private func recordWatchState(paired: Bool, installed: Bool) {
+        guard paired != isPaired || installed != isWatchAppInstalled else { return }
+        isPaired = paired
+        isWatchAppInstalled = installed
+        Log.link("link: watch registration changed — paired=\(paired) installed=\(installed)")
     }
 
     /// The message's case name, for logging. Deliberately not the payload.
@@ -340,7 +377,15 @@ extension PhoneConnectivity: WCSessionDelegate {
         // depended on a `scenePhase` *change* to `.active`, which a cold launch does not
         // necessarily produce; activation always completes, so this is the hook that can be
         // relied on. Idempotent: it sends the truth, which at launch is "nothing running".
-        Task { @MainActor in self.answer() }
+        //
+        // The two registration facts are captured out here because `WCSession` is not `Sendable`
+        // and the hop below is; they are what the pre-workout banner reads.
+        let paired = session.isPaired
+        let installed = session.isWatchAppInstalled
+        Task { @MainActor in
+            self.recordWatchState(paired: paired, installed: installed)
+            self.answer()
+        }
     }
 
     // Required on iOS: the session goes inactive while the watch is switched, and has to be
@@ -349,6 +394,17 @@ extension PhoneConnectivity: WCSessionDelegate {
 
     nonisolated func sessionDidDeactivate(_ session: WCSession) {
         session.activate()
+    }
+
+    /// The framework's own notice that the watch state moved — the delegate the device logs show
+    /// it wishing this class implemented. `activationDidCompleteWith` reports the facts once; this
+    /// is how a change *while the app is open* reaches the banner before a workout starts.
+    nonisolated func sessionWatchStateDidChange(_ session: WCSession) {
+        let paired = session.isPaired
+        let installed = session.isWatchAppInstalled
+        Task { @MainActor in
+            self.recordWatchState(paired: paired, installed: installed)
+        }
     }
 
     nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {

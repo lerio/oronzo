@@ -12,19 +12,24 @@ the profile has expired.
 ./scripts/resign.sh
 ```
 
-It backs up and deletes the two Oronzo profiles, rebuilds and installs **both** apps so they carry
-fresh 7-day profiles, then verifies the link. `--verify-only` checks without changing anything.
+It backs up and deletes the two Oronzo profiles, rebuilds and installs the iPhone app, and pushes
+the Watch app **embedded in it** to the wrist — both then carry fresh 7-day profiles — then verifies
+the link. `--verify-only` checks without changing anything.
 
 **Deleting the profiles is the point, and it is not obvious.** Xcode reuses a provisioning profile
 while it is still valid, so a plain rebuild re-embeds the same one and the expiry does not move.
 Measured on 2 October 2026: a rebuild at 08:49 embedded the 25 September profile, which still
 expired that same evening.
 
-**The Watch step is not optional.** The iPhone app embeds the Watch app, but only replaces the one
-already on the wrist when the Watch is *connected* at that moment. When it is not, you get a
-freshly signed phone app beside an old Watch app — which the phone reports as **"No Watch app"**,
-with a perfectly good-looking app on the wrist. It has cost this project two afternoons, on 28 and
-30 September 2026.
+**The Watch step is not optional, and it is explicit.** The iPhone app embeds the Watch app, but
+installing the phone only replaces the copy already on the wrist when the Watch is connected at that
+moment. When it is not, you get a freshly signed phone app beside an old Watch app — two halves that
+disagree. That disagreement is what the phone's periodic app sync trips over: it tries to update the
+wrist over the air, the free-profile signing makes the wrist refuse, and the failed attempt drops
+the companion registration — the state that reads as **"No Watch app"** with a perfectly
+good-looking app on the wrist (see the troubleshooting table below, and `docs/decisions.md`,
+*"The third occurrence, and the cause"*). So `resign.sh` pushes the embedded copy itself, and there
+is exactly one copy of the Watch app that may ever be installed: the one embedded in the phone.
 
 The two apps are signed by profiles on **independent 7-day cycles**
 (`~/Library/Developer/Xcode/UserData/Provisioning Profiles/`), so they go stale on different days
@@ -38,8 +43,10 @@ Still works, and it is the route to take when a device needs preparing:
 cd ios && xcodegen generate && open Oronzo.xcodeproj
 ```
 
-Then run the **Oronzo** scheme to your iPhone, and the **OronzoWatch** scheme to your Apple Watch.
-Do not skip the second because the phone step "usually" covers it — see above.
+Then run the **Oronzo** scheme to your iPhone, and push the Watch app it embeds with
+`./scripts/install.sh watch`. Do **not** run the `OronzoWatch` scheme to a device: a standalone
+build is different bytes than the phone embeds, and that difference is what the phone's sync trips
+over (see above). The scheme exists for the simulator checks in `/check`.
 
 ### Day-to-day changes are not this
 
@@ -47,13 +54,15 @@ Reinstalling after a code change does **not** need any of this, and running the 
 worse than wasted: it is the operation that can leave the pair mismatched. Use
 
 ```bash
-./scripts/install.sh phone    # changed ios/Oronzo/
-./scripts/install.sh watch    # changed ios/OronzoWatch/
-./scripts/install.sh both     # changed ios/OronzoCore/ — always both
+./scripts/install.sh phone    # changed ios/Oronzo/ — installs, then pushes the embedded Watch app
+./scripts/install.sh watch    # the repair: pushes the embedded Watch app; builds nothing
+./scripts/install.sh both     # changed ios/OronzoWatch/ or ios/OronzoCore/ — phone + push, strict
+./scripts/install.sh hash     # prints the executable hash the wrist should report afterwards
 ```
 
 It installs without touching profiles, which is correct because the existing one is still valid.
-Only `ios/OronzoCore/` forces `both`: both targets link that package.
+The Watch app is built *inside* the phone app, so any `ios/OronzoWatch/` change is a phone rebuild —
+`both` is the name that says so.
 
 ## Regenerating the Xcode project
 
@@ -355,7 +364,10 @@ console):
 |---|---|
 | `activation: state=2 reachable=… paired=… watchAppInstalled=…` | Whether the link can work at all. `watchAppInstalled=false` or a non-zero `error=` explains everything downstream. |
 | `sent session (N bytes); reachable=…` | A push left. `reachable=false` is normal — the application context is the durable path. |
-| `updateApplicationContext failed: …` | **The line that matters most.** The write was refused, so the watch was told nothing, and nothing else retries it. `WCErrorCodeSessionNotActivated` means the session had not finished activating. |
+| `updateApplicationContext failed: …` | **The line that matters most.** The write was refused, so the watch was told nothing, and nothing else retries it. `WCErrorCodeSessionNotActivated` means the session had not finished activating. `WCErrorCodeWatchAppNotInstalled` (7006) means the companion registration is down — see the next row. |
+| `appInstalled: NO` / `appInstallationID: (null)` in the app's session dump | The registration is down. Only visible in an archive: `/usr/bin/log show --archive … --predicate 'process == "Oronzo"'`. The cause sits nearby in `appconduitd` — a failed `Reunion` install of the watch app. |
+| `link: watch registration changed — paired=… installed=…` | Persisted at notice level (category `link`), so it survives in a `log collect` archive — one line per launch, and on every registration change. The trail that answers *"when did it go down?"* the next morning. |
+| `Reunion: com.lerio.oronzo.watchkitapp executable hashes differ; may update` (process `appconduitd`) | The phone's periodic sync comparing the wrist's copy against the one embedded in the phone. What follows is the over-the-air update a free-profile app can never pass, and its failure drops the registration. The `watchKitAppExecutableHash=` the watch reports should equal `scripts/install.sh hash`; if it ever does not, that difference is the thing to chase. |
 | `answer: a session` / `answer: nothing running` | The watch asked (`requestState`) and this is what it was told. Present within a second of the wrist waking, when the link is healthy. **`a session` is answered from the live session *or from the record on disk***, so a cold launch that had a workout in flight says `a session` rather than clearing the watch — see `session-record.json` below. |
 | `host: resumed "…" at interval N of M` | The phone picked up a workout it was already in the middle of. This is the line that proves a relaunch did not lose the session. |
 | `host: a record was found but is not live (phase …)` | A record exists but is finished, or older than six hours. It is not resumed; the phone still answers the watch from it while it is fresh. |
@@ -404,8 +416,9 @@ xcrun devicectl device copy from --device <iphone-udid> --domain-type appDataCon
 | `This app cannot be installed because its integrity could not be verified` | The Watch's UDID isn't registered with your team. Open Window → Devices and Simulators, select the watch, and let it prepare. |
 | `Multiple commands produce` on the watch target | Someone set the watch target to `application.watchapp2`. It must be `application`. |
 | `xcodebuild` can't find the Apple Watch destination | The watch has never been prepared. Devices and Simulators → select it → wait for "Preparing device for development" to finish. |
-| The watch shows **"No workout"** while a session runs on the phone, and the phone's log shows `sent session` and, once the wrist wakes, `answer: a session` | **The watch app on the watch is stale.** Regenerating the project or changing a target does not reliably replace the watch app that is already installed — watchOS keeps the old one, which receives nothing and shows its idle screen. Fix: run the **OronzoWatch** scheme to the watch. Cost several hours to find once. **It now says so for itself**: a mismatched watch shows *"Can't read your iPhone — reinstall the Watch app"* on the wrist, and the phone shows *"Your Watch app is out of date — run the OronzoWatch scheme"* under the session header. The phone's banner appears for any version difference, including a stale watch that still happens to work — updating the watch clears it. |
+| The watch shows **"No workout"** while a session runs on the phone, and the phone's log shows `sent session` and, once the wrist wakes, `answer: a session` | **The watch app on the watch is stale.** Regenerating the project or changing a target does not reliably replace the watch app that is already installed — watchOS keeps the old one, which receives nothing and shows its idle screen. Fix: `scripts/install.sh watch` (pushes the copy embedded in the newest phone build — the only install path that keeps the two copies identical). Cost several hours to find once. **It now says so for itself**: a mismatched watch shows *"Can't read your iPhone — reinstall the Watch app"* on the wrist, and the phone shows *"Your Watch app is out of date — reinstall the Watch app from the Mac"*. The phone's banner appears for any version difference, including a stale watch that still happens to work — pushing the embedded copy clears it. |
 | The watch shows **"No workout"** and the phone logs `updateApplicationContext failed` | The write was refused — usually the session had not finished activating. The phone re-sends the moment activation completes, so this should self-clear within a second; if it does not, the link is not coming up at all and the `activation:` line says why. |
-| **The phone says `No Watch app — reinstall the Watch app from Xcode`, the wrist says `No workout` / `Your iPhone didn't answer`, and `devicectl device info apps` shows the watch app IS installed** | **The watch app is installed and not registered as this phone app's companion.** The `activation:` line is the proof: `paired=true watchAppInstalled=false`, and every push is refused with `WCErrorDomain Code=7006 "Watch app is not installed."` Both screens are describing that one fact — nothing was ever sent, so the wrist can only say it was never answered. **Fix: replace the watch app on the watch.** What clears this is the *watch* app on the wrist being replaced by a build from the current install — not which scheme carried it. Running the `Oronzo` scheme to the iPhone does this **only when the watch is connected at that moment**; on 28 September 2026 it did, and on 30 September 2026 it did not (`devicectl list devices` showed the watch as *available (paired)*, not *connected*), and the same state persisted. Reinstalling the watch app repaired it immediately both times, whichever route was used: either run the `OronzoWatch` scheme to the Watch from Xcode, or `cd ios && xcodebuild -project Oronzo.xcodeproj -scheme OronzoWatch -destination 'id=<watch-udid>' -configuration Debug -allowProvisioningUpdates build` followed by `xcrun devicectl device install app --device <watch-udid> ~/Library/Developer/Xcode/DerivedData/Oronzo-*/Build/Products/Debug-watchos/OronzoWatch.app`. **Verify with the `activation:` line, never by which scheme you ran.** See `docs/decisions.md`, *"A watch app that was installed and not installed"*. |
-| The watch logs `could not decode an incoming message` | The two apps are different builds. Install both from the same run — the phone scheme embeds the watch app, but does not reliably replace one already on the watch. |
+| **The phone says `No Watch app — reinstall the Watch app from Xcode`, the wrist says `No workout` / `Your iPhone didn't answer`, and `devicectl device info apps` shows the watch app IS installed** | **The watch app is installed and not registered as this phone app's companion.** The `activation:` line is the proof: `paired=true watchAppInstalled=false`, and every push is refused with `WCErrorDomain Code=7006 "Watch app is not installed."` Both screens are describing that one fact — nothing was ever sent, so the wrist can only say it was never answered. **The cause is known since 3 October 2026: the phone's periodic app sync ("Reunion") tried to update the watch app over the air; the wrist refused it — a free-provisioning-profile app may not be installed from that path (`MIInstallerErrorDomain Code=111`, *"apps validated by those are not allowed to be installed from this source"*) — and the failed attempt dropped the registration.** The state can clear by itself within minutes (seen twice on 2 October 2026) or sit broken for hours (3 October 2026: ~3 hours). **First move: wait five minutes, then re-check with `scripts/resign.sh --verify-only`. If it is still down, push the Watch app embedded in the newest phone build — the repair, and the only install path that keeps the copies identical:** `scripts/install.sh watch` stages the bundle, prints the hash the wrist must report back, and installs. **Verify with the `activation:` line, never by which scheme you ran.** Every past episode's cause is readable afterwards in a `log collect` archive — `appconduitd` names the `Reunion` and the failed install, with times. See `docs/decisions.md`, *"The third occurrence, and the cause"*. |
+| The watch logs `could not decode an incoming message` | The two apps are different builds. Install both from the same build: `scripts/install.sh both` builds the phone (with the Watch app inside it) and pushes that embedded copy. |
+| `install.sh phone` prints **"THE IPHONE IS INSTALLED, BUT ITS WATCH APP DID NOT REACH THE WRIST"** | The Watch was unreachable, so the two copies now differ — the mismatch the phone's sync trips over. With the Watch awake and near, run `scripts/install.sh watch`. |
 | The watch shows a session that ended (or that no phone is running) | A phantom, from the application context having no expiry. The phone clears it on coming forward, and answers "nothing running" whenever the watch asks. If it persists, the watch is not reaching the phone at all. |

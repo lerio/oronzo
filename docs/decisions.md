@@ -375,6 +375,106 @@ first candidate that does not require an install to have happened at the moment 
 and because *"which profile is each half on?"* is now a question worth asking before attributing
 this a third time. **Lead, not finding — do not act on it as though it were established.**
 
+### The third occurrence, and the cause — 3 October 2026
+
+**Three occurrences had been explained by what a person had just done. The cause was something the
+phone does on its own, on a schedule nobody had looked at.** The state was the familiar one —
+`watchAppInstalled=false`, every push refused `7006`, the phone's banner, `No workout` on the wrist —
+and the machine had been verified good **21 hours** earlier, with nothing built or installed in
+between. Both explanations still on the shelf were now dead on their face: the profiles were fresh
+(minted 2 October, expiring the 9th) and no install of any kind had happened since the verification.
+
+**What found it was the phone's own log, kept long enough.** A `log collect` archive of 30 hours,
+read with `log show --predicate 'process == "Oronzo"'`. Three traps stand between that archive and an
+answer, all recorded because all three were hit: `log` is a zsh builtin — invoke `/usr/bin/log` or
+the command never runs; `--start` needs seconds; and `log collect` from a device needs root. The
+app's own `Log.debug` lines are still absent from the archive, as above — but *the frameworks' debug
+lines persist*, and WatchConnectivity logs the state the app cannot:
+
+```
+<WCSessionState: …, paired: YES, appInstalled: NO, …, appInstallationID: (null)>
+```
+
+`appInstalled: NO` with `appInstallationID: (null)` is the registration down; every episode, and
+every recovery, carries the **same** non-null id — the record goes missing and comes back, it is
+never replaced.
+
+**The cause, in the phone's own words.** At 10:23 on 3 October — two and a half hours before the
+first launch of the day (all times local):
+
+```
+appconduitd: Reunion: com.lerio.oronzo.watchkitapp executable hashes differ; may update.
+appconduitd: Enqueueing (first) install operation for com.lerio.oronzo.watchkitapp
+appconduitd: Failed to install app com.lerio.oronzo.watchkitapp …
+             MIInstallerErrorDomain Code=111 "The bundle being installed with bundle ID
+             com.lerio.oronzo.watchkitapp is authorized by a free provisioning profile, but
+             apps validated by those are not allowed to be installed from this source."
+```
+
+The companion sync — the periodic reconciliation between the apps on the phone and the apps on the
+watch — decided the wrist's copy of the watch app was out of date and **tried to install it over the
+air. The wrist refused, by design, because the app is signed on a free personal team** — and the
+failed attempt took the registration down with it, milliseconds later (`state change 0`), after which
+every `updateApplicationContext` was refused with `WCErrorCodeWatchAppNotInstalled` until a direct
+install replaced the wrist's copy at 13:15. The watch then reported itself back (`Setting state to
+installed … watchKitAppExecutableHash=22028b97…`) and the session state read `appInstalled: YES`
+again at 13:20, pushes writing normally.
+
+**The repair was real; the confusion was about direction.** The state does not always clear on its
+own — on 3 October it sat broken for nearly three hours. A direct install (Xcode, or
+`scripts/install.sh watch`) does restore it, which is why "replace the watch app" worked on 28 and 30
+September and again on the 3rd. But on 2 October the same state flickered twice **and returned by
+itself within minutes** — `08:48:07 NO → 08:50:30 YES`, `14:27:50 NO → 14:32:26 YES`, with no install
+machinery anywhere in the window. So the honest rule is: the registration can go missing for minutes
+or for hours; a direct install restores it; patience sometimes does. What was never true is the
+direction the two sections above assumed — **installs do not break this registration. The phone's own
+attempt to install does**, and only because the free profile makes that attempt fail.
+
+**What this corrects, stated as corrections.** The profile-drift lead recorded above is dead: on 3
+October the profiles were fresh and the drop happened anyway. "The step that keeps the pairing
+intact" — the comment this file's sibling scripts carried over `build_install_watch` — was never
+preventive; it is the repair. And the trigger is structural rather than accidental: a free-team
+signing and the phone's automatic companion update are set up to disagree, so future syncs can repeat
+the episode. The likely ending is signing on a team whose profile the install path accepts — **a
+prediction, not a finding; it has not been tested.**
+
+**The trap, one more time, and now in full.** The first two occurrences each drew a rule from where
+the human had left off, because the state was discovered at the moment its symptom appeared. The
+cause had been firing on the phone's own clock — an update at 10:23, flickers at 08:48 and 14:27 —
+and the one instrument that ever showed it was a log archive large enough to hold both the failure
+and the quiet hours before it. **When a failure looks like it has no cause, the first question is not
+"what changed just before" but "what runs on its own".**
+
+### The Watch app is installed from the phone's embedded copy, and nowhere else — 3 October 2026
+
+**The day the cause was found, the cure became a one-way rule.** After any build there are two
+copies of the Watch app on this Mac — the one inside the phone app
+(`Oronzo.app/Watch/OronzoWatch.app`) and the standalone `Debug-watchos` product — and the standalone
+one is what used to go to the wrist. Every such install planted the mismatch the sync later trips
+over, above. So: **the copy embedded in the newest iPhone build is the only artifact ever installed
+on the Watch.** `scripts/install.sh watch` pushes it — staging it with `ditto` when devicectl
+refuses the nested path, and printing the executable sha256 the wrist must report back
+(`appconduitd`'s `watchKitAppExecutableHash=`) — while `phone`, `both` and `resign.sh` end with the
+same push, and say so loudly when the Watch was out of reach. The `OronzoWatch` scheme builds for
+simulators (the `/check` suite uses it) and never for a device.
+
+**The phone now watches the registration itself.** `PhoneConnectivity` implements
+`sessionWatchStateDidChange` — the delegate the device logs showed the framework wishing for — every
+change of `isPaired`/`isWatchAppInstalled` is written at notice level as a `link:` line that
+survives in a `log collect` archive, and a scene-forward refresh covers the suspended case. The
+warning that used to be drawn only inside a running session — the worst possible moment — now also
+sits on the plan list and the plan summary (`WatchLinkWarning`), where the next workout is chosen.
+
+**What is still open, and how this rule is judged.** Which hash the wrist reports for a *fat*
+embedded binary — the whole file or the arm64 slice — is the one thing the first push measures; the
+copy is identical either way, but the reunion compares hashes, so if a `Reunion` line still says
+"hashes differ" with the copies equal, this rule is insufficient on the free tier and the fallback
+is the wait-then-repair protocol with the paid-account question reopened — not a silent patch. The
+unexplained flicker of 2 October is still unexplained; the `link:` lines make its next appearance
+visible. **Acceptance for this rule: a week of use with a resign inside it, no `hashes differ` line
+for `com.lerio.oronzo.watchkitapp`, no `state change 0`, and `--verify-only` passing at every
+check.**
+
 ## The session is written down, and `advertised != nil` was never the same question
 
 The fifth time this project chased a wrist reading **"No workout"** while a workout ran, the cause

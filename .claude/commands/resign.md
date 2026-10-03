@@ -16,8 +16,9 @@ provisioning profile has expired. The apps do not warn you in advance.
 ./scripts/resign.sh
 ```
 
-That is the whole thing. It backs up and deletes the two Oronzo profiles, rebuilds and installs
-both apps, and verifies. `--verify-only` checks the link without changing anything.
+That is the whole thing. It backs up and deletes the two Oronzo profiles, rebuilds and installs the
+iPhone app and pushes its embedded Watch app to the wrist, and verifies. `--verify-only` checks the
+link without changing anything.
 
 **This section used to say the steps needed a human at Xcode and that `xcodebuild` could not do
 it. It was never tested, and it is false** — the CLI route is how the Watch app was repaired on
@@ -38,15 +39,19 @@ cd ios && xcodegen generate && open Oronzo.xcodeproj
 
 Then, in Xcode:
 
-1. Run the **Oronzo** scheme to the iPhone.
-2. Run the **OronzoWatch** scheme to the Apple Watch. **Do not skip this** because the phone step
-   "usually" covers it — and do not skip it because the watch shows the app as installed.
+1. Run the **Oronzo** scheme to the iPhone — the Watch app rides inside it.
+2. Push that embedded copy to the wrist: `./scripts/install.sh watch`. Do **not** run the
+   `OronzoWatch` scheme to a device — a standalone build is different bytes than the phone embeds,
+   and that difference is what the phone's sync trips over.
 
 **Step 1 installs the embedded Watch app only when the watch is connected at that moment.** If it
 is not (`devicectl list devices` shows the watch as *available (paired)* rather than *connected*),
-the phone app is re-signed and the watch app is left on the previous install — which is the state
-that reads as **"No Watch app"** on the phone with a perfectly good-looking app on the wrist. It has
-cost this project two afternoons, on 28 and 30 September 2026.
+the phone app is re-signed and the watch app is left on the previous install — two halves that
+disagree. A mismatch is what the phone's periodic app sync trips over: it tries to update the wrist
+over the air, the free-profile signing makes the wrist refuse, and the failed attempt drops the
+companion registration — the state that reads as **"No Watch app"** on the phone with a perfectly
+good-looking app on the wrist (`docs/decisions.md`, *"The third occurrence, and the cause"*). It has
+cost this project three afternoons, on 28 and 30 September and 3 October 2026.
 
 ### Then verify, because no scheme reports whether it worked
 
@@ -67,8 +72,9 @@ xcrun devicectl device process launch --console --terminate-existing \
 ```
 
 `watchAppInstalled=true` and no `7006` means both halves are registered. `watchAppInstalled=false`
-means the watch app must be reinstalled — see the row in `docs/runbook.md`. See `docs/decisions.md`,
-*"A watch app that was installed and not installed"*.
+means the companion registration is down — it can clear by itself within minutes, so re-check once
+before rebuilding; if it persists, replace the watch app on the wrist (`scripts/install.sh watch`).
+See the row in `docs/runbook.md`.
 
 ## If it fails
 

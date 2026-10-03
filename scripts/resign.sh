@@ -16,13 +16,18 @@
 #   So this deletes the Oronzo profiles first. With nothing valid to reuse, the
 #   build has to mint new ones and the seven days start again.
 #
-# Why it installs BOTH apps, phone first:
+# Why it pushes the Watch app itself, from the phone's embedded copy:
 #
-#   The iPhone app embeds the Watch app, but only replaces the one already on
-#   the wrist when the Watch is connected at that moment. When it is not, you
-#   get a freshly signed phone app beside an old Watch app — which is what the
-#   phone reports as "No Watch app". Reinstalling the Watch app is what repairs
-#   it, so the Watch step is not optional even when the phone step looks fine.
+#   The iPhone app embeds the Watch app, but installing the phone only replaces
+#   the copy already on the wrist when the Watch is connected at that moment.
+#   When it is not, you get a freshly signed phone app beside an old Watch app —
+#   two halves that disagree, which is the mismatch the phone's periodic app
+#   sync trips over: it tries to update the wrist over the air, the free-profile
+#   signing makes the wrist refuse, and the failed attempt drops the companion
+#   registration (docs/decisions.md, "The third occurrence, and the cause"). So
+#   the embedded copy is pushed explicitly — the Watch step is what keeps the
+#   two sides identical, and it doubles as the repair when the registration has
+#   dropped.
 #
 # Usage:
 #   scripts/resign.sh                 full resign, then verify
@@ -39,7 +44,8 @@ usage() {
 Usage: scripts/resign.sh [--verify-only]
 
   (no arguments)   Back up and delete the Oronzo profiles, rebuild and reinstall
-                   both apps so they carry fresh 7-day profiles, then verify.
+                   the iPhone app and push its embedded Watch app to the wrist —
+                   both then carry fresh 7-day profiles — then verify.
   --verify-only    Touch nothing. Only check whether the phone can see the
                    Watch app. ~5 seconds; use this before assuming it is broken.
 
@@ -109,7 +115,13 @@ resign() {
     fi
 
     build_install_phone
-    build_install_watch
+    if ! install_embedded_watch; then
+        echo
+        echo "==> WARNING: the Watch app did NOT reach the wrist. The iPhone now"
+        echo "    runs a build whose embedded Watch app the wrist does not have —"
+        echo "    the mismatch the phone's sync trips over. Re-run this script once"
+        echo "    the Watch is reachable (awake, near this Mac, on Wi-Fi)."
+    fi
 
     echo
     echo "==> New profiles"

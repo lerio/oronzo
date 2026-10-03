@@ -17,7 +17,17 @@ PROFILE_DIR="$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
 
 PHONE_BUNDLE="com.lerio.oronzo"
 PHONE_APP_PATH_SUFFIX="Build/Products/Debug-iphoneos/Oronzo.app"
-WATCH_APP_PATH_SUFFIX="Build/Products/Debug-watchos/OronzoWatch.app"
+
+# The one copy of the Watch app that may be installed on the wrist: the app embedded
+# in the newest iPhone build. A standalone Debug-watchos build puts *different bytes*
+# on the Watch — a separate compile, so different UUIDs and signatures — and two
+# copies that differ is exactly what the phone's periodic "Reunion" sync tries to fix
+# over the air. A free-provisioning-profile app can never pass that install, and the
+# failed attempt drops the companion registration with it (error 7006 on every push)
+# until a direct install replaces the copy. See docs/decisions.md, "The third
+# occurrence, and the cause".
+EMBEDDED_WATCH_PATH_SUFFIX="Build/Products/Debug-iphoneos/Oronzo.app/Watch/OronzoWatch.app"
+WATCH_EXECUTABLE_NAME="OronzoWatch"
 
 # How long to wait for the phone to report its activation state before giving up.
 #
@@ -115,8 +125,8 @@ derived_data() {
 # Build + install
 # ---------------------------------------------------------------------------
 #
-# Both need an absolute -project path rather than a `cd`, so that a caller can
-# run these from anywhere.
+# The build needs an absolute -project path rather than a `cd`, so that a caller
+# can run these from anywhere.
 
 build_install_phone() {
     local dd
@@ -133,22 +143,77 @@ build_install_phone() {
     xcrun devicectl device install app --device "$PHONE_UDID" "$dd/$PHONE_APP_PATH_SUFFIX"
 }
 
-# The step that keeps the pairing intact. Never skip it because the phone
-# install "usually" carries the Watch app — it only does when the Watch is
-# connected at that moment, and it says nothing when it does not.
-build_install_watch() {
+# The embedded Watch app, if a phone build exists. Echoes its path.
+embedded_watch_app() {
     local dd
-    echo
-    echo "==> Building OronzoWatch for the Watch"
-    echo "    (this takes a few minutes; -quiet hides the xcodebuild log)"
-    xcodebuild build -project "$REPO/ios/Oronzo.xcodeproj" -scheme OronzoWatch \
-        -destination "id=$WATCH_UDID" -configuration Debug \
-        -allowProvisioningUpdates -quiet
-
     dd="$(derived_data)"
+    [ -n "$dd" ] && [ -d "$dd/$EMBEDDED_WATCH_PATH_SUFFIX" ] \
+        && echo "$dd/$EMBEDDED_WATCH_PATH_SUFFIX"
+}
+
+# The executable hash the wrist must report after a push — the shasum of the file,
+# which is what `appconduitd`'s `watchKitAppExecutableHash=` echoes back.
+embedded_watch_hash() {
+    local app
+    app="$(embedded_watch_app)"
+    [ -n "$app" ] || return 1
+    shasum -a 256 "$app/$WATCH_EXECUTABLE_NAME" | awk '{print $1}'
+}
+
+# Push the embedded Watch app to the wrist — the repair for a dropped companion
+# registration, and the only install path that keeps the two copies identical.
+#
+# Callers decide whether a failure is fatal; this explains and returns non-zero.
+install_embedded_watch() {
+    local app staging
+    if [ -z "$WATCH_UDID" ]; then
+        echo "ERROR: no Watch found — cannot install the Watch app."
+        return 1
+    fi
+
+    app="$(embedded_watch_app)"
+    if [ -z "$app" ]; then
+        echo "ERROR: no Watch app is embedded in a phone build yet."
+        echo "       Run scripts/install.sh phone first — the Watch app is built"
+        echo "       inside the iPhone app."
+        return 1
+    fi
+
+    # Stale bytes are worth interrupting for: the Watch app is compiled from these
+    # sources, so if any file is newer than the bundle, the bundle is behind them.
+    # Not fatal — this push still repairs a dropped registration.
+    if [ -n "$(find "$REPO/ios/OronzoWatch" "$REPO/ios/Shared" "$REPO/ios/OronzoCore/Sources" \
+               -name '*.swift' -newer "$app" -print -quit 2>/dev/null)" ]; then
+        echo "    WARNING: the embedded Watch app is older than the Watch sources."
+        echo "    Pushing it installs stale code — scripts/install.sh both rebuilds."
+        echo
+    fi
+
     echo
-    echo "==> Installing onto the Watch"
-    xcrun devicectl device install app --device "$WATCH_UDID" "$dd/$WATCH_APP_PATH_SUFFIX"
+    echo "==> Installing the Watch app embedded in the newest iPhone build"
+    echo "    executable sha256: $(embedded_watch_hash)"
+    echo "    (the wrist reports it back as appconduitd's watchKitAppExecutableHash)"
+
+    if xcrun devicectl device install app --device "$WATCH_UDID" "$app"; then
+        return 0
+    fi
+
+    # devicectl can refuse a bundle nested inside another app. The staged copy is
+    # the same bytes — ditto preserves the signature — so the hash, which is the
+    # thing the sync compares, does not move.
+    echo
+    echo "    devicectl refused the bundle in place; staging a copy and retrying."
+    staging="$(mktemp -d -t oronzo-watch)"
+    ditto "$app" "$staging/OronzoWatch.app"
+    if xcrun devicectl device install app --device "$WATCH_UDID" "$staging/OronzoWatch.app"; then
+        rm -rf "$staging"
+        return 0
+    fi
+    rm -rf "$staging"
+    echo
+    echo "ERROR: the Watch app did not reach the wrist. Wake the Watch, keep it"
+    echo "       near this Mac and on Wi-Fi, then re-run."
+    return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -228,16 +293,18 @@ verify() {
     echo "BROKEN — activation succeeded, and the phone reports the Watch app is not"
     echo "         registered to it. This is the 'No Watch app' state."
     echo
+    echo "         This state can clear by itself within minutes (measured, twice on"
+    echo "         2 Oct 2026) — if you are in no hurry, re-run this check once before"
+    echo "         rebuilding anything."
+    echo
     if grep -q "paired=false" "$log"; then
         echo "         paired=false, so no Watch is paired to this iPhone at all —"
         echo "         a different problem. Check pairing in the Watch app."
     else
-        echo "         Fix — reinstall the Watch app, which is what repairs this:"
-        echo "           cd $REPO/ios && xcodebuild build -project Oronzo.xcodeproj \\"
-        echo "             -scheme OronzoWatch -destination 'id=$WATCH_UDID' \\"
-        echo "             -configuration Debug -allowProvisioningUpdates"
-        echo "           xcrun devicectl device install app --device $WATCH_UDID \\"
-        echo "             ~/Library/Developer/Xcode/DerivedData/Oronzo-*/$WATCH_APP_PATH_SUFFIX"
+        echo "         Fix — push the Watch app embedded in the newest iPhone build,"
+        echo "         which repairs the registration and keeps the two copies identical"
+        echo "         (the difference between them is what the phone's sync trips over):"
+        echo "           $REPO/scripts/install.sh watch"
     fi
     return "$EXIT_BROKEN"
 }

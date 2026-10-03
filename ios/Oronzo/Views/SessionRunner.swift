@@ -129,7 +129,7 @@ struct SessionRunner: View {
             // than over it because the figure is read from across a room and the note is read at
             // arm's length, before the set.
             if let note = PhoneConnectivity.shared.watchNote {
-                watchWarning(note)
+                WatchLinkWarning(note: note)
             }
             Spacer(minLength: SpacingStep.roomy.points)
             live(screen)
@@ -438,26 +438,6 @@ struct SessionRunner: View {
                 .foregroundStyle(ColorRole.text.color(colorScheme))
                 .padding(.vertical, SpacingStep.snug.points)
         }
-    }
-
-    /// Names a problem the phone can see and the wrist cannot say.
-    ///
-    /// The failure this exists for is the one `docs/runbook.md` records as the most expensive in
-    /// the project: a phone running a workout perfectly, a watch showing **"No workout"**, and
-    /// nothing anywhere to explain the disagreement — because the two apps are installed
-    /// separately, so a re-sign can replace one and not the other, and a watch built before
-    /// versioning existed cannot report a version to compare.
-    ///
-    /// It is deliberately a note rather than a refusal. Every symptom the mismatch causes is a
-    /// *stale screen*, never a wrong one, so the workout carries on: the countdown on this phone
-    /// is correct regardless of what the watch is doing. Fixing it means running the other scheme,
-    /// which is a thing you do afterwards, not mid-set.
-    private func watchWarning(_ note: String) -> some View {
-        Label(note, systemImage: "applewatch.exclamationmark")
-            .font(.system(size: captionSize, weight: .medium))
-            .foregroundStyle(ColorRole.danger.color(colorScheme))
-            .multilineTextAlignment(.center)
-            .padding(.top, SpacingStep.tight.points)
     }
 
     private var topBar: some View {

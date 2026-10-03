@@ -31,6 +31,12 @@ struct PlanListView: View {
                     }
                 } else {
                     List {
+                        if let note = PhoneConnectivity.shared.watchNote {
+                            Section {
+                                WatchLinkWarning(note: note)
+                            }
+                        }
+
                         if let error = store.error {
                             Section {
                                 Label {

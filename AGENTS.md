@@ -216,6 +216,13 @@ Each of these cost real time. They are not hypothetical.
   assumption does not retire the ones resting on it. `docs/decisions.md` has this in full. **When a
   doc here says something is impossible, ask which failure taught it that** — and if the answer is
   another doc, it has taught nothing.
+- **The Watch app is installed from the phone's embedded copy, and nowhere else.** Two copies that
+  differ — a standalone `OronzoWatch` build on the wrist beside the phone's embedded one — is
+  exactly what the phone's periodic app sync ("Reunion") tries to fix over the air; a
+  free-provisioning-profile app can never pass that install, and the failed attempt drops the Watch
+  companion registration (every push then fails 7006) until a direct install replaces the copy.
+  `scripts/install.sh watch` pushes the embedded copy and is the repair; the `OronzoWatch` scheme
+  builds for simulators only. See `docs/decisions.md`, *"The third occurrence, and the cause"*.
 - **Xcode needs an Apple ID signed in and the licence accepted**, or every `xcodebuild` and
   `devicectl` invocation fails with errors that never mention accounts.
 - **The Watch must be registered with Xcode** (Devices and Simulators → prepare it), or install

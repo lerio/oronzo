@@ -43,7 +43,9 @@ Run these, in this order, and stop early only if one fails:
      -destination 'generic/platform=watchOS Simulator' -derivedDataPath /tmp/oronzo-check-watch CODE_SIGNING_ALLOWED=NO
    ```
    `CODE_SIGNING_ALLOWED=NO` keeps this off the signing path entirely, so it works without an
-   Apple ID, a connected device, or a valid profile.
+   Apple ID, a connected device, or a valid profile. Note that the `OronzoWatch` build here is a
+   *simulator* build only — the Watch app that goes to a device is always the copy embedded in the
+   phone app, pushed by `scripts/install.sh watch` (see `docs/decisions.md`).
 
 Then summarise in a short table: what ran, pass or fail, and the count where there is one. If
 something failed, quote the real error — never paraphrase a failure into a softer claim.

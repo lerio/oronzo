@@ -50,6 +50,11 @@ struct PlanDetailView: View {
             VStack(alignment: .leading, spacing: SpacingStep.roomy.points) {
                 header
 
+                // The last moment this still changes what happens: the Start button is below.
+                if let note = PhoneConnectivity.shared.watchNote {
+                    WatchLinkWarning(note: note)
+                }
+
                 if plan.blocks.isEmpty {
                     empty
                 } else {
