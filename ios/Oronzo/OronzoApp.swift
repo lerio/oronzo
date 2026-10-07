@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 @main
 struct OronzoApp: App {
@@ -146,12 +147,26 @@ private struct RootView: View {
                 // cannot fire into a process that was not running.
                 PhoneConnectivity.shared.refreshWatchState()
                 PhoneConnectivity.shared.clearIfIdle()
-                // Coming forward is also when an owed Health write stops being ambiguous — the
-                // phone was just unlocked, which is the one thing a locked write was waiting for.
-                // Cheap to call unconditionally: the ledger is empty unless something is owed,
-                // and an attempt made seconds ago is not repeated.
+                // Coming forward is a moment an owed Health write can be offered at — the phone
+                // was just unlocked, which is the one thing a locked write was waiting for. Cheap
+                // to call unconditionally: the ledger is empty unless something is owed, and an
+                // attempt made seconds ago is not repeated.
+                //
+                // **It is not the moment the design used to assume it was.** A suspended app gets
+                // no scene changes, and unlocking does not bring Oronzo forward — so this fires
+                // only when the app is opened, which is the one thing an owed workout must not
+                // have to wait for. The unlock itself is the notification below; this stays as the
+                // hook for the case where a held session *is* what the user comes back to.
                 Task { await HealthWriteQueue.shared.resolveAll() }
             }
+        }
+        // **The unlock a locked write was waiting for**, and the reason `SessionController` holds
+        // the silent loop up after a session whose workout Health has not confirmed. It reaches a
+        // running app in the background — which the hold guarantees — and never a suspended one,
+        // which is why the hold is what makes this trigger exist at all. The full argument is in
+        // `SessionController.stopKeepAlive`.
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.protectedDataDidBecomeAvailableNotification)) { _ in
+            Task { await HealthWriteQueue.shared.resolveAll() }
         }
     }
 

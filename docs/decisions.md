@@ -607,8 +607,8 @@ header documents as a save that happened — and on 30 September 2026 the same a
 workout that was **not** in Health, with the permission granted and everything else unchanged. The
 two are indistinguishable from inside the app, so the app no longer tries to tell them apart. A
 finished workout is written to `health-owed.json` **before** it is offered to Health, and offered
-again when the app next comes forward — which is the moment the ambiguity ends, because the cure
-for a locked write is an unlocked phone and that is exactly when `scenePhase` becomes `.active`.
+again later — see [the unlock, below](#the-unlock-is-the-trigger-and-the-loop-is-held-to-hear-it)
+for when "later" turned out to be.
 
 **Why not read Health back?** Because that is the permission this app deliberately does not ask
 for. There is no `NSHealthShareUsageDescription` in `Info.plist`, and the recorder requests
@@ -640,10 +640,44 @@ in Health"** — the app cannot know — so every line written about one says "g
 "missing". The visibility question is deliberately unsolved for now: the log line and the ledger
 are the record, and nothing is drawn on screen.
 
-**Documented, not yet observed.** The identifier rule above is Apple's, from the SDK header. That
-*this* device's HealthKit behaves that way — that a second attempt under a greater version leaves
-one workout and not two — has not been measured yet. The first locked completion after this change
-is the observation, and `docs/known-issues.md` §12 is where it gets written down.
+**Documented, and the retry half now observed.** The identifier rule above is Apple's, from the SDK
+header. On 6 October 2026 a locked completion was retried successfully under a greater version and
+**did put the workout in Health** — the retry landing is measured. That the retry *replaced*
+rather than added is still only the documented rule plus the absence of any duplicate having been
+noticed; if one ever appears, this paragraph is what is wrong.
+
+### The unlock is the trigger, and the loop is held to hear it
+
+**The original rule named a trigger that does not exist.** The owed write was to be offered again
+"when the app next comes forward … the cure for a locked write is an unlocked phone, and that is
+exactly when `scenePhase` becomes `.active`". The second half is false for the case the ledger
+exists for: a session that ends in a pocket leaves the app suspended seconds later, and a suspended
+app gets no scene changes. Unlocking does not bring it forward — only opening it does. So the
+retry's real trigger was "the user opens Oronzo", and a workout finished in a pocket waited for
+that, which for this app can be the next workout a day later. Measured on the device on 6 October
+2026: a locked completion, one attempt in the ledger, five hours later still one.
+`docs/known-issues.md` §12 has the record.
+
+**What replaces it: hold the keep-alive, and listen for the unlock.** The silent loop that keeps
+the phone awake through a workout is now held up after a session Health has not confirmed — bounded
+to an hour — so that the app is *running* when the phone is unlocked. That is what makes
+`UIApplication.protectedDataDidBecomeAvailable` reach it: the notification is delivered to a
+running app, in the background, and never to a suspended one. **The hold is not a taste in
+batteries, it is the thing that makes the trigger exist** — without it there is nothing to receive
+the notification, and the app would be awake for an hour for nothing.
+
+The hold ends at the first of: Health confirming the write; the summary being dismissed (the user
+is in the app, and the phone is therefore unlocked — nothing left to wait for); or the hour
+expiring. Past the hour the obligation is exactly where it always was, written down and offered at
+the next launch or foreground. **The hour bounds the wake, not the retries** — the retries still
+happen only where a write can land.
+
+**And an attempt is no longer spent while the device is locked.** HealthKit cannot write then, so a
+retry made in that state is one of three spent on a save that cannot happen; the queue declines it
+and waits for the unlock that lifts it. The *session's own* first attempt is deliberately exempt —
+it is not a retry, Apple documents the locked `nil` as a save that did happen, and this device has
+produced that reading (28 September) as well as the opposite (30 September). It carries the
+workout's fresh intent, so it is still made.
 
 ### Twice, the same mistake
 

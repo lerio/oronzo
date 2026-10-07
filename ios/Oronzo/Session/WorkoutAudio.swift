@@ -25,6 +25,10 @@ final class WorkoutAudio {
     /// does not depend on it — the engine works from absolute end dates, so a suspension
     /// resolves correctly on the next tick whether or not this holds.
     ///
+    /// **It can outlive the session, and on purpose.** A workout Health has not confirmed keeps
+    /// this loop up past the end so the app is still running at the unlock that lets the write
+    /// land — `SessionController.stopKeepAlive` has the argument and the bound.
+    ///
     /// `.playback` is deliberate: it ignores the ring/silent switch, which is what you want
     /// from a workout timer. `.mixWithOthers` keeps it from stopping your music.
     ///

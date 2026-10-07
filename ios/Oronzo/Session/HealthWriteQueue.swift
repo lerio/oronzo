@@ -1,5 +1,6 @@
 import Foundation
 import OronzoCore
+import UIKit
 
 /// The one place a workout is offered to Apple Health — the first attempt and every retry after it.
 ///
@@ -98,12 +99,27 @@ final class HealthWriteQueue {
         return outcome
     }
 
-    /// Every entry that is due an attempt. Called at launch and when the app comes forward.
+    /// Every entry that is due an attempt. Called at launch, when the app comes forward, and when
+    /// the phone is unlocked while a session's loop is being held for it. See `SessionController`.
     ///
     /// The foreground is not a compromise hook for this — it is the precise one. The failure this
     /// exists for is a phone that was locked, and the cure is the phone being picked up, which is
     /// the moment `scenePhase` becomes `.active`.
+    ///
+    /// **Nothing is attempted while the device is locked**, because HealthKit cannot write then —
+    /// the store is protected data — so an attempt made now spends one of three on a save that
+    /// cannot land. The unlock that lifts this is exactly what will call this again.
+    ///
+    /// The *session's own* first attempt is deliberately not guarded this way, and it is the only
+    /// one that is not: it is not a retry, Apple's header documents a `finishWorkout()` that
+    /// answers `nil` against a locked device as a save that did happen, and this device has been
+    /// observed both ways (see `HealthWriteOutcome.unconfirmed`). That attempt carries the
+    /// workout's fresh intent, so it is made; every later one waits for a write that can land.
     func resolveAll(at now: Date = .now) async {
+        guard UIApplication.shared.isProtectedDataAvailable else {
+            Log.health("health: the device is locked; nothing can be offered yet")
+            return
+        }
         for entry in HealthOwedFile.load().retryable(at: now) {
             _ = await resolve(entry.id, at: now)
         }

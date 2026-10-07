@@ -299,18 +299,51 @@ what `HealthWriteOutcome.unconfirmed` says it cannot resolve from inside.
 
 **What changed, and what did not.** The app no longer treats an unconfirmed write as final. A
 finished workout is written down in `health-owed.json` (Application Support, beside
-`session-record.json`) **before** it is offered to Health, and offered again at launch and whenever
-the app comes forward — most usefully on the unlock that follows a locked completion, which is when
-the answer stops being ambiguous. At most three attempts, within 48 hours; then the entry stays and
-the app stops asking. **The summary's wording is unchanged, and every attempt is the same workout**:
-each carries the same `HKMetadataKeySyncIdentifier` and a strictly greater
-`HKMetadataKeySyncVersion`, which HealthKit documents as a replace rather than an add. The rule, and
-why it is the app's safety rather than the app's cleverness, is in `docs/decisions.md`.
+`session-record.json`) **before** it is offered to Health, and offered again at launch, whenever
+the app comes forward, and — since 6 October — **on the unlock itself**. At most three attempts,
+within 48 hours; then the entry stays and the app stops asking. **The summary's wording is
+unchanged, and every attempt is the same workout**: each carries the same
+`HKMetadataKeySyncIdentifier` and a strictly greater `HKMetadataKeySyncVersion`, which HealthKit
+documents as a replace rather than an add. The rule, and why it is the app's safety rather than the
+app's cleverness, is in `docs/decisions.md`.
 
-**The part that is still assumed.** That a second attempt under a greater version leaves one
-workout on this device has not been observed — it is Apple's documented behaviour, and the first
-locked completion after this change is where it gets measured. If a duplicate ever appears, this
-paragraph is what is wrong.
+**The retry path is now observed doing its job.** The 6 October session below was the first locked
+completion since the ledger landed, and the second attempt under a greater version **did put the
+workout in Health**. What is *not* yet observed is the other half of the identifier rule — that the
+retry replaced rather than added. If a duplicate ever appears, this paragraph is what is wrong.
+
+**6 October 2026: the retry worked, and nothing was there to trigger it.** A 45-minute session
+ended at 09:43 with the phone in a pocket. The ledger taken off the device afterwards held
+exactly one entry — that workout, **`attempts: 1`**, stamped 0.6 s after the end — and held it for
+five hours. So the first attempt had run and Health had not confirmed it, and the retry had not
+happened once. It could not have: the app was suspended. `SessionController` stopped the silent
+keep-alive loop as the session ended, and that loop is the phone's only claim on staying awake, so
+iOS suspended the app seconds later; the two retry hooks fire at launch and on `scenePhase ==
+.active`, and a suspended app gets neither. **The workout was not lost — it was un-triggered.** The
+moment the app was next opened, the retry ran, Health took the workout, and the ledger settled
+(the file is deleted when nothing is owed).
+
+The design had assumed the unlock was the trigger — *"the cure for a locked write is an unlocked
+phone and that is exactly when `scenePhase` becomes `.active`"* — and that sentence is the bug in
+one line: unlocking the phone does not bring a suspended app forward, so the "moment the ambiguity
+ends" only arrived if the app was opened by hand. A workout finished in a pocket therefore sat in
+the ledger until the next launch, which for this app can be the next workout a day later.
+
+**What changed.** The loop is now held up after a session Health has not confirmed — for up to an
+hour, and released the moment the write is confirmed or the summary is dismissed. That is what
+makes the app *running* at the unlock, which is what lets the unlock notification
+(`UIApplication.protectedDataDidBecomeAvailable`) reach it; the notification cannot wake a
+suspended app, so the hold is what gives the trigger something to arrive at. And a **retry is no
+longer attempted while the device is locked**: HealthKit cannot write then — the store is protected
+data — so such an attempt spends one of three on a save that cannot land. The session's own first
+attempt is deliberately exempt: it is not a retry, Apple documents the `nil` against a locked
+device as a save that did happen, and this device has produced both readings.
+
+**What is still assumed.** That the unlock notification reaches this app in the background *on
+this device* — it is documented to reach a running app and not a suspended one, and the hold
+guarantees "running", but no run has yet ended in a pocket with the fix in place. The device test
+is: finish a session with the phone locked, then unlock the phone **without opening Oronzo** and
+check Health.
 
 **A note on the evidence, because its absence cost an afternoon.** The app's lines are `Log.debug`
 — os_log *debug* level, which the system never persists. `log collect` on the morning of 30

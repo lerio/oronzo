@@ -101,6 +101,26 @@ final class SessionController {
     /// disk, which is what makes an unconfirmed write survivable at all. See `HealthWriteQueue`.
     private var hasWrittenToHealth = false
 
+    /// Whether this session's workout is still owed to Apple Health — and the silent loop is
+    /// therefore being held up for it. See `stopKeepAlive`.
+    private var waitingForHealth = false
+
+    /// The task that ends a held loop after `healthKeepAliveWindow`.
+    private var keepAliveWindow: Task<Void, Never>?
+
+    /// How long the silent loop is held up after a session Health has not confirmed.
+    ///
+    /// **An hour, because the wait is for an unlock.** The gap between finishing a workout in a
+    /// pocket and taking the phone out is minutes; an hour covers a session's worth of that
+    /// comfortably, and the hold usually ends long before the hour does — at the unlock, or the
+    /// moment Health confirms.
+    ///
+    /// It is bounded because the held loop is what keeps the phone awake, and a phone put down
+    /// and left locked must not be held all night. Past it the obligation is exactly where it
+    /// always was: written down in `health-owed.json`, and offered again at the next launch or
+    /// foreground.
+    private static let healthKeepAliveWindow: TimeInterval = 60 * 60
+
     private let link = PhoneConnectivity.shared
     private var engine: ExecutionEngine
     private var ticker: Task<Void, Never>?
@@ -396,7 +416,9 @@ final class SessionController {
     private func reassert() {
         // A finished session has nothing to re-assert. The summary is on screen and the watch has
         // its terminal snapshot; restarting the keep-alive here would hold the phone awake behind
-        // a workout that is over.
+        // a workout that is over. **The one thing that does keep a finished session's loop up is
+        // `stopKeepAlive`'s hold**, and this must not second-guess it: a loop that Health is
+        // waiting on is held, and one that is not has already been let go.
         guard !isFinished else { return }
 
         guard link.claim(self) else {
@@ -428,7 +450,10 @@ final class SessionController {
         }
 
         stopTicking()
-        audio.stop()
+        // Dismissing the summary means the user is in the app, which means the phone is unlocked —
+        // so there is nothing left for a held loop to catch. Ends the hold and stops it; a no-op
+        // stop for a session that was never holding one.
+        endHealthHold()
         // The workout is over and its history is written, so there is nothing left to be durable
         // about. Clearing this is what stops a finished session from answering the watch forever.
         //
@@ -489,7 +514,7 @@ final class SessionController {
         guard !isFinished else { return }
         complete(with: engine.abandon(at: .now))
         stopTicking()
-        audio.stop()
+        stopKeepAlive()
         // The final snapshot **replaces** `.sessionEnded` rather than preceding it. The
         // application context is a single slot — whatever is written last is all that survives
         // — so sending both would leave only the `.sessionEnded` and the watch would never show
@@ -718,7 +743,7 @@ final class SessionController {
                 audio.playFinish()
                 complete(with: engine.snapshot(status: .completed))
                 stopTicking()
-                audio.stop()
+                stopKeepAlive()
                 // See `finishEarly`: this final snapshot is the terminal state, and sending
                 // `.sessionEnded` after it would erase the only thing the watch has to draw.
                 pushState(force: true)
@@ -776,6 +801,9 @@ final class SessionController {
 
         let owed = HealthOwedEntry(planName: planName, workout: workout, createdAt: .now)
         HealthWriteQueue.shared.owe(owed)
+        // From here until Health confirms it, there is a reason for the app to stay running —
+        // and `stopKeepAlive`, which runs a moment from now, is what makes that true.
+        waitingForHealth = true
 
         // What became of *this* entry, whenever it is answered — including by a retry that runs
         // long after this screen was drawn. Filtered by id, so a retry of an older workout, or a
@@ -783,6 +811,10 @@ final class SessionController {
         HealthWriteQueue.shared.onOutcome = { [weak self] id, outcome in
             guard let self, id == owed.id else { return }
             self.healthWrite = outcome
+            // Nothing left to wait for. **A nil and an error keep the hold up**, because either
+            // can be the locked device — the `nil` Apple documents as one, and an error the store
+            // may throw while the phone is locked — and the unlock is the whole reason for waiting.
+            if outcome == .written { self.endHealthHold() }
         }
 
         // Unstructured on purpose. The write has to outlive the screen that shows the summary —
@@ -790,6 +822,56 @@ final class SessionController {
         // whoever set `completed`. `healthWrite` is observed, so the line fills in when Health
         // answers, whenever that is.
         Task { await HealthWriteQueue.shared.resolve(owed.id) }
+    }
+
+    /// Lets the silent loop go once the session is over — **unless Health still owes an answer**.
+    ///
+    /// **The failure this repairs, measured on 6 October 2026.** A session that ends with the
+    /// phone locked gets a `nil` from `finishWorkout()` and nothing is saved. The loop used to be
+    /// stopped right here, and that loop is the phone's only claim on staying awake — so iOS
+    /// suspended the app seconds later, and nothing was running at the one moment that could
+    /// repair the write: the unlock. `scenePhase` does not change for a suspended app, so
+    /// *"offered again when the app next comes forward"* only ever meant *"offered again if the
+    /// app is opened"*, and a workout finished in a pocket sat in `health-owed.json` until that
+    /// happened. The phone being unlocked at the end is the one configuration that worked, which
+    /// is exactly what the field reported.
+    ///
+    /// So the loop is held instead, for `healthKeepAliveWindow`. The unlock then arrives as
+    /// `UIApplication.protectedDataDidBecomeAvailableNotification`, which the app observes in
+    /// `RootView` — and which reaches a running app in the background, but never a suspended one.
+    /// **That notification is why the hold exists**: without it the loop would keep the phone
+    /// awake for an hour with nothing to do with the wake-up.
+    ///
+    /// Held only when there is something to wait for. A fixture and a session under three minutes
+    /// owe nothing (`waitingForHealth` is `false`), and an ordinary unlocked completion is
+    /// confirmed within the second, so the loop is released before anyone could notice it stayed
+    /// up — which also closes a race the old code had, where a slow store could be cut off by
+    /// this very stop.
+    private func stopKeepAlive() {
+        guard waitingForHealth else {
+            audio.stop()
+            return
+        }
+        Log.health(
+            "health: holding the silent loop for up to \(Int(Self.healthKeepAliveWindow / 60)) minutes, waiting for the unlock that lets the owed workout land"
+        )
+        keepAliveWindow = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(Self.healthKeepAliveWindow))
+            // A cancellation here means a settle or a teardown ended the hold first, and that is
+            // the ordinary way this task ends.
+            guard !Task.isCancelled, let self else { return }
+            Log.health("health: the hold is up; the workout is still owed, and the next launch or foreground will offer it again")
+            self.endHealthHold()
+        }
+    }
+
+    /// Ends the hold and stops the loop. Idempotent, and safe to call when nothing is held: the
+    /// three callers are Health confirming the write, the window expiring, and `teardown`.
+    private func endHealthHold() {
+        waitingForHealth = false
+        keepAliveWindow?.cancel()
+        keepAliveWindow = nil
+        audio.stop()
     }
 
     /// Asks for permission to write workouts, the first time a real one starts.

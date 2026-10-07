@@ -209,6 +209,13 @@ Each of these cost real time. They are not hypothetical.
   (`ios/Oronzo/Session/HealthWorkoutRecorder.swift`), and — measured on a device — it **moves the
   Exercise ring**. Note what is *not* reopened: no `HKWorkoutSession`, so the Watch's one-hour cap
   is unchanged, deliberately.
+- **A session Health has not confirmed keeps the phone awake on purpose.** The silent keep-alive is
+  held up to an hour past the end of such a session, so the app is *running* when the phone is
+  unlocked — the unlock is the first moment HealthKit will accept the write, and
+  `protectedDataDidBecomeAvailable` reaches a running app but never a suspended one. Stopping that
+  loop at the end of a session is what made every workout finished in a pocket wait for the app to
+  be opened by hand. `SessionController.stopKeepAlive` carries the argument; do not "tidy" it away,
+  and see `docs/known-issues.md` §12 for the measurement that bought it.
 - **The same mistake was made twice, and the second one is the lesson.** Alongside "HealthKit will
   not sign" sat "workouts do not close your Activity rings" — written in the same three files, and
   equally untested, because it *looked like it followed* from the first. It did not: the ring moves.
