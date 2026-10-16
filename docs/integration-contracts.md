@@ -244,17 +244,38 @@ anything is applied, or when the wrist goes down. The prohibition in `docs/decis
 per-second traffic, and the worst case here — an hour of wrist raises with the phone never
 reachable — stays in the low hundreds of messages.
 
-An ask goes onto the **durable** `transferUserInfo` channel even when the phone looks reachable,
-which is not true of a button press. A dropped press is recoverable by pressing again; a dropped
-ask leaves the wrist wrong, and the failure being recovered from is exactly the one where the phone
-looked ready and was not.
+### The wrist answers its own step controls
+
+A `next` or a `previous` pressed on the wrist is **echoed on the wrist** while the phone's answer is
+on its way (`PressEcho` in `OronzoCore`). This is not a second source of truth and it is not a wire
+change: the echo lives entirely in `WatchLink`, both ends send exactly what they sent before, and
+the phone's next snapshot replaces it the moment it arrives. What it removes is a round trip from
+the wrist's own screen — `WatchProjection` cannot walk a rep interval on its own, so before this a
+rep set could not end on the wrist until the phone had answered, on a channel the OS schedules
+rather than one it carries live. That is the reported *"I tapped skip and it took 5–10 seconds"*.
+
+Only the two step controls are echoed. A pause is not — a false pause would stop the wrist's clock
+while the phone ran the interval on — a finish is not, because DONE is the phone's to declare and
+the record, summary, history and Health write all hang off it; and a press that would leave the
+interval list waits, because the engine's answer to those is to *finish* or to do nothing. An echo
+is given up after `PressEcho.window` (a minute), which is the wrist's second way of concluding the
+phone is not listening — `AskSchedule` being the first.
 
 ### Transport
 
 | Direction | Primary | Also |
 |---|---|---|
 | Phone → Watch | `updateApplicationContext` (always) | `sendMessage` only if `isReachable`, to make a reachable watch update instantly |
-| Watch → Phone | `sendMessage` if `isReachable` | `transferUserInfo` otherwise — "Queued for when the phone is next awake, rather than dropped" — and **always** for a `requestState` ask |
+| Watch → Phone | `sendMessage` if `isReachable` | `transferUserInfo` otherwise — "Queued for when the phone is next awake, rather than dropped" — and then a second time, **only** if that direct send reported a delivery failure |
+
+**Nothing goes onto both channels**, and that is deliberate rather than an optimisation left undone.
+`WatchLink.send` picks one channel for an ask and for a press alike — `isReachable` is the only
+input — because the durable copy an ask used to carry *beside* its direct one did not replace it
+(both arrive) and cost six radio events for a single wrist raise; that is measured, and it is why
+the duplicate went (`docs/decisions.md`, 26 September 2026). The one exception added since is the
+*failure* path above: `sendMessage` reports an unreachable counterpart through its error handler,
+Apple documents that as a message which was **not** delivered, and a press that could not be
+delivered is queued rather than dropped. A successful send costs exactly one message, as before.
 
 `SessionController.pushState(force:)` dedupes against `lastPushedState` so repeated ticks do not
 spam the context; forces are used at start and on re-assert. `PhoneConnectivity.answer()`
@@ -272,6 +293,12 @@ holds it, `resign` refuses unless that controller is still the one holding it, a
 `SessionController.pushState` refuses unless it holds the link. The reference is weak, so a
 controller released without a `teardown` cannot leave the link believing a workout is still
 running.
+
+**The claim follows the *session*, not the screen** — `SessionHost.restore` calls `start()` on what
+it resumes, because iOS can launch this app in the background with no view ever presented (a
+message from the Watch does it), and a claim that only ever came from `SessionRunner.onAppear` left
+that launch answering the wrist's asks from the record while dropping every press on the floor at
+`PhoneConnectivity.deliver`.
 
 None of that is defensive padding — each refusal is a reported failure. `SessionRunner` **used to**
 build its controller in `@State(initialValue:)`, which SwiftUI re-evaluates on every re-render of

@@ -164,10 +164,10 @@ final class SessionController {
     /// which refuses rather than half-applying. A refused restore means the plan list, which is a
     /// worse screen than a resumed runner and a far better one than a runner driving nonsense.
     ///
-    /// **Nothing here starts anything.** The restored controller is handed to the runner, and its
-    /// `start()` finds the engine already running and takes the `reassert` path — which is the same
-    /// path a reappearing runner takes, and deliberately so: a resumed session and a re-asserted one
-    /// need exactly the same things done to them.
+    /// **Nothing here starts anything.** `SessionHost.restore` calls `start()` on what this returns,
+    /// and that call finds the engine already running and takes the `reassert` path — which is the
+    /// same path a reappearing runner takes, and deliberately so: a resumed session and a
+    /// re-asserted one need exactly the same things done to them.
     ///
     /// Note what is **not** done here. Nothing claims the link, starts audio, or touches the watch:
     /// this is a constructor, and `SessionController.init` has been side-effect-free since the

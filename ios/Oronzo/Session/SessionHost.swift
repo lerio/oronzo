@@ -63,10 +63,23 @@ final class SessionHost {
         return started
     }
 
-    /// Picks up a workout the phone was already in the middle of.
+    /// Picks up a workout the phone was already in the middle of, **and puts it back at work**.
     ///
     /// Called once at launch. Returns whether anything was resumed, which is the one thing the
     /// caller needs to know — the runner is presented from `isPresented`, not from this.
+    ///
+    /// **`start()` is called here rather than left to the runner, and that is what a launch with no
+    /// screen is.** iOS can start this app in the background with nobody touching it — a message
+    /// from the Watch does exactly that — and in that launch no view is ever presented, so a
+    /// `start()` that only ever ran from `SessionRunner.onAppear` never ran at all. The app then
+    /// held a live workout, answered the wrist's *asks* from it (`PhoneConnectivity` reads the
+    /// record and the host for precisely this reason), and dropped every *press* on the floor at
+    /// `deliver`, because nothing had claimed the link. On the wrist that is not a slow button, it
+    /// is a button that does nothing until the app is opened by hand.
+    ///
+    /// Nothing new is being started by doing it here: `start()` is idempotent and takes the
+    /// `reassert` path for a session already in flight, and a runner appearing later re-asserts the
+    /// same session — which is the call it already made on every reappearance.
     @discardableResult
     func restore(at now: Date = .now) -> Bool {
         guard controller == nil else { return false }
@@ -90,6 +103,10 @@ final class SessionHost {
 
         controller = restored
         Log.debug("host: resumed \"\(record.planName)\" at interval \(record.currentIndex) of \(record.intervals.count)")
+        // Back at work immediately, whether or not a screen is ever presented for it — see the
+        // note above. Claiming the link is the part that matters: without it the watch's controls
+        // reach nothing.
+        restored.start()
         return true
     }
 

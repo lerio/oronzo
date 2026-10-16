@@ -830,6 +830,68 @@ a working prototype, while the value question produces an argument. Two surfaces
 amendment in one sitting and both were essentially additive; the one that was asked "can we" rather
 than "should we" is the one that is gone.
 
+## The wrist answers its own step controls — 15 October 2026
+
+**The report.** *"During execution, and especially at the beginning, the watch wasn't quick to
+respond to my inputs — I finished a rep, tapped skip, and it took a good 5–10 seconds to move to the
+next exercise. The same did not happen when I tapped next on the phone."*
+
+**What the design had made of it.** A press was a pure round trip, and on the wrist it had to be:
+`WatchProjection` ends its walk at a rep interval — *"nothing can be assumed about when a rep set
+ends"* — so the only thing that could move the screen was a snapshot from the phone. The wrist's
+responsiveness was therefore exactly the link's latency, while the phone's own screen was local.
+That asymmetry *is* the report.
+
+**And the round trip is not reliably fast, which is not something to fix by trying harder.** Each
+message rides a direct channel only while the two apps consider each other reachable, and
+`WCSession.isReachable` is an interdependent condition: the phone wants the WatchKit extension to be
+running *and* wants the extension's own reachability to be true. When it is false, the press is
+queued for background delivery and the answer goes into the **application context**, which Apple
+documents as sent *"when the opportunity arises, with the goal of having the data ready to use by
+the time the counterpart wakes up"*. Neither channel is real-time, and this project's own runbook
+already records `reachable=false` as the ordinary line in its phone logs. On top of that the press
+was sent with **no error handler at all**, under a comment claiming a dropped press was "recoverable
+by pressing again" — so the wrist could be slow *and* silent, and the user was the retry.
+
+**The decision: `PressEcho`.** The wrist answers its own step control the moment it sends it, and
+the phone's next snapshot replaces that answer. This is not the wrist becoming an authority. The
+phone still applies the press, writes the record, holds the pause and declares the end; what the
+wrist is predicting is a command the user gave it a moment ago — the same kind of prediction it
+already makes about elapsed time, anchored to a press instead of to a clock. The echo is bounded by
+a minute, because the one case it cannot tell apart from a late answer is an absent phone.
+
+**What is deliberately not echoed**, each for its own reason rather than for symmetry:
+
+- **A pause.** A *false* pause stops the wrist's clock while the phone runs the interval on: the
+  wrist would sit on a frozen countdown for something the phone is counting through. A false skip
+  only moves the wrist's screen, and the phone catches up when the press lands.
+- **A finish.** DONE is the phone's to declare — the record, the summary, the history and the Health
+  write all hang off the session ending there — so a press on the last interval waits.
+- **A press that would leave the interval list** — `next` on the last interval, `previous` at index
+  0 — because the engine's answer to those is to *finish* or to do nothing, and the wrist has no
+  business guessing which.
+
+**No wire change, on purpose.** The echo lives entirely in `WatchLink`, so there is no new field, no
+`protocolVersion` bump and nothing for a mismatched build to decode: an older phone and an older
+watch behave exactly as they did.
+
+**One consequence, stated rather than discovered later.** The phone anchors the new interval's end
+at *its* `now`, which is later than the echo's by however long delivery took — so when a snapshot
+settles an echo, a countdown can step back up by that much. The phone owns the clock; the wrist was
+only holding its place.
+
+**A press is now queued rather than dropped** when the direct send reports a delivery failure. This
+is the old "send on both channels" idea with the duplicate taken out: Apple documents that error as
+a message which was **not** delivered, so the spare exists only on the path where the press would
+otherwise have been lost, and a successful send still costs exactly one message.
+
+**And the phone serves the wrist without a screen.** `SessionHost.restore` calls `start()` on what it
+resumes, so a launch with nobody touching it — the background launch a message from the Watch
+causes — claims the link and takes the audio keep-alive up, instead of answering the wrist's *asks*
+from the record while dropping every *press* at `PhoneConnectivity.deliver`. It is the same
+asymmetry as the wrist's, one relationship further on: the session was real, and nothing on screen
+said so.
+
 ## Xcode project generation
 
 `ios/project.yml` is the source of truth; the `.xcodeproj` is generated and gitignored.

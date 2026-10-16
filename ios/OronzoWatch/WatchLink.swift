@@ -11,6 +11,13 @@ import WatchKit
 /// haptics keep working while the phone is out of range or asleep: `WatchProjection` walks
 /// the interval list forward from the last thing the phone said, and the next message
 /// re-anchors it.
+///
+/// **The wrist also answers its own step controls, for as long as the phone takes to.** A press
+/// used to be a pure round trip — and it had to be, because a rep interval gives the projection
+/// nothing to walk on, so the screen could not move until a snapshot arrived. That made the wrist's
+/// responsiveness exactly the link's latency, which is seconds whenever the OS is scheduling the
+/// delivery rather than carrying it live. `PressEcho` is what holds the answer in the meantime; the
+/// phone's next snapshot still decides, and `apply` is where it takes over.
 @MainActor
 @Observable
 final class WatchLink: NSObject {
@@ -35,6 +42,9 @@ final class WatchLink: NSObject {
     /// in one glance: update one app or the other.
     private(set) var note: String?
 
+    /// The wrist's own answer to a step control it has sent, while the phone has not been heard
+    /// from. See `PressEcho`, and `apply` for where the phone takes it back.
+    private var echo: PressEcho?
     private var session: WCSession?
     private var haptics: Task<Void, Never>?
     /// The bounded retry in flight. See `askForState`.
@@ -67,18 +77,23 @@ final class WatchLink: NSObject {
 
     /// Where the session should be now — the phone's position, projected forward through
     /// any timed intervals that have elapsed since it last spoke.
+    ///
+    /// **An unconfirmed press is an anchor like any other.** That is the whole of how the echo is
+    /// drawn: `PressEcho.state` is a `SessionState`, so the pause rule below and the walk forward
+    /// through elapsed timed intervals are the same code they always were, one press further on —
+    /// and when the phone's own word replaces the echo, nothing about this function changes.
     func position(at now: Date) -> (index: Int, end: Date?) {
-        guard let state else { return (0, nil) }
+        guard let anchor = echo?.state ?? state else { return (0, nil) }
 
         // Paused: the phone is holding the clock, so nothing should move.
-        if state.isPaused {
-            return (state.currentIndex, state.remainingWhenPaused.map { now.addingTimeInterval($0) })
+        if anchor.isPaused {
+            return (anchor.currentIndex, anchor.remainingWhenPaused.map { now.addingTimeInterval($0) })
         }
 
         return WatchProjection.project(
             intervals: intervals,
-            from: state.currentIndex,
-            end: state.intervalEnd,
+            from: anchor.currentIndex,
+            end: anchor.intervalEnd,
             now: now
         )
     }
@@ -210,8 +225,17 @@ final class WatchLink: NSObject {
     /// link not yet activated, so `sendMessage` failed with nobody listening for the error. That
     /// case is covered twice over without it: the retry in `askForState` asks again at 5, 20 and
     /// 65 seconds, and the phone's own `answer()` fires the moment its link finishes activating.
-    /// A press that is dropped is recoverable by pressing again; an ask that is dropped is
-    /// recovered by the retry. Neither is worth a duplicate on the wire.
+    /// An ask that is dropped is recovered by the retry. **A press is recovered by this one
+    /// handler** — see below — and what kept the two apart was that a press could be sent again by
+    /// a person, which is a thing to ask of a wrist mid-set only when there is no better answer.
+    ///
+    /// **The error handler is the difference between "queued" and "lost", and it costs nothing
+    /// when the link is healthy.** `sendMessage` reaches it when the counterpart was unreachable —
+    /// which Apple documents as a message that was *not* delivered, so queueing the same press on
+    /// the durable channel afterwards cannot double it. The success path sends exactly one message,
+    /// on exactly one channel, as it did before; the second message exists only where the old code
+    /// dropped the press outright. That is the whole of the "send on both channels" idea with the
+    /// duplicate taken out: the same press, and a spare only when the first provably did not land.
     func send(_ control: WatchControl) {
         guard let session else { return }
 
@@ -222,11 +246,62 @@ final class WatchLink: NSObject {
         payload["protocolVersion"] = WireProtocol.current
 
         if session.isReachable {
-            session.sendMessage(payload, replyHandler: nil, errorHandler: nil)
+            session.sendMessage(payload, replyHandler: nil) { [weak self] error in
+                // `[String: Any]` is not `Sendable`, so the payload is not carried across the hop —
+                // the control is, and the message is rebuilt on the other side. Same reason the
+                // delegate callbacks above pull their `Data` out before hopping.
+                Log.debug("control \(control.rawValue): the direct delivery failed (\(error)); queueing it")
+                Task { @MainActor in self?.queueForThePhone(control) }
+            }
         } else {
-            // Queued for when the phone is next awake, rather than dropped.
-            session.transferUserInfo(payload)
+            queueForThePhone(control)
         }
+
+        // And the wrist answers the press itself, so the screen does not have to wait for the
+        // phone to be heard from. See `earn`, and `PressEcho` for the argument.
+        earn(control, at: .now)
+    }
+
+    /// The durable half of `send`: a control the direct channel could not deliver, queued for when
+    /// the phone is next awake rather than dropped on the floor.
+    private func queueForThePhone(_ control: WatchControl) {
+        guard let session else { return }
+        session.transferUserInfo(["control": control.rawValue, "protocolVersion": WireProtocol.current])
+    }
+
+    /// Answers a press on the wrist, before the phone has said anything.
+    ///
+    /// Measured — the `showing:` index — from what is *on screen* rather than from what the phone
+    /// last said, and that is what makes a burst of presses work: two taps in quick succession have
+    /// to move two intervals, which they only do if the second is measured from the first echo.
+    ///
+    /// A press that cannot be echoed is simply left to the phone, and anything already standing is
+    /// left standing: `PressEcho.earned` refuses a pause, a finish, an ask, a session that is over,
+    /// and the two presses that would leave the interval list.
+    private func earn(_ control: WatchControl, at now: Date) {
+        guard let anchor = echo?.state ?? state else { return }
+        let (index, _) = position(at: now)
+
+        guard let earned = PressEcho.earned(
+            by: control,
+            intervals: intervals,
+            showing: index,
+            isPaused: anchor.isPaused,
+            isFinished: anchor.isFinished,
+            now: now
+        ) else { return }
+
+        Log.debug("echo: \(control.rawValue) → index \(earned.state.currentIndex) of \(intervals.count)")
+        echo = earned
+        // The cues follow the screen rather than the link: the buzz for arriving somewhere belongs
+        // to the moment the wrist arrived, and this is what re-anchors the loop to notice it. Same
+        // call `apply` makes on a snapshot — and the settle that follows does not buzz twice, since
+        // `HapticLanguage` sees the same moment either way.
+        //
+        // It is also what arms the expiry, and that is not incidental: on a rep interval the loop
+        // parks at `.rest` the moment it finds nothing due, so without this the echo would be the
+        // one thing on the wrist with nothing left to wake it — see `nextWake`.
+        startHaptics()
     }
 
     // MARK: - Haptics
@@ -251,6 +326,10 @@ final class WatchLink: NSObject {
         haptics = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
+                // A press the phone never confirmed stops being answered here, before anything is
+                // announced from it — so the cue that plays is the one for where the wrist is
+                // *now*, not the one for a position it has just given up.
+                self.expireEcho(at: .now)
                 // Announce first, then sleep: a snapshot arriving mid-interval has to buzz on
                 // arrival rather than at the next boundary, and `announce` is idempotent — it
                 // compares against `lastMoment` and `lastCountdownSecond` before playing.
@@ -285,21 +364,47 @@ final class WatchLink: NSObject {
         lastCountdownSecond = nil
     }
 
+    /// Stops showing a press the phone never confirmed.
+    ///
+    /// The one thing an echo cannot tell apart from "still in flight" is "the phone is gone", and
+    /// this bound is what stops the wrist standing on a position the phone will never have. Nothing
+    /// is lost by giving it up — the phone's state is what would be drawn anyway, and a fresh press
+    /// starts a fresh echo. Logged rather than drawn on the screen: a phone that is not answering
+    /// at all already gets its own line there, from `askForState`.
+    private func expireEcho(at now: Date) {
+        guard let echo, now >= echo.expiresAt else { return }
+        Log.debug("echo: giving up on the press at \(echo.at) — the phone never answered it")
+        self.echo = nil
+    }
+
     /// The next instant at which anything can happen, from wherever the session is now.
     ///
     /// There is no second term here, unlike the phone's: this surface draws its countdown from a
     /// `TimelineView`, so nothing needs waking to repaint a clock. That is the arrangement the
     /// *phone* adopted later, for the same reason — see `SessionRunner`'s timeline.
+    ///
+    /// **One thing can be due that the session's own clock knows nothing about: an echo that has
+    /// run out.** It is one wake, a minute after the press, and only while a press is standing — so
+    /// the count this loop is built to keep is unchanged for every ordinary minute of a workout.
+    /// Expiring an echo that is *already* due is not a spin: the loop's next turn drops it, and the
+    /// instant is then gone from this answer for good.
     func nextWake() -> SessionSchedule.Wake {
         let now = Date()
+        let anchor = echo?.state ?? state
         let (_, end) = position(at: now)
-        return SessionSchedule.wake(
+        let scheduled = SessionSchedule.wake(
             after: now,
             end: end,
-            isPaused: state?.isPaused ?? false,
-            isFinished: state?.isFinished ?? false,
+            isPaused: anchor?.isPaused ?? false,
+            isFinished: anchor?.isFinished ?? false,
             hasSession: !intervals.isEmpty
         )
+
+        guard let echo else { return scheduled }
+        switch scheduled {
+        case .rest: return .at(echo.expiresAt)
+        case .at(let next): return .at(min(next, echo.expiresAt))
+        }
     }
 
     private func announce(now: Date) {
@@ -570,7 +675,28 @@ extension WatchLink: WCSessionDelegate {
             // buzzed when the phone was *silent* — the opposite of the common case.
             //
             // `startedAt` identifies the session, so a genuine restart still starts clean.
-            if startedAt != snapshot.startedAt { lastMoment = nil }
+            //
+            // **A press in flight belongs to the old session and goes with it.** This is checked
+            // before the verdict below and not by it, because an echo from a session that has ended
+            // cannot be judged against a new one's position: a fresh workout starts at index 0, the
+            // old echo sits at 1, and a position comparison would hold the wrist on the *first*
+            // interval of a workout nobody has started yet.
+            if startedAt != snapshot.startedAt {
+                lastMoment = nil
+                echo = nil
+            } else if let echo, echo.verdict(against: snapshot.state) == .released {
+                // **The phone has taken the press back.** Either it has caught up with it, or it
+                // has overruled the echo outright — the session is finished, or the pause state
+                // moved under it. Both mean the same thing here: what was just stored is what the
+                // screen is drawn from, and the echo has no further work. A phone still *behind* an
+                // unconfirmed press is the ordinary case — the press is in flight — and is the one
+                // that keeps it. See `PressEcho.verdict`.
+                //
+                // Nothing is sent and nothing is retried: an echo was never a command, only this
+                // wrist's answer to one it has already sent.
+                Log.debug("echo: released at index \(snapshot.state.currentIndex)")
+                self.echo = nil
+            }
             startedAt = snapshot.startedAt
             startHaptics()
 
@@ -624,5 +750,8 @@ extension WatchLink: WCSessionDelegate {
         startedAt = nil
         finishedAt = nil
         lastMoment = nil
+        // A clear is the phone saying there is nothing running, so there is nothing for a press
+        // to have been about either.
+        echo = nil
     }
 }

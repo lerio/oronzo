@@ -2,7 +2,7 @@
 
 ## Where the tests are
 
-**All 263 tests live in `ios/OronzoCore/Tests/OronzoCoreTests/`.** Nothing else in the repository
+**All 285 tests live in `ios/OronzoCore/Tests/OronzoCoreTests/`.** Nothing else in the repository
 has a single automated test — not the iOS app target, not the watch app, not the web app.
 
 ```bash
@@ -14,11 +14,12 @@ cd ios/OronzoCore && swift test     # ~1 second, no simulator, no signing, no de
 | `PlanFlattenerTests.swift` | 43 | The flattening contract — sets, rounds, two-sided exercises, all three synthetic intervals, naming, formatting |
 | `SessionScreenTests.swift` | 45 | The presentation model both screens draw from — state words, `LAST`, what a rep interval shows |
 | `ExecutionEngineTests.swift` | 31 | The session state machine — start/tick/pause/resume/advance/goBack/finish/abandon/snapshot |
+| `PressEchoTests.swift` | 22 | What the wrist shows between a press and the phone's answer — which presses it may echo, when the phone's word takes over, and that the echoed state is what `ExecutionEngine` itself would produce |
 | `HealthOwedLedgerTests.swift` | 21 | The Health retry policy — when a workout may be offered again, when the app stops, and the climbing version that keeps a second attempt from becoming a second workout |
 | `SessionRecordTests.swift` | 18 | The written-down session — the disk format, decode tolerance, what a restore refuses, and that a stale anchor cannot rewind |
 | `PlanSummaryTests.swift` | 16 | What the plan summary says about a plan, including the spoken meta line |
 | `LinkTests.swift` | 13 | The phone↔watch wire format — the control vocabulary, a whole snapshot, decode tolerance, and the version handshake |
-| `SessionScheduleTests.swift` | 13 | When a surface may next wake — the rule that replaced polling, and the wake counts that prove it |
+| `SessionScheduleTests.swift` | 14 | When a surface may next wake — the rule that replaced polling, and the wake counts that prove it |
 | `LoadAdjustmentTests.swift` | 11 | The runner's load arrows — what a nudge is, and which interval it may be applied to |
 | `DesignTokenTests.swift` | 11 | The token scale — every role resolves, on both surfaces |
 | `HapticLanguageTests.swift` | 10 | Which transitions earn a cue, and which stay silent |

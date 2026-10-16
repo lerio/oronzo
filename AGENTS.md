@@ -31,6 +31,13 @@ The Watch is a *renderer plus remote*, never an independent app. At session star
 it the **full flattened interval list with absolute end dates**, so the Watch counts down and
 buzzes correctly even when the phone is unreachable or suspended.
 
+*Renderer* means one thing a reader may not expect: **a step control pressed on the wrist is
+answered on the wrist**, the instant it is sent (`PressEcho`, and `docs/decisions.md` for the
+argument). A rep interval gives the projection nothing to walk on, so without that the screen waits
+for a full round trip through an app in someone's pocket — which is what "the watch took 5–10
+seconds to move" was. The phone's next snapshot overrules the echo, so the wrist is predicting a
+command the user just gave it, not holding state of its own.
+
 There is no per-second message stream, and **there must never be one.** See
 `docs/integration-contracts.md` for why this is load-bearing rather than an optimisation choice.
 
@@ -107,7 +114,7 @@ Full detail in `docs/patterns.md`. The short version:
 ## Commands
 
 ```bash
-cd ios/OronzoCore && swift test      # 263 tests, no simulator or signing — run this first
+cd ios/OronzoCore && swift test      # 285 tests, no simulator or signing — run this first
 cd ios && xcodegen generate          # after editing ios/project.yml or adding files
 cd web && npm run dev                # localhost:5173
 cd web && npm run build              # tsc -b is what catches stale field references

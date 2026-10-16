@@ -169,9 +169,18 @@ extended runtime session both land — so one thing the phone said arrives twice
 answers every delivery it receives rather than every ask it was sent. The ask paid for this twice
 over before anyone measured it: one wrist raise cost the watch six radio events against the one it
 was believed to cost (`docs/decisions.md`, 26 September 2026). The rules that came out of it:
-`WatchLink.send` picks exactly one channel on `isReachable` alone, `WatchLink.apply` drops a
-payload identical to the one it just applied, and `PhoneConnectivity.deliver` answers a repeated
-ask once. Before adding traffic here, name what it costs **per delivery, at both ends**.
+`WatchLink.send` picks exactly one channel on `isReachable` alone — a second message exists only
+where the first *reported* a delivery failure, which Apple documents as a message that was not
+delivered — `WatchLink.apply` drops a payload identical to the one it just applied, and
+`PhoneConnectivity.deliver` answers a repeated ask once. Before adding traffic here, name what it
+costs **per delivery, at both ends**.
+
+**And the answer to a press is not traffic at all.** A step control pressed on the wrist is drawn
+by the wrist the moment it is sent (`PressEcho`), so what the user sees does not wait for a round
+trip through a phone in a pocket — and the cost is zero messages, because the press was going out
+anyway and the phone's next snapshot carries the truth when it arrives. Anything that would put
+that on the wire — an extra ask, a confirmation, a retry — has to be worth a radio event on a
+battery the size of a thumbnail.
 
 **And a message that can erase state has to carry enough to be ordered.** The application context
 is a single slot that keeps its value across launches and installs, so the watch can be handed
