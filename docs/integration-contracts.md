@@ -13,7 +13,7 @@ schema. Then run the `contract-auditor` agent.
 | Concern | Swift | TypeScript | SQL |
 |---|---|---|---|
 | Flattening rule | `OronzoCore/PlanFlattener.swift` | `flattenPlan`, `web/src/lib/types.ts` | `save_plan` in `supabase/migrations/` |
-| Exercise facts the flattener needs | `OronzoCore/Models.swift` (`ExerciseInfo`) | the `Exercise` record itself | `exercises.name`, `exercises.has_two_sides` |
+| Exercise facts the flattener needs | `OronzoCore/Models.swift` (`ExerciseInfo`) | the `Exercise` record itself | `exercises.name`, `exercises.has_two_sides`, `exercises.alternates_sides` |
 | Plan shape | `OronzoCore/Models.swift` (`Intensity`) | `types.ts` (`Plan`/`PlanBlock`/`PlanStep`, `INTENSITIES`) | `plans`, `plan_blocks`, `plan_steps` |
 | Reading a plan | `PlanRepository.swift` select string | `api.ts` `PLAN_SELECT` | the column names themselves |
 | Read order of the plan list | `PlanRepository.fetchPlans` `.order("position")` | `api.ts` `listPlans` `.order('position')` | `plans.position` |
@@ -22,14 +22,15 @@ schema. Then run the `contract-auditor` agent.
 The flattening rule itself is stated in full in `AGENTS.md`. What follows is the field-level and
 wire-level detail that the pseudocode does not carry.
 
-## Current schema (post-`0015`)
+## Current schema (post-`0016`)
 
 Migrations are **cumulative and append-only**, so `0001` is not the current shape. This is the
-shape as of `0015_plan_position.sql`; check the newest file before assuming.
+shape as of `0016_exercise_alternates.sql`; check the newest file before assuming.
 
 ```
 exercises      id, user_id, slug, name, muscle_group, default_mode,
-               default_duration_seconds, default_reps, has_two_sides, notes, created_at, updated_at
+               default_duration_seconds, default_reps, has_two_sides, alternates_sides,
+               notes, created_at, updated_at
 
 plans          id, user_id, name, position, created_at, updated_at
 plan_blocks    id, plan_id, position, name, rounds, rest_between_rounds_seconds, created_at, updated_at
@@ -67,23 +68,34 @@ from neither function, so it arrives as a PostgREST `500`; and the column is rea
 never named in a select string — PostgREST applies `order` independently of `select`, verified
 against the live API. See `docs/decisions.md`, *"The plan list's order is content"*.
 
+`exercises.alternates_sides` (`0016`) is the third flag the flattener reads off an exercise, and
+the only one that changes nothing about the interval stream. An alternating exercise is deliberately
+**not** two-sided, so `sideSuffixes` returns `[nil]`, the step emits one interval per set, and the
+rest and any `prepare_seconds` fall exactly once — the same stream an ordinary one-sided exercise
+produces. All it adds is `(alt)` on the interval's name, and the change to what a step's `reps`
+means: the *total* rather than the per-side count. It is `not null default false`, and
+`exercises_sides_shape` refuses a row claiming it *and* `has_two_sides`. See `docs/decisions.md`,
+*"Alternating: a third behaviour"*.
+
 One column changed meaning with `0012`: `session_steps.exercise_name` is now the *interval's*
 name, so a two-sided exercise logs two rows per set as `Reverse Lunge (left)` and `Reverse Lunge
 (right)`, sharing a `set_index`. Nothing groups or joins on it, and the alternative — stripping
 the side before logging — would lose which side the row was. It is a display string, deliberately.
+The same applies to the `(alt)` suffix from `0016`, which is why a past session can read
+`Alternating Lunge (alt)` long after the flag or the name has changed.
 
 Columns that **no longer exist**, and must not reappear in a select string or a model:
 `plan_steps.kind` and `plan_steps.notes` (dropped in `0006`/`0008`), `plans.notes` (`0008`),
 `plan_steps.reps_max` / `target_weight_max_kg` (`0004`), `session_steps.actual_reps` /
 `actual_weight_kg` (`0008`), `session_steps.round_index` (renamed `set_index` in `0005`), `exercises.equipment` (`0011`).
 
-`exercises` is in this list for the first time because the flattener reads two of its columns —
-`name` and `has_two_sides` — which is why the phone's exercise fetch is a hand-written select
-string and not a `select('*')`. **The iOS app is the only surface that reads a named column set**,
-so it is the only one a missing column can `400`:
+`exercises` is in this list for the first time because the flattener reads three of its columns —
+`name`, `has_two_sides` and `alternates_sides` — which is why the phone's exercise fetch is a
+hand-written select string and not a `select('*')`. **The iOS app is the only surface that reads a
+named column set**, so it is the only one a missing column can `400`:
 
 ```
-GET /rest/v1/exercises?select=id,name,has_two_sides
+GET /rest/v1/exercises?select=id,name,has_two_sides,alternates_sides
 ```
 
 The side suffix the flattener writes is spelled `"… (left)"` / `"… (right)"` in both mirrors —
@@ -91,6 +103,23 @@ The side suffix the flattener writes is spelled `"… (left)"` / `"… (right)"`
 never into `PlanFlattener.name(for:)`, which the plan detail screen uses to list a plan as
 authored. A two-sided exercise therefore doubles an interval stream and *not* a step list, and
 `PlanSummary`'s rep estimate reads the same `sideSuffixes` rather than its own copy of the rule.
+
+**`alternates_sides` (`0016`) is the third behaviour, and it is spelled `"… (alt)"`** —
+`PlanFlattener.alternatingLabel` and `ALT_LABEL` in `types.ts`. It goes into the same place, for the
+same reason, and it is **not** a case of `sideSuffixes`: an alternating exercise is not two-sided,
+so it falls through to `[nil]` and emits exactly **one interval per set**, the same stream an
+ordinary one-sided exercise produces. Two things follow that are easy to get wrong:
+
+- **A step's `reps` means different things under the two flags.** Two-sided reads "8 reps" as eight
+  *each* — the interval is emitted twice, and `PlanSummary` counts it twice. Alternating reads
+  "20 reps" as twenty *altogether*, counted once. Neither number is converted anywhere; the flag
+  decides which reading applies.
+- **The two flags are mutually exclusive**, enforced by `exercises_sides_shape`, so a step has a
+  side or is alternating and never both. A row claiming both would emit a left/right pair *and* an
+  alternating marker.
+
+`(alt)` is read aloud by VoiceOver as the word "alt". That is a recorded decision rather than an
+oversight — `docs/decisions.md`, "Alternating: a third behaviour".
 
 `sessions.notes` still exists but nothing reads or writes it — see `known-issues.md`.
 

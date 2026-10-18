@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { createExercise } from '../lib/api';
 import { errorMessage } from '../lib/errors';
-import { MUSCLE_GROUPS, exerciseSummary, type Exercise, type StepMode } from '../lib/types';
+import {
+  MUSCLE_GROUPS,
+  exerciseSummary,
+  type Exercise,
+  type Sides,
+  type StepMode,
+} from '../lib/types';
 
 interface ExercisePickerProps {
   exercises: Exercise[];
@@ -50,7 +56,9 @@ export default function ExercisePicker({
   const [name, setName] = useState('');
   const [muscleGroup, setMuscleGroup] = useState<string>('chest');
   const [mode, setMode] = useState<StepMode>('reps');
-  const [twoSides, setTwoSides] = useState(false);
+  /** One of three rather than two checkboxes, for the reason `Exercises.tsx` gives: the database
+   *  refuses an exercise claiming both, so the pair cannot be allowed to exist here either. */
+  const [sides, setSides] = useState<Sides>('none');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -122,7 +130,8 @@ export default function ExercisePicker({
         name: name.trim(),
         muscle_group: muscleGroup,
         default_mode: mode,
-        has_two_sides: twoSides,
+        has_two_sides: sides === 'two',
+        alternates_sides: sides === 'alternate',
       });
       // Both updates land in one render: the caller adds it to the list this component looks
       // `value` up in, so the picker shows the new name rather than falling back to "— pick —".
@@ -222,14 +231,27 @@ export default function ExercisePicker({
                 <option value="time">time</option>
               </select>
             </div>
-            <label className="inline-field" title="Performed once per side — left, then right">
-              <input
-                type="checkbox"
-                checked={twoSides}
-                onChange={(event) => setTwoSides(event.target.checked)}
-              />
-              <span>2 sides</span>
-            </label>
+            {/* Side by side rather than stacked, so the two read as two answers to one question —
+                which is what they are. Ticking either clears the other, because the database
+                refuses an exercise claiming both. */}
+            <div className="picker-new-fields">
+              <label className="inline-field" title="Performed once per side — left, then right">
+                <input
+                  type="checkbox"
+                  checked={sides === 'two'}
+                  onChange={(event) => setSides(event.target.checked ? 'two' : 'none')}
+                />
+                <span>2 sides</span>
+              </label>
+              <label className="inline-field" title="Both sides alternately, inside one interval">
+                <input
+                  type="checkbox"
+                  checked={sides === 'alternate'}
+                  onChange={(event) => setSides(event.target.checked ? 'alternate' : 'none')}
+                />
+                <span>Alternate</span>
+              </label>
+            </div>
             <div className="picker-new-fields">
               <button className="primary" type="submit" disabled={saving}>
                 {saving ? 'Saving…' : 'Save'}

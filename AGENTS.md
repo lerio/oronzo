@@ -71,6 +71,15 @@ then right, and the pair **is** one set, so both halves carry the same set numbe
 still falls once. `PlanFlattener.name(for:)` stays side-free — the side belongs to an interval
 being done, not to the step being planned, and the plan detail screen lists a plan as authored.
 
+An exercise flagged **`alternates_sides`** (`0016`) is the third behaviour, not a relabelling of
+the second: it is done on both sides *within* one interval, so the pair collapses and the step
+emits **one interval per set** — the same stream an ordinary one-sided exercise produces. It is
+deliberately *not* two-sided, which is why `sideSuffixes` needs no third case and the flattener
+loop does not change at all; the only difference is `(alt)` appended to the interval's `name`,
+exactly where `(left)`/`(right)` go. It also changes what a step's `reps` **means** — two-sided
+reads "8 reps" as eight *each*, alternating reads "20 reps" as twenty *altogether* — and the two
+flags are mutually exclusive, enforced by `exercises_sides_shape`.
+
 The two rest mechanisms are deliberately asymmetric: `restAfter` fires after **every** set
 including the last, `restBetweenRounds` only **between** rounds. `docs/decisions.md` explains why.
 
@@ -114,7 +123,7 @@ Full detail in `docs/patterns.md`. The short version:
 ## Commands
 
 ```bash
-cd ios/OronzoCore && swift test      # 285 tests, no simulator or signing — run this first
+cd ios/OronzoCore && swift test      # 290 tests, no simulator or signing — run this first
 cd ios && xcodegen generate          # after editing ios/project.yml or adding files
 cd web && npm run dev                # localhost:5173
 cd web && npm run build              # tsc -b is what catches stale field references
@@ -189,15 +198,18 @@ Each of these cost real time. They are not hypothetical.
   requires the key and still fails. An optional one is readable in both directions. `Interval`
   itself is the wrong place for anything but new keys — a new interval concept belongs in the
   stream, and `0012` carried the exercise's side in `name` rather than adding a field.
-- **`PlanCache` is unversioned.** It encodes `Plan`/`Interval` directly to JSON with no version
-  key, so renaming a Codable property in `Models.swift` invalidates every existing cache. That
-  failure is no longer silent — `PlanCache.load()` logs it and `docs/known-issues.md` §4 records
-  the fix — but it still *degrades* to an empty plan list until the next fetch, which offline is
-  the difference between a workout and none. So: prefer adding a field over renaming one, and ask
-  what a *missing* field would do before making it optional. A field whose absence changes the
-  workout — the two-sided ids in `0012` — is required, so an older file is discarded rather than
-  silently flattening every exercise once. A field whose absence only costs a display name can be
-  optional. `twoSidedExerciseIDs` in `PlanStore.swift` carries the reasoning.
+- **`PlanCache` is unversioned.** It encodes `Plan` (and so `PlanBlock`/`PlanStep`) directly to
+  JSON with no version key, so renaming a Codable property in `Models.swift` invalidates every
+  existing cache. That failure is no longer silent — `PlanCache.load()` logs it and
+  `docs/known-issues.md` §4 records the fix — but it still *degrades* to an empty plan list until
+  the next fetch, which offline is the difference between a workout and none. So: prefer adding a
+  field over renaming one, and ask what a *missing* field would do before making it optional. A
+  field whose absence changes the workout — the two-sided ids in `0012` — is required, so an older
+  file is discarded rather than silently flattening every exercise once. A field whose absence only
+  costs a display name can be optional, which is the alternating ids in `0016`: a file that has
+  never heard of the flag still flattens an alternating exercise into the right number of intervals,
+  and loses only the `(alt)` on its name. `twoSidedExerciseIDs` and `alternatingExerciseIDs` in
+  `PlanStore.swift` carry the reasoning, side by side.
 - **`.gitignore` needs `.build/`, not `build/`.** Patterns match the exact name, so the `build/`
   line does not cover SwiftPM's directory. This exact mistake committed ~2,300 build files.
 - **Migrations are applied by hand**, pasted into the Supabase SQL Editor in filename order. They

@@ -47,6 +47,10 @@ private struct ExerciseRow: Decodable {
     let id: UUID
     let name: String
     let has_two_sides: Bool
+    /// Non-optional like the flag beside it. Whether it is optional changes nothing about the
+    /// failure — a select naming a column the database does not have is a `400` before any
+    /// decoding happens — so the control is the ordering in the migration, not tolerance here.
+    let alternates_sides: Bool
 }
 
 /// The `plan_steps` columns a load adjustment writes, as a PATCH body.
@@ -149,15 +153,17 @@ struct PlanRepository: Sendable {
 
     /// Kept on one line: PostgREST parses this as a query string, and embedded newlines break it.
     /// A column named here that the database does not have is a runtime `400` on a device, not a
-    /// compile error — `has_two_sides` arrives with `0012`.
+    /// compile error — `has_two_sides` arrives with `0012`, `alternates_sides` with `0016`.
     func fetchExercises() async throws -> [UUID: ExerciseInfo] {
         let rows: [ExerciseRow] = try await Backend.client
             .from("exercises")
-            .select("id,name,has_two_sides")
+            .select("id,name,has_two_sides,alternates_sides")
             .execute()
             .value
         return Dictionary(uniqueKeysWithValues: rows.map {
-            ($0.id, ExerciseInfo(name: $0.name, hasTwoSides: $0.has_two_sides))
+            ($0.id, ExerciseInfo(name: $0.name,
+                                 hasTwoSides: $0.has_two_sides,
+                                 alternatesSides: $0.alternates_sides))
         })
     }
 

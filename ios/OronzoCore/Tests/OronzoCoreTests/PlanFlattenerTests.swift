@@ -150,6 +150,91 @@ final class PlanFlattenerTests: XCTestCase {
         XCTAssertEqual(PlanFlattener.sideSuffixes(of: step, exercises: [:]).count, 1)
     }
 
+    // MARK: - Alternating exercises ("20 alternating lunges")
+
+    /// An alternating exercise is **not** two-sided, so the pair collapses: one interval per set,
+    /// with you switching sides inside it. This is the whole of the feature's behaviour — the
+    /// marker on the name is the only other thing it does.
+    func testAnAlternatingExerciseEmitsOneIntervalPerSet() {
+        let lunge = UUID()
+        let plan = Plan(name: "Lunges", blocks: [
+            PlanBlock(steps: [
+                PlanStep(exerciseID: lunge, sets: 3, mode: .reps, reps: 20, restAfter: 90),
+            ]),
+        ])
+
+        let intervals = PlanFlattener.flatten(
+            plan,
+            exercises: [lunge: ExerciseInfo(name: "Alternating Lunge", alternatesSides: true)]
+        )
+
+        XCTAssertEqual(intervals.map(\.kind), [.exercise, .rest, .exercise, .rest, .exercise, .rest])
+        XCTAssertEqual(intervals.map(\.name), [
+            "Alternating Lunge (alt)", "Break",
+            "Alternating Lunge (alt)", "Break",
+            "Alternating Lunge (alt)", "Break",
+        ])
+        XCTAssertEqual(intervals.map(\.setIndex), [1, 1, 2, 2, 3, 3])
+        // The count means the *total* here, where a two-sided step's means each. Emitted once,
+        // so it is carried once — see `PlanSummaryTests` for the half of this that is arithmetic.
+        XCTAssertEqual(intervals.map(\.reps), [20, nil, 20, nil, 20, nil])
+        XCTAssertEqual(intervals[1].duration, 90, "the rest did not move or double")
+    }
+
+    /// The invariant `PlanStore`'s cache tolerance rests on. An alternating exercise must fall
+    /// through `sideSuffixes` to `[nil]`, never gain a case of its own: the day it returns
+    /// something else, a cached exercise missing the alternating flag stops being a cosmetic
+    /// difference and starts changing how many intervals a workout has.
+    func testAnAlternatingExerciseIsNotTwoSided() {
+        let lunge = UUID()
+        let step = PlanStep(exerciseID: lunge, mode: .reps, reps: 20)
+        let exercises = [lunge: ExerciseInfo(name: "Alternating Lunge", alternatesSides: true)]
+
+        XCTAssertEqual(PlanFlattener.sideSuffixes(of: step, exercises: exercises).count, 1)
+        // And the step's own name is untouched, for the reason the side-free case above gives:
+        // `PlanDetailView` lists a plan as authored, and the marker describes *doing* it.
+        XCTAssertEqual(PlanFlattener.name(for: step, exercises: exercises), "Alternating Lunge")
+    }
+
+    /// The prepare stays inside the side loop, and an alternating exercise takes that loop once —
+    /// so it gets one per set, like any one-sided step, and not one per side.
+    func testAnAlternatingTimedStepGetsAPreparePerSet() {
+        let plank = UUID()
+        let plan = Plan(name: "P", blocks: [
+            PlanBlock(steps: [
+                PlanStep(exerciseID: plank, sets: 2, mode: .time, duration: 45,
+                         restAfter: 30, prepareSeconds: 5),
+            ]),
+        ])
+
+        let intervals = PlanFlattener.flatten(
+            plan,
+            exercises: [plank: ExerciseInfo(name: "Bird Dog", alternatesSides: true)]
+        )
+
+        XCTAssertEqual(intervals.map(\.name), [
+            "Get in position", "Bird Dog (alt)", "Break",
+            "Get in position", "Bird Dog (alt)", "Break",
+        ])
+        XCTAssertEqual(intervals.map(\.setIndex), [1, 1, 1, 2, 2, 2])
+    }
+
+    /// A label takes the marker for the reason it takes the side: it names the exercise, and the
+    /// exercise is what alternates.
+    func testTheMarkerIsAppendedToALabelAsWell() {
+        let lunge = UUID()
+        let plan = Plan(name: "P", blocks: [
+            PlanBlock(steps: [PlanStep(exerciseID: lunge, label: "Warm-up lunges", mode: .reps, reps: 20)]),
+        ])
+
+        let intervals = PlanFlattener.flatten(
+            plan,
+            exercises: [lunge: ExerciseInfo(name: "Alternating Lunge", alternatesSides: true)]
+        )
+
+        XCTAssertEqual(intervals.map(\.name), ["Warm-up lunges (alt)"])
+    }
+
     // MARK: - Effort ("Hard — 20 sec"), structured
 
     /// The step's intensity rides onto every interval it emits, and an absent one stays absent:

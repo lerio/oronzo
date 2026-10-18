@@ -197,9 +197,11 @@ curl -s -o /dev/null -w "0012 has_two_sides:       %{http_code}\n" "$U/rest/v1/e
 curl -s -o /dev/null -w "0013 step intensity:      %{http_code}\n" "$U/rest/v1/plans?select=id,plan_blocks(plan_steps(intensity))&limit=1" -H "apikey: $K"
 curl -s -o /dev/null -w "0014 step prepare:        %{http_code}\n" "$U/rest/v1/plans?select=id,plan_blocks(plan_steps(prepare_seconds))&limit=1" -H "apikey: $K"
 curl -s -o /dev/null -w "0015 plan position:       %{http_code}\n" "$U/rest/v1/plans?select=id&order=position.asc&limit=1" -H "apikey: $K"
+curl -s -o /dev/null -w "0016 alternates_sides:    %{http_code}\n" "$U/rest/v1/exercises?select=alternates_sides&limit=1" -H "apikey: $K"
 ```
 
-`0011` expects **400** (the column is gone); `0012`, `0013`, `0014` and `0015` expect **200**.
+`0011` expects **400** (the column is gone); `0012`, `0013`, `0014`, `0015` and `0016` expect
+**200**.
 The `0015` line reads nothing but the id, so it also proves the `order` — PostgREST applies it to
 the outer query independently of `select`, which is what lets both clients order by a column they
 never fetch.

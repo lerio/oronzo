@@ -144,16 +144,29 @@ public struct Plan: Codable, Equatable, Identifiable, Sendable {
 /// Deliberately not the whole exercise. The `exercises` table also carries a default mode, rep
 /// target and duration, and none of those survive into a plan — `PlanStep` snapshots what it
 /// needs when the exercise is picked, which is why changing an exercise's defaults does not
-/// rewrite the plans already using it. These two are the exception: they are read *while
+/// rewrite the plans already using it. These three are the exception: they are read *while
 /// flattening*, so they have to be handed in rather than frozen into the step.
 public struct ExerciseInfo: Codable, Equatable, Sendable {
     public let name: String
     /// Performed once per side — left, then right. See `PlanFlattener.sideSuffixes`.
     public let hasTwoSides: Bool
+    /// Performed on both sides *alternately*, inside one interval.
+    ///
+    /// **Not a variety of `hasTwoSides`, and the two are mutually exclusive** — the database says
+    /// so with `exercises_sides_shape`. An alternating exercise is deliberately *not* two-sided,
+    /// which is the whole reason it needs no change to the flattener: `sideSuffixes` returns
+    /// `[nil]` for it and the step emits one interval per set, exactly as a one-sided one does.
+    /// All this flag buys is the word `(alt)` on the interval's name.
+    ///
+    /// **It also changes what the step's rep count means.** Two-sided reads "8 reps" as eight
+    /// *each*; alternating reads "20 reps" as twenty *altogether* — the interval is emitted once,
+    /// so `PlanSummary` counts it once. That asymmetry is the easiest thing here to get wrong.
+    public let alternatesSides: Bool
 
-    public init(name: String, hasTwoSides: Bool = false) {
+    public init(name: String, hasTwoSides: Bool = false, alternatesSides: Bool = false) {
         self.name = name
         self.hasTwoSides = hasTwoSides
+        self.alternatesSides = alternatesSides
     }
 }
 

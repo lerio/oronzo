@@ -9,7 +9,8 @@ import SwiftUI
 final class PlanStore {
 
     private(set) var plans: [Plan] = []
-    /// What flattening resolves against: each exercise's name, and whether it is done per side.
+    /// What flattening resolves against: each exercise's name, whether it is done per side, and
+    /// whether it is done alternatingly.
     private(set) var exercises: [UUID: ExerciseInfo] = [:]
     private(set) var isLoading = false
     private(set) var error: String?
@@ -21,19 +22,29 @@ final class PlanStore {
     func load() async {
         if plans.isEmpty, let cached = cache.load() {
             plans = cached.plans
-            exercises = Self.exerciseInfo(names: cached.exerciseNames, twoSided: cached.twoSidedExerciseIDs)
+            exercises = Self.exerciseInfo(names: cached.exerciseNames,
+                                          twoSided: cached.twoSidedExerciseIDs,
+                                          alternating: cached.alternatingExerciseIDs ?? [])
             invalidateIntervals()
         }
         await refresh()
     }
 
-    /// The in-memory map and the cached pair of fields are two shapes of one thing — see
-    /// `CachedPlanList` for why they are not the same shape.
-    private static func exerciseInfo(names: [UUID: String], twoSided: [UUID]) -> [UUID: ExerciseInfo] {
-        let flagged = Set(twoSided)
+    /// The in-memory map and the cached fields are two shapes of one thing — see `CachedPlanList`
+    /// for why they are not the same shape, and for why one id list is required there and the
+    /// other is not.
+    private static func exerciseInfo(
+        names: [UUID: String],
+        twoSided: [UUID],
+        alternating: [UUID]
+    ) -> [UUID: ExerciseInfo] {
+        let sides = Set(twoSided)
+        let alternatingIDs = Set(alternating)
         var info: [UUID: ExerciseInfo] = [:]
         for (id, name) in names {
-            info[id] = ExerciseInfo(name: name, hasTwoSides: flagged.contains(id))
+            info[id] = ExerciseInfo(name: name,
+                                    hasTwoSides: sides.contains(id),
+                                    alternatesSides: alternatingIDs.contains(id))
         }
         return info
     }
@@ -224,10 +235,23 @@ extension PlanStore {
 /// cannot be read is discarded instead, so the plan list is empty until one fetch succeeds —
 /// visible, and recoverable by going online. See `docs/known-issues.md` §3 for what that empty
 /// state currently says, which is a known and separate problem.
+///
+/// **`alternatingExerciseIDs` is optional, and the difference is the point.** The same argument
+/// would give the same answer only if the two flags failed the same way, and they do not: an
+/// alternating exercise is *not* two-sided, so a file that has never heard of the flag still
+/// flattens it into the right number of intervals, and all that is lost is the `(alt)` on the
+/// name. Per `AGENTS.md`, a field whose absence costs a display name may be optional; one whose
+/// absence changes the workout may not. Keeping it optional is also what stops every device
+/// emptying its plan list once, which is what a required key added here would do.
+///
+/// That reasoning holds only while `PlanFlattener.sideSuffixes` never reads the alternating flag —
+/// `PlanFlattenerTests.testAnAlternatingExerciseIsNotTwoSided` is the assertion that it does not.
 private struct CachedPlanList: Codable {
     let plans: [Plan]
     let exerciseNames: [UUID: String]
     let twoSidedExerciseIDs: [UUID]
+    /// Absent from every file written before `0016`, which is the case it exists to tolerate.
+    let alternatingExerciseIDs: [UUID]?
 }
 
 private struct PlanCache {
@@ -263,6 +287,10 @@ private struct PlanCache {
             // editor on a device.
             twoSidedExerciseIDs: exercises
                 .filter { $0.value.hasTwoSides }
+                .keys
+                .sorted { $0.uuidString < $1.uuidString },
+            alternatingExerciseIDs: exercises
+                .filter { $0.value.alternatesSides }
                 .keys
                 .sorted { $0.uuidString < $1.uuidString }
         )

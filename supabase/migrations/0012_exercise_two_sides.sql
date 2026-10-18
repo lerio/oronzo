@@ -25,8 +25,13 @@
 -- because iOS fetched exercises with `.select("id,name")`. That stops being true with this file.
 -- The iOS build that ships alongside `0012` selects `has_two_sides`, so the column has to exist
 -- before that build runs, or every plan fetch is a `400` on the device — `PlanStore.refresh()`
--- then keeps whatever the cache holds and says so in a banner, and on a cold start with no cache
--- it says "No plans yet" instead. Apply this migration before building the app.
+-- then keeps whatever the cache holds and says so in a banner. Apply this migration before
+-- building the app.
+--
+-- (This paragraph's last clause originally added "and on a cold start with no cache it says 'No
+-- plans yet' instead". That stopped being true when `PlanListView` was changed to branch on
+-- `store.error` before the empty state and offer "Try again" — `docs/known-issues.md` §3. Fixed in
+-- `0016` only because `0016` had copied the sentence; the migration's logic is untouched.)
 
 alter table public.exercises
   add column has_two_sides boolean not null default false;

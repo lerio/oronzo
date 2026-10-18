@@ -97,6 +97,62 @@ ever appears in one place. If the name slot ever needs the room back, an optiona
 `Interval` plus a `LinkTests` tolerance case is the escape hatch, and the `(left)`/`(right)`
 spelling would move with it.
 
+## Alternating: a third behaviour, not a relabelled pair
+
+`has_two_sides` says an exercise is done left, then right. That cannot express the movement you
+actually alternate — a walking lunge, a single-arm row, a dead bug — where ten left and then ten
+right is a *different exercise* from twenty alternating ones. `alternates_sides` (`0016`) is that
+movement, and it is a third behaviour rather than a wording change to the second.
+
+**The pair collapses, and the flattener loop does not change.** An alternating exercise is
+deliberately *not* two-sided, so `sideSuffixes` already returns `[nil]` for it and the step emits
+one interval per set — you switch sides inside it. The rest falls once, a `prepareSeconds` falls
+once, and the stream is identical in length, order and timings to what an ordinary one-sided
+exercise produces; the name is the only difference. It also makes the feature cheap in a way worth
+protecting — `PlanFlattenerTests` pins the side count for an alternating exercise, because what
+matters is the *length* of what `sideSuffixes` returns: a case giving it `["left", "right"]` would
+double both the intervals a workout emits and the reps `PlanSummary` allows, while looking like a
+renaming.
+
+**The marker rides in `Interval.name`, for the third time.** Same reasoning as the side and the
+prepare (`0012`, `0014`): the name is already on the wire, both surfaces already draw it, and a new
+field would be a format two separately-installed apps must agree on. `Interval` is untouched, so
+`SessionSnapshot`, `SessionRecord`, `WireCodec` and `LinkTests` are all untouched, and the watch app
+needs no change at all — it recomputes its screen from the interval.
+
+**It is spelled `(alt)`, and VoiceOver reads it as the word "alt".** That is a cost taken
+knowingly. Every other suffix in the name slot is a word the synthesiser says correctly, and the
+one comparable abbreviation — the rep unit, drawn `8x` — has a spoken twin, because
+`SessionScreen` expands it to "8 reps" when announcing. Doing the same here would mean teaching the
+presentation layer to find a suffix *inside* a name string, which is exactly the coupling the
+two-sided design went out of its way to avoid. The counter-argument is width: the name also appears
+on the `NEXT · <name>` caption, which shrinks to 70% and then truncates rather than wrapping, so
+`(alternating)` is a real cost too. Given both, the short one wins — the marker is a reminder for
+someone already mid-movement, not the only place the fact appears.
+
+**Both flags on one row is refused by the database, not only by the form.** `exercises_sides_shape`
+is `not (has_two_sides and alternates_sides)`: such a row would emit a left/right pair *and* an
+alternating marker, which describes nothing. The forms still draw two checkboxes — that is the
+control the feature was asked for — but they write one three-way `'none' | 'two' | 'alternate'`
+state, so the pair cannot be constructed rather than being unticked after the fact. The constraint
+is what makes it true of the table.
+
+**The step's rep count changes meaning with the flag, and nothing on screen says so.** Two-sided
+reads "8 reps" as eight *each*; alternating reads "20 reps" as twenty *altogether*, because the
+interval is emitted once. Both are internally consistent, and the estimate follows from
+`sideSuffixes` rather than from a second reading of the flag — but it is the single most likely
+thing about this feature for a later reader to get wrong, which is why it is written down in
+`ExerciseInfo`, in `types.ts`, and in `docs/integration-contracts.md`.
+
+**The cached id list is optional, where the two-sided one is required — deliberately.**
+`twoSidedExerciseIDs` is required so that an unreadable file is *discarded* rather than flattening
+every exercise as one-sided, which would silently run half the sets of every workout. The same
+argument would give the same answer only if the flags failed the same way, and they do not: a file
+that has never heard of `alternates_sides` still flattens an alternating exercise into the right
+number of intervals, and all that is lost is the `(alt)` on the name. `AGENTS.md`'s rule — a field
+whose absence costs a display name may be optional, one whose absence changes the workout may not —
+puts the two on opposite sides. `PlanStore.CachedPlanList` carries the argument in full.
+
 ## Getting in position: the plan asks for it, and the interval has no type of its own
 
 A timed interval starts the instant the previous one ends, so the first seconds of a hold are spent

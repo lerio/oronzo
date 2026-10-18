@@ -122,15 +122,18 @@ export async function listExercises(): Promise<Exercise[]> {
  * exercises now (the Exercises page and the plan editor's picker), so this is the one place that
  * decides what a new one looks like.
  *
- * `has_two_sides` is sent explicitly rather than left to the column's default: it is the one
- * thing here a checkbox decides. Note this needs `0012` applied — an insert naming a column the
- * database does not have is a `400`, unlike the reads, which tolerate new columns.
+ * The two side flags are sent explicitly rather than left to the columns' defaults: they are what
+ * the checkboxes decide, and the database refuses a row claiming both (`exercises_sides_shape`),
+ * so it must be told which is meant rather than left to guess. Note this needs `0012` and `0016`
+ * applied — an insert naming a column the database does not have is a `400`, unlike the reads,
+ * which tolerate new columns.
  */
 export async function createExercise(input: {
   name: string;
   muscle_group: string;
   default_mode: StepMode;
   has_two_sides: boolean;
+  alternates_sides: boolean;
 }): Promise<Exercise> {
   const { data: userData, error: userError } = await supabase.auth.getUser();
   if (userError) throw userError;
@@ -144,6 +147,52 @@ export async function createExercise(input: {
       default_duration_seconds: input.default_mode === 'time' ? 45 : null,
       default_reps: input.default_mode === 'reps' ? 10 : null,
     })
+    .select('*')
+    .single();
+  if (error) throw error;
+  return data as Exercise;
+}
+
+/**
+ * Changes what the exercise panel owns: its name, its muscle group, and how it is performed.
+ *
+ * **Only those columns, not the whole row.** `default_mode` and its per-mode default stay
+ * read-only in the panel, so sending last-read copies of them would be a write nobody asked for.
+ * The two side flags *are* asked for — the panel offers them as one three-state choice, because
+ * `exercises_sides_shape` refuses a row claiming both — and they are sent from the panel's own
+ * draft, the same way the name is. Same rule as `createExercise` above: take only what a person
+ * chose. (A stale copy written over a change made in another tab is the same exposure the name
+ * and group already have, and it is why the panel says out loud what changing the sides does.)
+ *
+ * **They are not cosmetic.** `has_two_sides` doubles every interval of every plan using this
+ * exercise — a set becomes left, then right — and taking it away halves them again;
+ * `alternates_sides` keeps one interval per set but changes what a step's rep count means: the
+ * total for both sides rather than the number for each.
+ *
+ * **Named by id, like the deletes.** Not `saveExercise`: `save*` in this file means the whole
+ * object upserted (`savePlan`), and this is neither whole nor an upsert.
+ *
+ * **`.select('*').single()` rather than a bare update.** The row that comes back is the one the
+ * page renders, so a save needs no second fetch to learn what it just wrote. It also makes a row
+ * that is gone an error rather than a silent no-op: `single()` asks PostgREST for
+ * `application/vnd.pgrst.object+json`, which a zero-row result answers with an error, whereas a
+ * `maybeSingle()` returning null would let the caller report success over a write that never
+ * happened. Ownership is the RLS policy's job (`exercises_update`), so there is no `user_id` here:
+ * an `eq` on a row you cannot see matches nothing and lands in the same place.
+ */
+export async function updateExercise(
+  id: string,
+  patch: {
+    name: string;
+    muscle_group: string;
+    has_two_sides: boolean;
+    alternates_sides: boolean;
+  },
+): Promise<Exercise> {
+  const { data, error } = await supabase
+    .from('exercises')
+    .update(patch)
+    .eq('id', id)
     .select('*')
     .single();
   if (error) throw error;

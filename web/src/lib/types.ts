@@ -31,6 +31,34 @@ export interface Exercise {
   default_reps: number | null;
   /** Performed once per side — left, then right. Doubles the intervals a step emits. */
   has_two_sides: boolean;
+  /**
+   * Performed on both sides *alternately*, inside one interval.
+   *
+   * **Not a variety of `has_two_sides`, and the two are mutually exclusive** — the database says
+   * so with `exercises_sides_shape`. An alternating exercise is deliberately not two-sided, which
+   * is why it needs no change to the flattener at all: `sideSuffixes` returns `[null]` for it and
+   * the step emits one interval per set. All this flag buys is the word `(alt)` on the name.
+   *
+   * **It also changes what a step's rep count means.** Two-sided reads "8 reps" as eight *each*;
+   * alternating reads "20 reps" as twenty *altogether* — the interval is emitted once, so the
+   * estimate counts it once.
+   */
+  alternates_sides: boolean;
+}
+
+/**
+ * How an exercise is performed — the three states its two flags can describe.
+ *
+ * One value rather than a pair of booleans, in every form that sets it: `exercises_sides_shape`
+ * refuses a row claiming both, so "two-sided *and* alternating" is a state that cannot be stored
+ * and must not be constructible on screen either.
+ */
+export type Sides = 'none' | 'two' | 'alternate';
+
+/** The state an exercise is stored in — what a form that edits one starts from. */
+export function sidesOf(exercise: Exercise): Sides {
+  if (exercise.alternates_sides) return 'alternate';
+  return exercise.has_two_sides ? 'two' : 'none';
 }
 
 /**
@@ -136,8 +164,14 @@ export function exerciseSummary(exercise: Exercise): string {
     parts.push(formatDuration(exercise.default_duration_seconds ?? 0));
   }
   // Unlike the rep count this replaced, it belongs on some rows and not others: it changes what
-  // the workout does. It also lands in the picker's filter string, so "sides" finds these.
-  if (exercise.has_two_sides) parts.push('2 sides');
+  // the workout does. It also lands in the picker's filter string, which is what makes "sides"
+  // find the two-sided ones and "alt" the alternating ones.
+  //
+  // The two flags are mutually exclusive, so this is a choice rather than a pair of lines: an
+  // alternating exercise is not two-sided, and saying "2 sides" about it would be wrong — it is
+  // *one* interval, which is the thing that changed.
+  if (exercise.alternates_sides) parts.push('alternating');
+  else if (exercise.has_two_sides) parts.push('2 sides');
   return parts.join(' · ');
 }
 
@@ -160,6 +194,16 @@ const REST_LABEL = 'Break';
 
 /** The same for the prep interval a step's `prepare_seconds` asks for. */
 const PREPARE_LABEL = 'Get in position';
+
+/**
+ * What marks an interval as done alternatingly — the twin of `PlanFlattener.alternatingLabel`.
+ *
+ * Short because it is drawn on the narrowest two lines in the app and lands on the `NEXT ·`
+ * caption too, which shrinks to 70% and then truncates rather than wrapping — so every character
+ * is paid for on a 41 mm screen. The cost is that VoiceOver reads it as the word "alt"; that was
+ * chosen knowingly, and `docs/decisions.md` has it.
+ */
+const ALT_LABEL = 'alt';
 
 /**
  * Flatten a plan into the ordered interval sequence the session engine executes.
@@ -260,6 +304,16 @@ export function flattenPlan(plan: Plan, exercises: Map<string, Exercise>): Inter
  * This is the whole of "has two sides" as the preview sees it, and the twin of
  * `PlanFlattener.sideSuffixes` in `ios/OronzoCore/` — the same rule, and the same two strings.
  * `estimatePlanDuration` reads `.length` from it rather than working the rule out again.
+ *
+ * **An alternating exercise is not a third case here, and must never become one.** It is not
+ * two-sided, so it falls through to `[null]` — one interval per set, which is what "alternating"
+ * means. It also decides the rep arithmetic: `estimatePlanDuration` multiplies by this length, so
+ * an alternating step's reps are counted once, as a total.
+ *
+ * The reason to keep it that way is the *length*, and only the length: a case returning
+ * `['left', 'right']` for an alternating exercise would double both the intervals a workout emits
+ * and the reps the estimate allows. (A single-entry case would happen to be harmless — which is
+ * exactly why the invariant is worth pinning in a test rather than left to a reader's judgement.)
  */
 function sideSuffixes(step: PlanStep, exercises: Map<string, Exercise>): (string | null)[] {
   const exercise = step.exercise_id ? exercises.get(step.exercise_id) : undefined;
@@ -285,13 +339,21 @@ function toInterval(
   blockRoundCount: number,
   exercises: Map<string, Exercise>,
 ): Interval {
+  // Resolved once, because the name and the alternating marker below both need it.
+  const exercise = step.exercise_id ? exercises.get(step.exercise_id) : undefined;
   // The base name resolves exactly as `PlanFlattener.name(for:)` does — label, then the exercise,
   // then a placeholder — so the plan detail screen (which lists a plan as authored) and this
   // (which lists what will actually run) differ only by the suffix appended below. An explicit
   // label takes the side too: it names the exercise, and the exercise is what has two sides.
-  const base =
-    step.label || (step.exercise_id ? exercises.get(step.exercise_id)?.name : null) || 'Exercise';
-  const name = side ? `${base} (${side})` : base;
+  const base = step.label || exercise?.name || 'Exercise';
+  // A step has a side or is alternating, never both — `exercises_sides_shape` refuses such a row,
+  // and the create forms carry one three-way state rather than two independent checkboxes — so the
+  // two suffixes cannot collide.
+  const name = side
+    ? `${base} (${side})`
+    : exercise?.alternates_sides
+      ? `${base} (${ALT_LABEL})`
+      : base;
 
   return {
     index,

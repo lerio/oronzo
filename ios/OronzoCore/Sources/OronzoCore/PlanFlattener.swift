@@ -89,10 +89,35 @@ public enum PlanFlattener {
     /// The spelling is duplicated in `web/src/lib/types.ts` deliberately, exactly as `restLabel`
     /// and `REST_LABEL` are: the two flatteners are the same rule written twice, and the strings
     /// it writes into an interval are part of what the rule says.
+    ///
+    /// **An alternating exercise is not a third case here, and must never become one.** It is not
+    /// two-sided, so it falls through to `[nil]` — one interval per set, which is exactly what
+    /// "alternating" means. `PlanFlattenerTests.testAnAlternatingExerciseIsNotTwoSided` pins the
+    /// count, because what matters is the *length*: a case returning `["left", "right"]` for an
+    /// alternating exercise would double the intervals a step emits and the reps `PlanSummary`
+    /// allows, while looking like a naming change. (A single-entry case would happen to be
+    /// harmless — which is why this is pinned by a test rather than left to a reader.)
+    ///
+    /// `PlanStore`'s cache tolerance for the alternating flag rests on the same thing: a missing
+    /// flag costs the `(alt)` text and *nothing else*, which is only true while this never reads it.
     public static func sideSuffixes(of step: PlanStep, exercises: [UUID: ExerciseInfo]) -> [String?] {
         guard let id = step.exerciseID, exercises[id]?.hasTwoSides == true else { return [nil] }
         return ["left", "right"]
     }
+
+    /// What marks an interval as done alternatingly, appended in parentheses like a side.
+    ///
+    /// Short because the interval's name is drawn on the narrowest two lines in the app, and it
+    /// also lands on the `NEXT ·` caption, which shrinks to 70% and then truncates rather than
+    /// wrapping — so every character here is paid for on a 41 mm screen.
+    ///
+    /// **VoiceOver says "alt", and that is a known cost rather than an oversight.** Every other
+    /// suffix in the name slot is a word the synthesiser reads correctly — and the rep unit, which
+    /// has the same problem, is drawn `8x` and *spoken* `8 reps` by `SessionScreen`. Expanding
+    /// this one would mean teaching the presentation layer to find a suffix inside a name string,
+    /// which is the coupling the two-sided design went out of its way to avoid. Chosen with that
+    /// trade on the table; see `docs/decisions.md`.
+    private static let alternatingLabel = "alt"
 
     /// No default on `exercises`, deliberately, though every other argument here has one.
     ///
@@ -200,7 +225,19 @@ public enum PlanFlattener {
         // wrist. `stepID` below is a new field of the kind that is allowed: optional, so a snapshot
         // written before it existed decodes without it.
         let base = name(for: step, exercises: exercises)
-        let name = side.map { "\(base) (\($0))" } ?? base
+        // A step has a side or is alternating, never both — `exercises_sides_shape` refuses such a
+        // row, and the create forms carry one three-way state rather than two independent
+        // checkboxes — so the two suffixes cannot collide. Alternating is checked only when there
+        // is no side, which is also what keeps this from being a case of `sideSuffixes`: that
+        // function decides how many intervals a step emits, and this one must not.
+        let name: String
+        if let side {
+            name = "\(base) (\(side))"
+        } else if step.exerciseID.flatMap({ exercises[$0]?.alternatesSides }) == true {
+            name = "\(base) (\(alternatingLabel))"
+        } else {
+            name = base
+        }
 
         return Interval(
             index: index,

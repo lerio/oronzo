@@ -196,6 +196,36 @@ final class PlanSummaryTests: XCTestCase {
         XCTAssertEqual(twoSided.exerciseCount, 1, "still one exercise as authored, not two")
     }
 
+    // MARK: - Alternating exercises
+
+    /// An alternating exercise counts its reps **once**, because its `reps` is the total rather
+    /// than the per-side number: twenty alternating lunges is twenty, not forty.
+    ///
+    /// This is the asymmetry between the two flags — `has_two_sides` reads "8 reps" as eight
+    /// *each* and doubles, alternating reads "20 reps" as twenty *altogether* — and it falls out of
+    /// `sideSuffixes` returning one entry rather than being written anywhere. Asserting it here is
+    /// what stops a future "make alternating a case of the side rule" from quietly doubling the
+    /// estimate for every alternating exercise.
+    func testAnAlternatingRepExerciseCountsItsRepsOnce() {
+        let lunge = UUID()
+        let plan = Plan(name: "P", blocks: [
+            PlanBlock(steps: [
+                PlanStep(exerciseID: lunge, sets: 3, mode: .reps, reps: 20, restAfter: 60),
+            ]),
+        ])
+
+        let plain = summary(of: plan, exercises: [lunge: ExerciseInfo(name: "Alternating Lunge")])
+        let alternating = summary(
+            of: plan,
+            exercises: [lunge: ExerciseInfo(name: "Alternating Lunge", alternatesSides: true)]
+        )
+
+        XCTAssertEqual(alternating.repSeconds, Double(3 * 20) * PlanSummary.secondsPerRep)
+        XCTAssertEqual(alternating.repSeconds, plain.repSeconds, "the flag is a name, not a multiplier")
+        XCTAssertEqual(alternating.timedSeconds, plain.timedSeconds, "the rest is once per set either way")
+        XCTAssertEqual(alternating.exerciseCount, 1)
+    }
+
     // MARK: - The calibration
 
     /// `secondsPerRep` is calibrated, not derived, so the number it produces is the thing worth

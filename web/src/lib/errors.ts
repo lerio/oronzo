@@ -44,3 +44,23 @@ export function isForeignKeyViolation(err: unknown): boolean {
     (err as { code?: unknown }).code === '23503'
   );
 }
+
+/**
+ * Postgres's `unique_violation`, which PostgREST reports as **409 Conflict**.
+ *
+ * The exercise one is `exercises_user_name_key` on `(user_id, lower(name))`, so this is "you
+ * already have one of those". It is the only unique index an edit can reach: the table's other
+ * one, `exercises_slug_key`, is on a column a custom exercise never writes.
+ *
+ * Same reasoning as the foreign-key helper above — branch on the code, never on the message text,
+ * which is Postgres's and not ours. It lives here rather than at the call site so that no route
+ * has to know what a Postgres error code looks like.
+ */
+export function isUniqueViolation(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'code' in err &&
+    (err as { code?: unknown }).code === '23505'
+  );
+}
