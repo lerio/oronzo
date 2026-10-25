@@ -15,6 +15,7 @@ import {
   type Plan,
   type PlanBlock,
   type PlanStep,
+  type StepMode,
 } from '../lib/types';
 
 const blankPlan = (): Plan => ({ id: '', name: '', blocks: [] });
@@ -23,20 +24,25 @@ const blankPlan = (): Plan => ({ id: '', name: '', blocks: [] });
  * would need no second migration; five seconds is the only value there is for now. */
 const PREPARE_SECONDS = 5;
 
+/** What switching a step to a mode fills in when that mode has no value yet. */
+const DEFAULT_REPS = 10;
+const DEFAULT_DURATION_SECONDS = 45;
+
 function stepFromExercise(exercise?: Exercise): PlanStep {
-  const isTime = exercise?.default_mode === 'time';
   return {
     exercise_id: exercise?.id ?? null,
     position: 0,
     label: null,
     sets: 1,
-    mode: exercise?.default_mode ?? 'reps',
-    duration_seconds: isTime ? (exercise?.default_duration_seconds ?? 45) : null,
-    reps: isTime ? null : (exercise?.default_reps ?? 10),
+    // Reps until the author says otherwise: the mode belongs to the step now, so the same
+    // exercise can run on reps in one plan and on the clock in another.
+    mode: 'reps',
+    duration_seconds: null,
+    reps: DEFAULT_REPS,
     target_weight_kg: null,
     rest_after_seconds: null,
     // Optional, so a freshly-picked timed step starts with none and the row offers "—". The
-    // builder is where the effort is chosen; an exercise cannot dictate it, because a HIIT block
+    // builder is where the effort is chosen; nothing else can dictate it, because a HIIT block
     // runs the same movement hard and easy.
     intensity: null,
     // Opt-in, and off until somebody ticks it: a timed step is not always work — the seeded HIIT
@@ -44,6 +50,32 @@ function stepFromExercise(exercise?: Exercise): PlanStep {
     // hold. See `flattenPlan`.
     prepare_seconds: null,
   };
+}
+
+/**
+ * Switching a step between reps and time.
+ *
+ * The field the new mode needs is filled in when it is missing — `plan_steps_mode_shape` refuses
+ * a timed step with no duration and a rep step with no rep target. The other mode's fields are
+ * cleared rather than left set-but-hidden: the flattener carries `intensity` and
+ * `target_weight_kg` into the interval whatever the mode, so a stale one would show up in the
+ * preview on an interval it does not describe.
+ */
+function modePatch(step: PlanStep, mode: StepMode): Partial<PlanStep> {
+  return mode === 'time'
+    ? {
+        mode,
+        duration_seconds: step.duration_seconds ?? DEFAULT_DURATION_SECONDS,
+        reps: null,
+        target_weight_kg: null,
+      }
+    : {
+        mode,
+        reps: step.reps ?? DEFAULT_REPS,
+        duration_seconds: null,
+        intensity: null,
+        prepare_seconds: null,
+      };
 }
 
 /** Re-index positions from array order — positions must always be contiguous per parent. */
@@ -59,7 +91,7 @@ function normalize(plan: Plan): Plan {
 }
 
 /**
- * Mirrors the DB's plan_steps_shape constraint, so problems surface before a failed save
+ * Mirrors the DB's plan_steps_mode_shape constraint, so problems surface before a failed save
  * rather than as a raw Postgres error.
  */
 function stepProblem(step: PlanStep): string | null {
@@ -360,9 +392,9 @@ export default function PlanEditor() {
                 />
 
                 {/* Nothing belongs to a step until it has an exercise. Which fields apply — a
-                    rep target and a load, or a duration — is the exercise's mode, so before one
-                    is picked there is nothing here that would not be a guess. The row says
-                    "Pick an exercise" below and waits. */}
+                    rep target and a load, or a duration — is the step's own mode, chosen below;
+                    before an exercise is picked there is nothing here that would not be a guess.
+                    The row says "Pick an exercise" below and waits. */}
                 {step.exercise_id && (
                   <>
                     <label className="inline-field" title="How many times this exercise repeats — its set count">
@@ -378,10 +410,28 @@ export default function PlanEditor() {
                       />
                     </label>
 
-                    {/* The step's mode is the exercise's — there is no select for it any more.
-                        Picking an exercise re-derives the whole step through `stepFromExercise`,
-                        so what this row shows is whatever that mode actually has: a rep target
-                        and a load, or a duration. */}
+                    {/* The one choice the exercise used to make. Both modes are always offered:
+                        an exercise can be a rep target in one plan and a hold in another. */}
+                    <label
+                      className="inline-field"
+                      title="Whether this step runs on a rep target or on the clock"
+                    >
+                      <span>mode</span>
+                      <select
+                        value={step.mode}
+                        onChange={(e) =>
+                          updateStep(
+                            blockIndex,
+                            stepIndex,
+                            modePatch(step, e.target.value as StepMode),
+                          )
+                        }
+                      >
+                        <option value="reps">reps</option>
+                        <option value="time">time</option>
+                      </select>
+                    </label>
+
                     {step.mode === 'time' ? (
                       <>
                         <label className="inline-field">
@@ -522,7 +572,7 @@ export default function PlanEditor() {
 
           <div className="step-add">
             {/* Deliberately no exercise: the row opens as just a picker and grows its fields
-                once the exercise — and so the mode those fields belong to — is chosen. */}
+                once an exercise is chosen, with the mode defaulted to reps. */}
             <button className="link-btn" onClick={() => addStep(blockIndex, stepFromExercise())}>
               + exercise
             </button>

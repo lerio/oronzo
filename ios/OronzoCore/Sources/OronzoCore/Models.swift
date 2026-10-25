@@ -141,11 +141,10 @@ public struct Plan: Codable, Equatable, Identifiable, Sendable {
 
 /// What the flattener and the plan summary need to know about an exercise.
 ///
-/// Deliberately not the whole exercise. The `exercises` table also carries a default mode, rep
-/// target and duration, and none of those survive into a plan — `PlanStep` snapshots what it
-/// needs when the exercise is picked, which is why changing an exercise's defaults does not
-/// rewrite the plans already using it. These three are the exception: they are read *while
-/// flattening*, so they have to be handed in rather than frozen into the step.
+/// Deliberately not the whole exercise. A `PlanStep` snapshots its own mode, target and duration
+/// when the exercise is picked, which is why changing those per plan does not touch the exercise.
+/// These three are the exception: they are read *while flattening*, so they have to be handed in
+/// rather than frozen into the step.
 public struct ExerciseInfo: Codable, Equatable, Sendable {
     public let name: String
     /// Performed once per side — left, then right. See `PlanFlattener.sideSuffixes`.

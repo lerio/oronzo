@@ -22,14 +22,13 @@ schema. Then run the `contract-auditor` agent.
 The flattening rule itself is stated in full in `AGENTS.md`. What follows is the field-level and
 wire-level detail that the pseudocode does not carry.
 
-## Current schema (post-`0016`)
+## Current schema (post-`0017`)
 
 Migrations are **cumulative and append-only**, so `0001` is not the current shape. This is the
-shape as of `0016_exercise_alternates.sql`; check the newest file before assuming.
+shape as of `0017_exercise_mode_moves_to_step.sql`; check the newest file before assuming.
 
 ```
-exercises      id, user_id, slug, name, muscle_group, default_mode,
-               default_duration_seconds, default_reps, has_two_sides, alternates_sides,
+exercises      id, user_id, slug, name, muscle_group, has_two_sides, alternates_sides,
                notes, created_at, updated_at
 
 plans          id, user_id, name, position, created_at, updated_at
@@ -87,7 +86,9 @@ The same applies to the `(alt)` suffix from `0016`, which is why a past session 
 Columns that **no longer exist**, and must not reappear in a select string or a model:
 `plan_steps.kind` and `plan_steps.notes` (dropped in `0006`/`0008`), `plans.notes` (`0008`),
 `plan_steps.reps_max` / `target_weight_max_kg` (`0004`), `session_steps.actual_reps` /
-`actual_weight_kg` (`0008`), `session_steps.round_index` (renamed `set_index` in `0005`), `exercises.equipment` (`0011`).
+`session_steps.actual_weight_kg` (`0008`), `session_steps.round_index` (renamed `set_index` in `0005`),
+`exercises.equipment` (`0011`), `exercises.default_mode` / `default_duration_seconds` /
+`default_reps` (`0017` — the rep/time choice is `plan_steps.mode`'s).
 
 `exercises` is in this list for the first time because the flattener reads three of its columns —
 `name`, `has_two_sides` and `alternates_sides` — which is why the phone's exercise fetch is a

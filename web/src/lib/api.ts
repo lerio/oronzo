@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import type { Exercise, Plan, PlanBlock, PlanStep, StepMode } from './types';
+import type { Exercise, Plan, PlanBlock, PlanStep } from './types';
 
 /** Kept on one line: PostgREST parses this as a query string, and embedded newlines break it. */
 const PLAN_SELECT =
@@ -116,11 +116,8 @@ export async function listExercises(): Promise<Exercise[]> {
 /**
  * Creates one of the user's own exercises.
  *
- * Takes only what a person chooses. The per-mode defaults are filled in here, beside the
- * constraint that makes them necessary — `exercises_mode_shape` rejects a timed exercise with no
- * duration, and the plan editor pre-fills a new step from all of them. Two forms create
- * exercises now (the Exercises page and the plan editor's picker), so this is the one place that
- * decides what a new one looks like.
+ * Takes only what a person chooses. An exercise carries no rep/time mode: `plan_steps.mode`
+ * decides that per plan, so neither form that creates an exercise asks for it.
  *
  * The two side flags are sent explicitly rather than left to the columns' defaults: they are what
  * the checkboxes decide, and the database refuses a row claiming both (`exercises_sides_shape`),
@@ -131,7 +128,6 @@ export async function listExercises(): Promise<Exercise[]> {
 export async function createExercise(input: {
   name: string;
   muscle_group: string;
-  default_mode: StepMode;
   has_two_sides: boolean;
   alternates_sides: boolean;
 }): Promise<Exercise> {
@@ -144,8 +140,6 @@ export async function createExercise(input: {
       ...input,
       user_id: userData.user.id,
       slug: null,
-      default_duration_seconds: input.default_mode === 'time' ? 45 : null,
-      default_reps: input.default_mode === 'reps' ? 10 : null,
     })
     .select('*')
     .single();
@@ -156,13 +150,10 @@ export async function createExercise(input: {
 /**
  * Changes what the exercise panel owns: its name, its muscle group, and how it is performed.
  *
- * **Only those columns, not the whole row.** `default_mode` and its per-mode default stay
- * read-only in the panel, so sending last-read copies of them would be a write nobody asked for.
- * The two side flags *are* asked for — the panel offers them as one three-state choice, because
- * `exercises_sides_shape` refuses a row claiming both — and they are sent from the panel's own
- * draft, the same way the name is. Same rule as `createExercise` above: take only what a person
- * chose. (A stale copy written over a change made in another tab is the same exposure the name
- * and group already have, and it is why the panel says out loud what changing the sides does.)
+ * **Only those columns, not the whole row.** They are sent from the panel's own draft, the same
+ * way the name is. Same rule as `createExercise` above: take only what a person chose. (A stale
+ * copy written over a change made in another tab is the same exposure the name and group already
+ * have, and it is why the panel says out loud what changing the sides does.)
  *
  * **They are not cosmetic.** `has_two_sides` doubles every interval of every plan using this
  * exercise — a set becomes left, then right — and taking it away halves them again;

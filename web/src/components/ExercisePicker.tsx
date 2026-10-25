@@ -6,7 +6,6 @@ import {
   exerciseSummary,
   type Exercise,
   type Sides,
-  type StepMode,
 } from '../lib/types';
 
 interface ExercisePickerProps {
@@ -29,14 +28,14 @@ interface ExercisePickerProps {
  * A searchable replacement for a plain `<select>`, which can also create what it cannot find.
  *
  * A native dropdown is tedious to scroll to a name, and on a narrow field it truncates the
- * names anyway. This filters as you type and matches on muscle group and the exercise's own
- * default too, so "back" finds the back rows without knowing what any of them are called.
+ * names anyway. This filters as you type and matches on muscle group and the sides wording too,
+ * so "back" finds the back rows and "alt" the alternating ones without knowing what any of them
+ * are called.
  *
  * When nothing matches, the dead end is where the authoring actually is: you are naming an
  * exercise that does not exist yet. So instead of sending you to another tab, the panel offers
- * to create it — the search text becomes the name, and the same three fields the Exercises page
- * asks for are the whole form. Saving selects it, which is what makes the step's own fields
- * appear.
+ * to create it — the search text becomes the name, and the same fields the Exercises page asks
+ * for are the whole form. Saving selects it, which is what makes the step's own fields appear.
  *
  * Deliberately hand-rolled rather than pulling in a combobox library: it is the only
  * control of its kind here, and it is ~190 lines.
@@ -55,7 +54,6 @@ export default function ExercisePicker({
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
   const [muscleGroup, setMuscleGroup] = useState<string>('chest');
-  const [mode, setMode] = useState<StepMode>('reps');
   /** One of three rather than two checkboxes, for the reason `Exercises.tsx` gives: the database
    *  refuses an exercise claiming both, so the pair cannot be allowed to exist here either. */
   const [sides, setSides] = useState<Sides>('none');
@@ -129,7 +127,6 @@ export default function ExercisePicker({
       const created = await createExercise({
         name: name.trim(),
         muscle_group: muscleGroup,
-        default_mode: mode,
         has_two_sides: sides === 'two',
         alternates_sides: sides === 'alternate',
       });
@@ -225,10 +222,6 @@ export default function ExercisePicker({
                     {group.replace('_', ' ')}
                   </option>
                 ))}
-              </select>
-              <select value={mode} onChange={(event) => setMode(event.target.value as StepMode)}>
-                <option value="reps">reps</option>
-                <option value="time">time</option>
               </select>
             </div>
             {/* Side by side rather than stacked, so the two read as two answers to one question —

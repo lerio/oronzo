@@ -699,13 +699,6 @@ textarea:focus {
   margin-bottom: 0;
 }
 
-.exercise-edit-facts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 12px;
-}
-
 /* A paragraph's default margins are a paragraph's, not a compact panel's. */
 .exercise-edit p {
   margin: 8px 0 0;

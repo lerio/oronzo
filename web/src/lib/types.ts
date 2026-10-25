@@ -26,9 +26,6 @@ export interface Exercise {
   slug: string | null;
   name: string;
   muscle_group: string;
-  default_mode: StepMode;
-  default_duration_seconds: number | null;
-  default_reps: number | null;
   /** Performed once per side — left, then right. Doubles the intervals a step emits. */
   has_two_sides: boolean;
   /**
@@ -148,24 +145,20 @@ export function weightDisplay(interval: Interval): string | null {
 }
 
 /**
- * The one-line description of an exercise: its muscle group, and a duration for a timed one.
+ * The one-line description of an exercise: its muscle group, and which sides it is done on.
  *
- * No rep count. A rep-based exercise's `default_reps` is a constant nothing asks for — 10, set
- * when the row is created and only ever edited per plan step — so printing it made every line
- * identical and none of them informative. A duration is the other way round: a timed exercise
- * cannot exist without one, and it is the number its step will actually run.
+ * No rep count or duration. Whether an exercise runs on reps or on the clock is chosen on the
+ * *step* now, so an exercise has no such fact to print — and a default would be a number nothing
+ * asks for, which made every line identical.
  *
  * Written once because the exercises list and the plan editor's picker show the same line, and
  * two copies of a formatting rule drift.
  */
 export function exerciseSummary(exercise: Exercise): string {
   const parts = [exercise.muscle_group.replace('_', ' ')];
-  if (exercise.default_mode === 'time') {
-    parts.push(formatDuration(exercise.default_duration_seconds ?? 0));
-  }
-  // Unlike the rep count this replaced, it belongs on some rows and not others: it changes what
-  // the workout does. It also lands in the picker's filter string, which is what makes "sides"
-  // find the two-sided ones and "alt" the alternating ones.
+  // It belongs on some rows and not others: it changes what the workout does. It also lands in
+  // the picker's filter string, which is what makes "sides" find the two-sided ones and "alt"
+  // the alternating ones.
   //
   // The two flags are mutually exclusive, so this is a choice rather than a pair of lines: an
   // alternating exercise is not two-sided, and saying "2 sides" about it would be wrong — it is
@@ -176,8 +169,8 @@ export function exerciseSummary(exercise: Exercise): string {
 }
 
 /**
- * The vocabulary offered when an exercise is created — the two `<select>`s, on the Exercises
- * page and in the builder's picker. Not a database enum: `exercises.muscle_group` is plain text
+ * The vocabulary offered when an exercise is created — the `<select>` on the Exercises page and
+ * in the builder's picker. Not a database enum: `exercises.muscle_group` is plain text
  * with no check constraint (unlike `intensity`), so this list constrains nothing that is already
  * stored, and a row carrying a group since removed from here still reads and filters fine.
  *

@@ -50,19 +50,13 @@
 -- ---------------------------------------------------------------------------
 
 create or replace function pg_temp.ensure_exercise(
-  p_slug text, p_name text, p_group text, p_equipment text,
-  p_mode text, p_duration int, p_reps int
+  p_slug text, p_name text, p_group text
 ) returns void language sql as $fn$
-  insert into public.exercises
-    (slug, name, muscle_group, equipment, default_mode, default_duration_seconds, default_reps)
-  values (p_slug, p_name, p_group, p_equipment, p_mode, p_duration, p_reps)
+  insert into public.exercises (slug, name, muscle_group)
+  values (p_slug, p_name, p_group)
   on conflict (slug) do update set
     name = excluded.name,
-    muscle_group = excluded.muscle_group,
-    equipment = excluded.equipment,
-    default_mode = excluded.default_mode,
-    default_duration_seconds = excluded.default_duration_seconds,
-    default_reps = excluded.default_reps;
+    muscle_group = excluded.muscle_group;
 $fn$;
 
 create or replace function pg_temp.new_block(
@@ -115,9 +109,9 @@ begin
   end if;
 
   -- The plan refers to these by slug; create them if this database predates them.
-  perform pg_temp.ensure_exercise('arm-circles',      'Arm Circles',      'mobility',  'bodyweight', 'reps', null, 15);
-  perform pg_temp.ensure_exercise('scapular-push-up', 'Scapular Push-Up', 'chest',     'bodyweight', 'reps', null, 10);
-  perform pg_temp.ensure_exercise('inchworm',         'Inchworm',         'full_body', 'bodyweight', 'reps', null,  5);
+  perform pg_temp.ensure_exercise('arm-circles',      'Arm Circles',      'mobility');
+  perform pg_temp.ensure_exercise('scapular-push-up', 'Scapular Push-Up', 'chest');
+  perform pg_temp.ensure_exercise('inchworm',         'Inchworm',         'full_body');
 
   -- Re-running this resets the plan's contents, not its place in the list: the position it already
   -- held is carried over, and only a plan that was not there lands at the end. Appending rather

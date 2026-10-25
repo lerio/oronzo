@@ -13,7 +13,6 @@ import {
   sidesOf,
   type Exercise,
   type Sides,
-  type StepMode,
 } from '../lib/types';
 
 /**
@@ -70,19 +69,6 @@ function groupOptions(stored: string): readonly string[] {
 }
 
 /**
- * An exercise's prescription, for a panel that promises to show *every* parameter.
- *
- * Deliberately not `exerciseSummary`: that drops the rep default, because in a list a constant
- * "10 reps" on every row is noise. In here it is the number the plan editor pre-fills a new step
- * from, which is exactly what the reader opened the panel to look at.
- */
-function exerciseDefaults(exercise: Exercise): string {
-  return exercise.default_mode === 'time'
-    ? `${exercise.default_duration_seconds ?? 0}s per set`
-    : `${exercise.default_reps ?? 0} reps per set`;
-}
-
-/**
  * What changing how an exercise is performed will do to the plans that use it — said while the
  * change is being staged, and only then.
  *
@@ -131,7 +117,6 @@ export default function Exercises() {
 
   const [name, setName] = useState('');
   const [muscleGroup, setMuscleGroup] = useState<string>('chest');
-  const [mode, setMode] = useState<StepMode>('reps');
   /** One of three — see `Sides` for why the impossible pair is not constructible here. */
   const [sides, setSides] = useState<Sides>('none');
 
@@ -178,7 +163,6 @@ export default function Exercises() {
       const created = await createExercise({
         name: name.trim(),
         muscle_group: muscleGroup,
-        default_mode: mode,
         has_two_sides: sides === 'two',
         alternates_sides: sides === 'alternate',
       });
@@ -341,10 +325,6 @@ export default function Exercises() {
             </option>
           ))}
         </select>
-        <select value={mode} onChange={(e) => setMode(e.target.value as StepMode)}>
-          <option value="reps">reps</option>
-          <option value="time">time</option>
-        </select>
         <label className="inline-field" title="Performed once per side — left, then right">
           <input
             type="checkbox"
@@ -469,17 +449,6 @@ export default function Exercises() {
                         field at all: the flags re-lay-out every plan that uses this exercise, so
                         the consequence is named before Save rather than discovered afterwards. */}
                     {sidesNote && <p className="muted small">{sidesNote}</p>}
-
-                    {/* What this panel shows but does not offer: `default_mode` and its per-mode
-                        default, which are what the plan editor pre-fills a new step from. Chips
-                        rather than disabled inputs: a read-only fact should not look like
-                        something that is merely not available yet. How the exercise is performed
-                        used to be the third chip here; it is a field now, above, so this panel
-                        could not show a stale value for a fact it is asking the user to confirm. */}
-                    <div className="exercise-edit-facts">
-                      <span className="pill">{exercise.default_mode}</span>
-                      <span className="pill">{exerciseDefaults(exercise)}</span>
-                    </div>
 
                     {/* Muted even when the check failed: the red in here is reserved for a save
                         that did not happen, which is the only thing needing an action. */}
