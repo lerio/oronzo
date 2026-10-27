@@ -11,13 +11,13 @@ import XCTest
 ///
 /// What these tests pin is the part that cannot be recovered from once it is wrong: a record that
 /// **cannot be restored must never be half-applied**. A workout is the only thing here that is
-/// not reproducible — the plan lives on a server, the history can be re-fetched, but what you
+/// not reproducible — the workout lives on a server, the history can be re-fetched, but what you
 /// actually did exists exactly once, in this file, and only until it is saved. So every way a
 /// record could describe something impossible is asserted to be refused outright.
 final class SessionRecordTests: XCTestCase {
 
     private let t0 = Date(timeIntervalSince1970: 1_700_000_000)
-    private let planID = UUID(uuidString: "00000000-0000-0000-0000-00000000ABCD")!
+    private let workoutID = UUID(uuidString: "00000000-0000-0000-0000-00000000ABCD")!
 
     // MARK: - Fixtures
 
@@ -45,7 +45,7 @@ final class SessionRecordTests: XCTestCase {
     }
 
     private func record(_ engine: ExecutionEngine, savedAt: Date? = nil) -> SessionRecord {
-        SessionRecord(engine: engine, planID: planID, planName: "Upper Body A", savedAt: savedAt ?? t0)
+        SessionRecord(engine: engine, workoutID: workoutID, workoutName: "Upper Body A", savedAt: savedAt ?? t0)
     }
 
     // MARK: - The disk format
@@ -58,6 +58,28 @@ final class SessionRecordTests: XCTestCase {
         let back = try WireCodec.decode(SessionRecord.self, from: encoded)
 
         XCTAssertEqual(back, record(engine, savedAt: t0), "the whole record survives the file")
+    }
+
+    /// The workout rename must not rename the record's disk keys.
+    ///
+    /// A record is written before an app update and read after it, so `planID`/`planName` are
+    /// what every file on disk already says. The Swift properties are `workoutID`/`workoutName`,
+    /// but the encoded keys must remain the historical ones in both directions.
+    func testARecordKeepsItsHistoricalDiskKeys() throws {
+        var engine = engineMidSession()
+        _ = engine.advance(at: t0.addingTimeInterval(60), skipped: true)
+
+        let encoded = try WireCodec.encode(record(engine, savedAt: t0))
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+
+        XCTAssertNotNil(object["planID"])
+        XCTAssertNotNil(object["planName"])
+        XCTAssertNil(object["workoutID"])
+        XCTAssertNil(object["workoutName"])
+
+        let back = try WireCodec.decode(SessionRecord.self, from: encoded)
+        XCTAssertEqual(back.workoutID, workoutID)
+        XCTAssertEqual(back.workoutName, "Upper Body A")
     }
 
     /// The record is a file one build writes and another reads — the app is updated between a
@@ -79,7 +101,7 @@ final class SessionRecordTests: XCTestCase {
 
         let back = try WireCodec.decode(SessionRecord.self, from: stripped)
 
-        XCTAssertEqual(back.intervals.count, 5, "the plan survives a field it never knew about")
+        XCTAssertEqual(back.intervals.count, 5, "the workout survives a field it never knew about")
         XCTAssertEqual(back.currentIndex, 1)
         XCTAssertNil(back.finishedAt)
     }
@@ -98,7 +120,7 @@ final class SessionRecordTests: XCTestCase {
     }
 
     /// A truncated or mangled file yields **nothing**, never a partial session. The caller falls
-    /// back to the plan list, which is a worse screen than a resumed runner and a far better one
+    /// back to the workout list, which is a worse screen than a resumed runner and a far better one
     /// than a runner driving an engine that cannot mean anything.
     func testARecordThatCannotBeDecodedIsRefusedRatherThanHalfApplied() {
         let mangled = Data(#"{"planName":"Upper Body A","currentIndex":3"#.utf8)
@@ -166,9 +188,9 @@ final class SessionRecordTests: XCTestCase {
         XCTAssertNil(ExecutionEngine(restoring: record(idle)))
     }
 
-    /// An index past the end of the plan would drive the whole screen from `nil` and record
+    /// An index past the end of the workout would drive the whole screen from `nil` and record
     /// nonsense into history.
-    func testRestoringRefusesAnIndexPastTheEndOfThePlan() throws {
+    func testRestoringRefusesAnIndexPastTheEndOfTheWorkout() throws {
         let encoded = try WireCodec.encode(record(engineMidSession(count: 2), savedAt: t0))
         let bumped = try JSONSerialization.data(
             withJSONObject: replacing("currentIndex", with: 99,

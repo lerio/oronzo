@@ -17,10 +17,10 @@ Following the rule to reuse before adding.
 | `MeasurementFormat.clock(remaining:)` | `OronzoCore/Models.swift` | The clock text. Already rounds **up**, so it only reads 0:00 when time is genuinely over. |
 | `MeasurementFormat.reps` / `.weight` | same | Rep and load text. |
 | `Interval.contextLabel` | same | "Set 2 of 4" / intensity / "Round 1 of 3" / block name — the precedence is correct, keep it. Effort (`0013`) sits **between** the set count and the round count: a set number is progress, and effort only displaces progress you need less — see `Models.swift`. |
-| `PlanFlattener.restLabel` = `"Break"` | `PlanFlattener.swift` | The rest interval's name. |
+| `WorkoutFlattener.restLabel` = `"Break"` | `WorkoutFlattener.swift` | The rest interval's name. |
 | Runtime notes | `WatchRuntime.describe` | "Approaching the one-hour limit", "Paused by the watch (low power)", "Another app took over" — already good copy. |
 | Save status copy | `SessionRunner.saveStatus` | "Not saved — …" and "Try again". |
-| Watch idle copy | `WatchSessionView.idle` | "No workout" / "Start a plan on your iPhone". |
+| Watch idle copy | `WatchSessionView.idle` | "No workout" / "Start a workout on your iPhone". |
 | Semantic colour role names | `web/src/styles.css` | `background` `surface` `text` `muted` `accent` `danger` `good`. **The Swift vocabulary adopts these same role names**, so the web can consume the vocabulary later rather than forking it. |
 
 **No Swift design layer exists** — verified. Every size, colour and spacing in the iPhone and Watch apps is a hardcoded literal (e.g. the Watch clock is `.system(size: 42, weight: .semibold, design: .rounded).monospacedDigit()`). That layer is what this spec creates.
@@ -127,8 +127,8 @@ meaning each, in every state.
 | 3 | Rep work, no duration | *(none)* | exercise name | `10x` | `contextLabel` | `NEXT · <name or Break>[ · <load>]` |
 | 4 | Paused | *(none — the timer blinks)* | exercise name | **frozen** remaining, blinking | `contextLabel` | `NEXT · <name>[ · <load>]` |
 | 5 | Final interval | *(none)* | as above | as above | as above | **`LAST`** |
-| 6 | Finished | `DONE` | plan name | total elapsed | — | — |
-| 7 | No session | *(none)* | — | `No workout` | `Start a plan on your iPhone` | — |
+| 6 | Finished | `DONE` | workout name | total elapsed | — | — |
+| 7 | No session | *(none)* | — | `No workout` | `Start a workout on your iPhone` | — |
 | 8 | Runtime ended | *(unchanged)* | — | *(unchanged)* | existing `WatchRuntime` note, in `danger` | — |
 
 Notes on the decisions:
@@ -351,14 +351,14 @@ Every user-facing string this spec introduces or fixes. Existing strings marked 
 | Watch / runner, rep unit | `x`, as a suffix on the rep count (`8x`) — `title`-sized, where the number is 48–96pt |
 | Watch / runner, rep unit *(spoken)* | `8 reps` — the announcement still says the word, because "eight x" is not speech |
 | Watch, idle | `No workout` *(kept)* |
-| Watch, idle hint | `Start a plan on your iPhone` *(kept)* |
+| Watch, idle hint | `Start a workout on your iPhone` *(kept)* |
 | Watch controls, VoiceOver | `Previous` · `Next` · hint `Double tap to pause` / `Double tap to resume` on the primary |
 | Runner, resume control | `Resume` |
 | Runner, saving | `Saving…` |
 | Runner, saved | `Saved` |
 | Runner, save failed | `Not saved — <reason>` *(kept)* |
 | Runner, retry | `Try again` *(kept)* |
-| Rest interval name | `Break` *(kept, from `PlanFlattener.restLabel`)* |
+| Rest interval name | `Break` *(kept, from `WorkoutFlattener.restLabel`)* |
 
 **No string is left to implementation time.** If an implementer needs a string not in this table,
 that is a gap in this spec.
@@ -369,7 +369,7 @@ that is a gap in this spec.
 
 - **Pixel-level visuals** — final type sizes in points, exact colour values, corner radii. Those are
   implementation decisions made against the roles above, verified by looking at the UI.
-- The web plan builder, app icon, and the seconds-long screens (sign-in, plan list, plan detail,
+- The web workout builder, app icon, and the seconds-long screens (sign-in, workout list, workout detail,
   summary chrome) — all deferred elsewhere.
 - Fixing `docs/known-issues.md` items, except the two this spec touches: the unroutable
   `WatchControl.finish` (see below) and the phantom-session guard.

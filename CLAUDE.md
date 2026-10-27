@@ -14,7 +14,7 @@ repeated here — if you find yourself wanting to add some, it belongs in `AGENT
 |---|---|
 | `commands/check.md` | `/check` — the full verification suite: core tests, web build + lint, both app targets |
 | `commands/migration.md` | `/migration` — scaffold the next Supabase migration, following the append-only rules |
-| `commands/deploy.md` | `/deploy` — deploy the plan builder, *after* checking it is safe against the live schema |
+| `commands/deploy.md` | `/deploy` — deploy the workout builder, *after* checking it is safe against the live schema |
 | `commands/resign.md` | `/resign` — the weekly re-sign, for when the apps stop launching |
 | `agents/contract-auditor.md` | Audits the mirrored domain model (Swift ↔ TypeScript ↔ SQL) for drift |
 | `hooks/secret-scan.sh` | Blocks a `git commit`/`git push` that would publish a secret — **not active, see below** |

@@ -1,25 +1,25 @@
 import OronzoCore
 import SwiftUI
 
-/// The plan summary: what you are about to do, read before you start it.
+/// The workout summary: what you are about to do, read before you start it.
 ///
 /// One of the "seconds-long screens" `docs/spec/0001-ui-polish.md` deferred, so it **inherits**
 /// the vocabulary in `DesignTokens.swift` rather than adding to it — four type roles, four
 /// spacing steps, and nothing essential drawn in `muted`. There is no `primary` role here: that
 /// figure is sized for reading at 1–2 metres during a session, and this page is read at arm's
-/// length. The largest thing on this screen is the plan's name, at `title`.
+/// length. The largest thing on this screen is the workout's name, at `title`.
 ///
-/// It lists the plan **as authored** — blocks, then the exercises in each — not as flattened.
+/// It lists the workout **as authored** — blocks, then the exercises in each — not as flattened.
 /// The flattened list it replaced expanded every set and every round, so a six-round block
-/// became twelve near-identical rows and the shape of the plan disappeared. What the summary
+/// became twelve near-identical rows and the shape of the workout disappeared. What the summary
 /// owes you is "what am I doing", and the shape answers that better than the execution order.
 ///
-/// Steps are named through `PlanFlattener.name(for:exercises:)` rather than `step.label`
+/// Steps are named through `WorkoutFlattener.name(for:exercises:)` rather than `step.label`
 /// directly, so this screen and the workout that follows it cannot name the same exercise
 /// differently. Both matter: `label` is null on every step the builder writes
 /// (`docs/known-issues.md` §1), so the exercise table is the branch that actually runs.
-struct PlanDetailView: View {
-    @Environment(PlanStore.self) private var store
+struct WorkoutDetailView: View {
+    @Environment(TrainingStore.self) private var store
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -29,7 +29,7 @@ struct PlanDetailView: View {
     /// to clear whatever it turns out to be.
     @State private var startBarHeight: CGFloat = 0
 
-    let plan: Plan
+    let workout: Workout
 
     // Text scales with Dynamic Type, exactly as `SessionRunner` binds it — see the note in
     // `DesignTokens.swift` on why only the distance-read figure is exempt.
@@ -42,8 +42,7 @@ struct PlanDetailView: View {
     /// the one-off budget.
     private var cardRadius: CGFloat { SpacingStep.roomy.points }
 
-    private var intervals: [Interval] { store.intervals(for: plan) }
-    private var summary: PlanSummary { PlanSummary(plan: plan, intervals: intervals, exercises: store.exercises) }
+    private var intervals: [Interval] { store.intervals(for: workout) }
 
     var body: some View {
         ScrollView {
@@ -55,13 +54,13 @@ struct PlanDetailView: View {
                     WatchLinkWarning(note: note)
                 }
 
-                if plan.blocks.isEmpty {
+                if workout.blocks.isEmpty {
                     empty
                 } else {
-                    // Neither `PlanBlock` nor `PlanStep` is `Identifiable`, and two steps in a
+                    // Neither `WorkoutBlock` nor `WorkoutStep` is `Identifiable`, and two steps in a
                     // block can be equal values — the same offset identity the old screen used.
-                    // Safe here because this view holds an immutable snapshot of `plan`.
-                    ForEach(Array(plan.blocks.enumerated()), id: \.offset) { index, block in
+                    // Safe here because this view holds an immutable snapshot of `workout`.
+                    ForEach(Array(workout.blocks.enumerated()), id: \.offset) { index, block in
                         blockSection(block, index: index)
                     }
                 }
@@ -73,24 +72,27 @@ struct PlanDetailView: View {
             .padding(.bottom, startBarHeight + SpacingStep.roomy.points)
         }
         .background(ColorRole.background.color(colorScheme).ignoresSafeArea())
-        // An overlay, not a `safeAreaInset`: the button floats *over* the list, with the plan
+        // An overlay, not a `safeAreaInset`: the button floats *over* the list, with the workout
         // scrolling underneath it, rather than docked in a bar of its own.
         .overlay(alignment: .bottom) {
             startBar
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { startBarHeight = $0 }
         }
         // The title is the first thing in the content rather than a bar title that scrolls
-        // away: with no `navigationTitle`, the back button still reads "Plans".
+        // away: with no `navigationTitle`, the back button still reads "Today".
         .navigationBarTitleDisplayMode(.inline)
     }
 
     // MARK: - Header
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: SpacingStep.tight.points) {
+        // Built once here: `metaLine` and `spokenMetaLine` are two readings of one estimate.
+        let summary = WorkoutSummary(workout: workout, intervals: intervals, exercises: store.exercises)
+
+        return VStack(alignment: .leading, spacing: SpacingStep.tight.points) {
             // Same size, weight and design as `title` in the session runner, so the role reads
             // the same on both surfaces — that is the whole point of a shared scale.
-            Text(plan.name)
+            Text(workout.name)
                 .font(.system(size: titleSize, weight: .semibold, design: .rounded))
                 .foregroundStyle(ColorRole.text.color(colorScheme))
                 .fixedSize(horizontal: false, vertical: true)
@@ -101,15 +103,43 @@ struct PlanDetailView: View {
                 .foregroundStyle(ColorRole.text.color(colorScheme))
                 // "~26 min" is read aloud as "tilde twenty-six min"; this says it properly.
                 .accessibilityLabel(summary.spokenMetaLine)
+
+            if let scheduleText {
+                Text(scheduleText)
+                    .font(.system(size: captionSize))
+                    .foregroundStyle(ColorRole.text.color(colorScheme))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
+    }
+
+    /// "07:00 · Scheduled in My week · Mon, Thu". Nil when the workout has neither a preferred
+    /// time nor a weekly plan — the common case for a library workout that has not been placed.
+    private var scheduleText: String? {
+        var parts: [String] = []
+        if let time = workout.preferredTime {
+            parts.append(time.display)
+        }
+
+        let scheduled = store.weekPlans.compactMap { plan -> String? in
+            let days = plan.slots
+                .filter { $0.workoutID == workout.id }
+                .map { $0.weekday.shortLabel }
+            return days.isEmpty ? nil : "\(plan.name) · \(days.joined(separator: ", "))"
+        }
+        if !scheduled.isEmpty {
+            parts.append("Scheduled in " + scheduled.joined(separator: "; "))
+        }
+
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     private var empty: some View {
         VStack(alignment: .leading, spacing: SpacingStep.tight.points) {
-            Text("This plan has no blocks yet.")
+            Text("This workout has no blocks yet.")
                 .font(.system(size: labelSize, weight: .semibold))
                 .foregroundStyle(ColorRole.text.color(colorScheme))
-            Text("Build one in the web app, then pull to refresh the plan list.")
+            Text("Build one in the web app, then pull to refresh the workout list.")
                 .font(.system(size: captionSize))
                 .foregroundStyle(ColorRole.text.color(colorScheme))
                 .fixedSize(horizontal: false, vertical: true)
@@ -118,7 +148,7 @@ struct PlanDetailView: View {
 
     // MARK: - Blocks
 
-    private func blockSection(_ block: PlanBlock, index: Int) -> some View {
+    private func blockSection(_ block: WorkoutBlock, index: Int) -> some View {
         VStack(alignment: .leading, spacing: SpacingStep.snug.points) {
             blockHeader(block, index: index)
 
@@ -145,7 +175,7 @@ struct PlanDetailView: View {
     /// Stacked at accessibility sizes for the same reason the rows are: a wrapped block name
     /// with its badge stranded at the end of the first line reads as an accident.
     @ViewBuilder
-    private func blockHeader(_ block: PlanBlock, index: Int) -> some View {
+    private func blockHeader(_ block: WorkoutBlock, index: Int) -> some View {
         if dynamicTypeSize.isAccessibilitySize {
             VStack(alignment: .leading, spacing: SpacingStep.tight.points) {
                 blockName(block, index: index)
@@ -159,7 +189,7 @@ struct PlanDetailView: View {
         }
     }
 
-    private func blockName(_ block: PlanBlock, index: Int) -> some View {
+    private func blockName(_ block: WorkoutBlock, index: Int) -> some View {
         Text(block.name ?? "Block \(index + 1)")
             .font(.system(size: labelSize, weight: .semibold))
             .foregroundStyle(ColorRole.text.color(colorScheme))
@@ -183,7 +213,7 @@ struct PlanDetailView: View {
     /// **size**, never by dimming: `muted` is reserved for chrome that can be lost, and reps are
     /// not chrome.
     @ViewBuilder
-    private func stepRow(_ step: PlanStep) -> some View {
+    private func stepRow(_ step: WorkoutStep) -> some View {
         Group {
             if dynamicTypeSize.isAccessibilitySize {
                 // Stacked, not three columns. At these sizes the name and the prescription
@@ -216,8 +246,8 @@ struct PlanDetailView: View {
     /// The exercise name is one step down from the block title, so the block still heads its
     /// own section. `caption` is the next role down — the vocabulary has no in-between size on
     /// purpose, so "a bit smaller" means this step and not a new number.
-    private func stepName(_ step: PlanStep) -> some View {
-        Text(PlanFlattener.name(for: step, exercises: store.exercises))
+    private func stepName(_ step: WorkoutStep) -> some View {
+        Text(WorkoutFlattener.name(for: step, exercises: store.exercises))
             .font(.system(size: captionSize))
             .foregroundStyle(ColorRole.text.color(colorScheme))
             // At the largest Dynamic Type sizes the name takes the full width rather than
@@ -226,13 +256,13 @@ struct PlanDetailView: View {
     }
 
     @ViewBuilder
-    private func setsMarker(_ step: PlanStep) -> some View {
+    private func setsMarker(_ step: WorkoutStep) -> some View {
         if step.sets > 1 {
             // "×3 each side" rather than "×3" when the exercise is done per side, because this
             // screen is read *before* the workout and the workout runs six intervals, not three.
-            // The name above stays side-free — the plan is listed as authored — but the
+            // The name above stays side-free — the workout is listed as authored — but the
             // prescription has to describe what will actually happen.
-            let perSide = PlanFlattener.sideSuffixes(of: step, exercises: store.exercises).count > 1
+            let perSide = WorkoutFlattener.sideSuffixes(of: step, exercises: store.exercises).count > 1
             Text(perSide ? "×\(step.sets) each side" : "×\(step.sets)")
                 .font(.system(size: captionSize).monospacedDigit())
                 .foregroundStyle(ColorRole.text.color(colorScheme))
@@ -241,7 +271,7 @@ struct PlanDetailView: View {
     }
 
     @ViewBuilder
-    private func stepTarget(_ step: PlanStep) -> some View {
+    private func stepTarget(_ step: WorkoutStep) -> some View {
         if let target = target(step) {
             Text(target)
                 .font(.system(size: captionSize).monospacedDigit())
@@ -257,7 +287,7 @@ struct PlanDetailView: View {
     /// The target weight is deliberately absent. It is shown in the runner, where you are
     /// standing at the rack and it is the number you need; on a summary read beforehand it only
     /// made the right-hand column longer.
-    private func target(_ step: PlanStep) -> String? {
+    private func target(_ step: WorkoutStep) -> String? {
         var parts: [String] = []
         if step.mode == .time, let duration = step.duration {
             parts.append(MeasurementFormat.clock(remaining: duration))
@@ -269,7 +299,7 @@ struct PlanDetailView: View {
     // MARK: - Start
 
     /// Anchored rather than scrolled to: starting is the one thing this screen is for, and it
-    /// should not depend on having scrolled to the bottom of a long plan.
+    /// should not depend on having scrolled to the bottom of a long workout.
     ///
     /// No backing bar. The list passes behind the pill, which is opaque, so the button stays
     /// legible without a surface that would read as a card the list is not.
@@ -278,7 +308,7 @@ struct PlanDetailView: View {
             // Hands the session to the host rather than to a cover of this screen's own. The
             // runner is presented at the root, so starting a workout no longer ties its lifetime
             // to this view — and nothing this view does can end one.
-            session.begin(plan: plan, exercises: store.exercises)
+            session.begin(workout: workout, exercises: store.exercises)
         } label: {
             Text("Start")
                 .font(.system(size: labelSize, weight: .semibold))
@@ -295,12 +325,12 @@ struct PlanDetailView: View {
 }
 
 #if DEBUG
-#Preview("Plan summary") {
+#Preview("Workout summary") {
     NavigationStack {
-        // The builder-shaped plan, not `make()`: it carries null labels and names each step
-        // from the exercise table, which is what a real plan looks like on this screen.
-        PlanDetailView(plan: DemoPlan.builderShaped())
+        // The builder-shaped workout, not `make()`: it carries null labels and names each step
+        // from the exercise table, which is what a real workout looks like on this screen.
+        WorkoutDetailView(workout: DemoWorkout.builderShaped())
     }
-    .environment(PlanStore.seeded(DemoPlan.builderExercises))
+    .environment(TrainingStore.seeded(DemoWorkout.builderExercises))
 }
 #endif

@@ -14,9 +14,9 @@ import SwiftUI
 /// regardless of what the watch is doing. Fixing it is one script afterwards, never a mid-set
 /// operation.
 ///
-/// Drawn on the session screen and on both plan surfaces, because on 3 October 2026 the
+/// Drawn on the session screen and on both workout surfaces, because on 3 October 2026 the
 /// registration dropped at 10:23 with nobody looking, and the first place it could be seen was a
-/// workout already in progress. The plan list and the plan summary are where the next workout is
+/// workout already in progress. The workout list and the workout summary are where the next workout is
 /// chosen — the last moment the warning still changes what happens.
 ///
 /// The rendering is the session screen's, moved out verbatim so the three surfaces cannot drift:

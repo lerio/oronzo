@@ -95,7 +95,7 @@ public struct PressEcho: Equatable, Sendable {
     ///
     /// - Parameters:
     ///   - control: what the wrist was asked to send.
-    ///   - intervals: the plan as the phone last sent it. Never edited here — a load adjustment is
+    ///   - intervals: the workout as the phone last sent it. Never edited here — a load adjustment is
     ///     the phone's, and the wrist is only moving through the list.
     ///   - index: **where the wrist is showing the session now**, which is not necessarily where
     ///     the phone last said it was: a timed interval can have elapsed, and a previous echo can

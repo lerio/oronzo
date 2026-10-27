@@ -1,10 +1,10 @@
 import Foundation
 
-/// Turns a plan into the ordered sequence of intervals the engine executes.
+/// Turns a workout into the ordered sequence of intervals the engine executes.
 ///
 /// This is *the* contract of the project — the web preview, the iOS engine and the Watch
 /// all consume its output, and `web/src/lib/types.ts` restates the same rule in TypeScript.
-/// The statement of record is `AGENTS.md`; the migrations describe the *shape* a plan is stored
+/// The statement of record is `AGENTS.md`; the migrations describe the *shape* a workout is stored
 /// in, and their comments stopped tracking this loop several migrations ago (`0005` has `sets`
 /// but not the sides, `0001` has a loop but neither). Change the rule here and in `types.ts`,
 /// and change `AGENTS.md` with it.
@@ -39,7 +39,7 @@ import Foundation
 /// before each side of a two-sided exercise, since the prepare is emitted inside the side loop
 /// while the rest stays outside it. It never applies to a rest, which is emitted from outside the
 /// step loop entirely, nor to a rep-based step, whose interval cannot count down.
-public enum PlanFlattener {
+public enum WorkoutFlattener {
 
     /// What a rest is called, wherever it is drawn. Private because it is only ever written into an
     /// `Interval`'s name here — nothing outside needs to spell it a second way, which is the point.
@@ -52,23 +52,24 @@ public enum PlanFlattener {
     /// is a decode failure of the *entire* snapshot for a build that predates it, which is a
     /// silent "No workout" on the wrist. As a plain exercise interval it is a five-second
     /// countdown with the right words already on it, and an older build draws it correctly.
-    private static let prepareLabel = "Get in position"
+    /// Internal rather than private so `Interval.isPrepare` can read the one spelling of it.
+    static let prepareLabel = "Get in position"
 
     /// What to call a step.
     ///
-    /// Public because the plan summary on the phone lists steps straight off the `Plan`, and a
+    /// Public because the workout summary on the phone lists steps straight off the `Workout`, and a
     /// name resolved a second way there would be a second answer: the summary would say one
     /// thing and the workout that follows it another. Today `label` is `null` on every step the
     /// builder writes (`docs/known-issues.md` §1 — no input sets it), so the exercise table is
     /// the branch that actually runs.
     ///
     /// **Side-free, deliberately:** the side belongs to an *interval* being done, not to the step
-    /// being planned, and `PlanDetailView` lists a plan as authored. Only `interval(for:...)`
+    /// being planned, and `WorkoutDetailView` lists a workout as authored. Only `interval(for:...)`
     /// appends a suffix.
     ///
-    /// The placeholder is deliberate: an exercise deleted out from under a plan should still let
+    /// The placeholder is deliberate: an exercise deleted out from under a workout should still let
     /// the workout run.
-    public static func name(for step: PlanStep, exercises: [UUID: ExerciseInfo]) -> String {
+    public static func name(for step: WorkoutStep, exercises: [UUID: ExerciseInfo]) -> String {
         if let label = step.label {
             return label
         }
@@ -81,7 +82,7 @@ public enum PlanFlattener {
     /// The name suffixes a step is performed with, in order: one entry — `nil`, meaning no suffix
     /// — when the exercise is done once, two when it is done per side.
     ///
-    /// This is the whole of "has two sides" as the engine sees it. `PlanSummary` reads `.count`
+    /// This is the whole of "has two sides" as the engine sees it. `WorkoutSummary` reads `.count`
     /// from it rather than working out the rule again, because the flattener emits that many
     /// intervals and an estimate that counted one of them would quietly disagree with the
     /// session it is describing.
@@ -92,15 +93,15 @@ public enum PlanFlattener {
     ///
     /// **An alternating exercise is not a third case here, and must never become one.** It is not
     /// two-sided, so it falls through to `[nil]` — one interval per set, which is exactly what
-    /// "alternating" means. `PlanFlattenerTests.testAnAlternatingExerciseIsNotTwoSided` pins the
+    /// "alternating" means. `WorkoutFlattenerTests.testAnAlternatingExerciseIsNotTwoSided` pins the
     /// count, because what matters is the *length*: a case returning `["left", "right"]` for an
-    /// alternating exercise would double the intervals a step emits and the reps `PlanSummary`
+    /// alternating exercise would double the intervals a step emits and the reps `WorkoutSummary`
     /// allows, while looking like a naming change. (A single-entry case would happen to be
     /// harmless — which is why this is pinned by a test rather than left to a reader.)
     ///
-    /// `PlanStore`'s cache tolerance for the alternating flag rests on the same thing: a missing
+    /// `TrainingStore`'s cache tolerance for the alternating flag rests on the same thing: a missing
     /// flag costs the `(alt)` text and *nothing else*, which is only true while this never reads it.
-    public static func sideSuffixes(of step: PlanStep, exercises: [UUID: ExerciseInfo]) -> [String?] {
+    public static func sideSuffixes(of step: WorkoutStep, exercises: [UUID: ExerciseInfo]) -> [String?] {
         guard let id = step.exerciseID, exercises[id]?.hasTwoSides == true else { return [nil] }
         return ["left", "right"]
     }
@@ -124,12 +125,12 @@ public enum PlanFlattener {
     /// A missing *name* map degrades visibly: every interval is called "Exercise" and someone
     /// notices. A missing *sides* map is invisible — the step silently flattens once, and only
     /// the person mid-workout finds out. So the map is required and the compiler visits every
-    /// call site instead. `PlanStore` is the one place that builds it from disk, and it discards
+    /// call site instead. `TrainingStore` is the one place that builds it from disk, and it discards
     /// a cache it cannot read in full rather than handing over a map with the flag missing.
-    public static func flatten(_ plan: Plan, exercises: [UUID: ExerciseInfo]) -> [Interval] {
+    public static func flatten(_ workout: Workout, exercises: [UUID: ExerciseInfo]) -> [Interval] {
         var intervals: [Interval] = []
 
-        for block in plan.blocks {
+        for block in workout.blocks {
             let blockRounds = max(1, block.rounds)
 
             for blockRound in 1...blockRounds {
@@ -210,13 +211,13 @@ public enum PlanFlattener {
     }
 
     private static func interval(
-        for step: PlanStep,
+        for step: WorkoutStep,
         index: Int,
         setIndex: Int,
         side: String?,
         blockRound: Int,
         blockRoundCount: Int,
-        block: PlanBlock,
+        block: WorkoutBlock,
         exercises: [UUID: ExerciseInfo]
     ) -> Interval {
         // The side rides in the name rather than in a field of its own: `Interval` is `Codable`
@@ -253,7 +254,7 @@ public enum PlanFlattener {
             blockRoundCount: blockRoundCount,
             blockName: block.name,
             exerciseID: step.exerciseID,
-            // Which `plan_steps` row this came from, so the runner can write a load back to it.
+            // Which `workout_steps` row this came from, so the runner can write a load back to it.
             // Nil when the step was built in code rather than read from the database.
             stepID: step.id,
             // Carried straight through: it is the step's own word, and nothing decides it here.
@@ -265,7 +266,7 @@ public enum PlanFlattener {
     /// `interval(for:)` asks when it chooses between `duration` and `reps`. A step saying
     /// `mode == .time` with no duration in it emits an interval that cannot count down, and a
     /// prepare in front of one would be five seconds before nothing.
-    private static func isTimed(_ step: PlanStep) -> Bool {
+    private static func isTimed(_ step: WorkoutStep) -> Bool {
         step.mode == .time && (step.duration ?? 0) > 0
     }
 
@@ -282,7 +283,7 @@ public enum PlanFlattener {
         setCount: Int,
         blockRound: Int,
         blockRoundCount: Int,
-        block: PlanBlock
+        block: WorkoutBlock
     ) -> Interval {
         Interval(
             index: index,
@@ -310,7 +311,7 @@ public enum PlanFlattener {
         setCount: Int,
         blockRound: Int,
         blockRoundCount: Int,
-        block: PlanBlock
+        block: WorkoutBlock
     ) -> Interval {
         Interval(
             index: index,

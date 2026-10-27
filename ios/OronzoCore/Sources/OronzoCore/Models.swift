@@ -14,7 +14,7 @@ public enum StepMode: String, Codable, Sendable {
 
 /// How hard a timed step is meant to be — the effort, where `duration` is the extent.
 ///
-/// Three words, and three only: `plan_steps.intensity` carries a check constraint on the same
+/// Three words, and three only: `workout_steps.intensity` carries a check constraint on the same
 /// three, so a fourth cannot exist in the database and every surface can switch on this
 /// exhaustively rather than guessing at a string. Optional everywhere: a strength hold is just a
 /// hold, and the builder only offers it for a timed step.
@@ -33,19 +33,19 @@ public enum Intensity: String, Codable, Sendable, CaseIterable {
 /// A step is an **exercise**, always. Rest is not a kind of step: it comes from
 /// `restAfter` below, or from a block's `restBetweenRounds`. (`StepKind` still exists and is
 /// used by `Interval` — the execution stream really does contain rests, emitted between
-/// sets. It is the *plan* that no longer pretends they are steps.)
-public struct PlanStep: Codable, Equatable, Sendable {
-    /// The `plan_steps` row this step came from, when it came from the database.
+/// sets. It is the *workout* that no longer pretends they are steps.)
+public struct WorkoutStep: Codable, Equatable, Sendable {
+    /// The `workout_steps` row this step came from, when it came from the database.
     ///
-    /// Optional because a step can be built in code — `DemoPlan`, and every test fixture — with no
+    /// Optional because a step can be built in code — `DemoWorkout`, and every test fixture — with no
     /// row behind it. It is the only identity that survives flattening far enough to write back to:
-    /// `exerciseID` is not it, since one plan can prescribe the same exercise twice at different
+    /// `exerciseID` is not it, since one workout can prescribe the same exercise twice at different
     /// loads. See `Interval.stepID`.
     ///
-    /// **Not stable across a save.** `save_plan` deletes and re-inserts the whole tree, so every
+    /// **Not stable across a save.** `save_workout` deletes and re-inserts the whole tree, so every
     /// step id is minted anew each time the web builder saves — which is why a session holds this
     /// only for as long as it is running, and why the write it makes checks that the row was
-    /// actually there. See `PlanRepository.updateStepLoad`.
+    /// actually there. See `TrainingRepository.updateStepLoad`.
     public var id: UUID?
     public var exerciseID: UUID?
     public var label: String?
@@ -58,19 +58,19 @@ public struct PlanStep: Codable, Equatable, Sendable {
     public var reps: Int?
     public var targetWeightKg: Double?
     /// Rest after EACH set of this step, including the final one, so an exercise's rest
-    /// carries you into the next exercise. See `PlanFlattener`.
+    /// carries you into the next exercise. See `WorkoutFlattener`.
     public var restAfter: TimeInterval?
     /// How hard this step is meant to be, for a timed one. Nil means nobody said.
     public var intensity: Intensity?
     /// A "Get in position" interval of this many seconds before each set — and before each side
     /// of a two-sided exercise. Nil means none, which is what an untimed step always has.
     ///
-    /// **Opt-in, and it is the plan's decision rather than a rule of the flattener**, because a
+    /// **Opt-in, and it is the workout's decision rather than a rule of the flattener**, because a
     /// timed step is not always work: the seeded HIIT blocks prescribe their recoveries as timed
     /// steps too ("Easy — 40 sec"), and nothing in the model tells those apart from a hold.
     ///
     /// A duration rather than a flag so that a per-step value needs no second migration; the
-    /// builder offers five seconds and nothing else. See `PlanFlattener`.
+    /// builder offers five seconds and nothing else. See `WorkoutFlattener`.
     public var prepareSeconds: TimeInterval?
 
     public init(
@@ -105,21 +105,16 @@ public struct PlanStep: Codable, Equatable, Sendable {
     public var repsDisplay: String? {
         mode == .time ? nil : MeasurementFormat.reps(reps)
     }
-
-    /// "20 kg", or nil when no load is prescribed.
-    public var weightDisplay: String? {
-        MeasurementFormat.weight(targetWeightKg)
-    }
 }
 
-public struct PlanBlock: Codable, Equatable, Sendable {
+public struct WorkoutBlock: Codable, Equatable, Sendable {
     public var name: String?
     public var rounds: Int
     /// Rest between rounds only — *not* after the final round.
     public var restBetweenRounds: TimeInterval?
-    public var steps: [PlanStep]
+    public var steps: [WorkoutStep]
 
-    public init(name: String? = nil, rounds: Int = 1, restBetweenRounds: TimeInterval? = nil, steps: [PlanStep] = []) {
+    public init(name: String? = nil, rounds: Int = 1, restBetweenRounds: TimeInterval? = nil, steps: [WorkoutStep] = []) {
         self.name = name
         self.rounds = rounds
         self.restBetweenRounds = restBetweenRounds
@@ -127,27 +122,70 @@ public struct PlanBlock: Codable, Equatable, Sendable {
     }
 }
 
-public struct Plan: Codable, Equatable, Identifiable, Sendable {
+/// When a workout is best done, as a wall-clock `HH:MM`. No date, no timezone, no reminder.
+///
+/// Optional throughout: nil means "Anytime", and sorts after every real time. The database
+/// column is `time without time zone`, which PostgREST serialises as `"07:00:00"`; the builder
+/// sends `"07:00"`. Both parse here, and the whole value is what both clients sort by — a
+/// string comparison would be a second, disagreeing rule.
+public struct PreferredTime: Codable, Hashable, Comparable, Sendable {
+    public let hour: Int
+    public let minute: Int
+
+    public init(hour: Int, minute: Int) {
+        self.hour = hour
+        self.minute = minute
+    }
+
+    public init?(postgres: String) {
+        let parts = postgres.split(separator: ":", omittingEmptySubsequences: false)
+        guard parts.count >= 2,
+              let hour = Int(parts[0]),
+              let minute = Int(parts[1]),
+              (0...23).contains(hour),
+              (0...59).contains(minute)
+        else { return nil }
+        self.init(hour: hour, minute: minute)
+    }
+
+    public static func < (lhs: PreferredTime, rhs: PreferredTime) -> Bool {
+        (lhs.hour, lhs.minute) < (rhs.hour, rhs.minute)
+    }
+
+    public var display: String {
+        String(format: "%02d:%02d", hour, minute)
+    }
+}
+
+public struct Workout: Codable, Equatable, Identifiable, Sendable {
     public var id: UUID
     public var name: String
-    public var blocks: [PlanBlock]
+    /// Nil means "Anytime"; optional so a cache written before `0018` still decodes.
+    public var preferredTime: PreferredTime?
+    public var blocks: [WorkoutBlock]
 
-    public init(id: UUID = UUID(), name: String, blocks: [PlanBlock] = []) {
+    public init(
+        id: UUID = UUID(),
+        name: String,
+        preferredTime: PreferredTime? = nil,
+        blocks: [WorkoutBlock] = []
+    ) {
         self.id = id
         self.name = name
+        self.preferredTime = preferredTime
         self.blocks = blocks
     }
 }
 
-/// What the flattener and the plan summary need to know about an exercise.
+/// What the flattener and the workout summary need to know about an exercise.
 ///
-/// Deliberately not the whole exercise. A `PlanStep` snapshots its own mode, target and duration
-/// when the exercise is picked, which is why changing those per plan does not touch the exercise.
+/// Deliberately not the whole exercise. A `WorkoutStep` snapshots its own mode, target and duration
+/// when the exercise is picked, which is why changing those per workout does not touch the exercise.
 /// These three are the exception: they are read *while flattening*, so they have to be handed in
 /// rather than frozen into the step.
 public struct ExerciseInfo: Codable, Equatable, Sendable {
     public let name: String
-    /// Performed once per side — left, then right. See `PlanFlattener.sideSuffixes`.
+    /// Performed once per side — left, then right. See `WorkoutFlattener.sideSuffixes`.
     public let hasTwoSides: Bool
     /// Performed on both sides *alternately*, inside one interval.
     ///
@@ -159,7 +197,7 @@ public struct ExerciseInfo: Codable, Equatable, Sendable {
     ///
     /// **It also changes what the step's rep count means.** Two-sided reads "8 reps" as eight
     /// *each*; alternating reads "20 reps" as twenty *altogether* — the interval is emitted once,
-    /// so `PlanSummary` counts it once. That asymmetry is the easiest thing here to get wrong.
+    /// so `WorkoutSummary` counts it once. That asymmetry is the easiest thing here to get wrong.
     public let alternatesSides: Bool
 
     public init(name: String, hasTwoSides: Bool = false, alternatesSides: Bool = false) {
@@ -192,13 +230,13 @@ public struct Interval: Codable, Equatable, Sendable, Identifiable {
     public let blockRoundCount: Int
     public let blockName: String?
     public let exerciseID: UUID?
-    /// The `plan_steps` row this interval came from, when it came from one — the identity the
+    /// The `workout_steps` row this interval came from, when it came from one — the identity the
     /// runner writes a load adjustment back through.
     ///
     /// **Why it is here and not in a table beside the session.** `SessionRecord` carries the
     /// interval list and nothing else, so a side-map in the controller would be lost the moment the
     /// app relaunched and a resumed workout would be the one you could not adjust. Optional
-    /// because the rests below have no step, because `PlanStep.id` is optional, and — the same rule
+    /// because the rests below have no step, because `WorkoutStep.id` is optional, and — the same rule
     /// every field of this type follows — because a snapshot or a record written by an older build
     /// has to decode. See `intensity` for the full statement of that rule.
     public let stepID: UUID?
@@ -217,6 +255,11 @@ public struct Interval: Codable, Equatable, Sendable, Identifiable {
     /// A timed interval advances on its own; a rep interval waits for the user.
     public var advancesAutomatically: Bool { duration != nil }
 
+    /// Whether this is the synthetic "Get in position" interval a step's `prepareSeconds` asks
+    /// for. Its name is the only mark it carries — see `WorkoutFlattener.prepareLabel` — and this
+    /// is the one place that spelling is read outside the flattener.
+    public var isPrepare: Bool { name == WorkoutFlattener.prepareLabel }
+
     public init(
         index: Int,
         kind: StepKind,
@@ -233,12 +276,12 @@ public struct Interval: Codable, Equatable, Sendable, Identifiable {
         exerciseID: UUID?,
         // Defaulted for the same reason `intensity` is: the fixtures in the tests hand-build
         // intervals to exercise the engine and the watch projection, and none of them is about
-        // which plan row an interval came from. `PlanFlattener` and `withLoad` are the production
+        // which workout row an interval came from. `WorkoutFlattener` and `withLoad` are the production
         // call sites, which is why `withLoad` sitting beside this declaration matters.
         stepID: UUID? = nil,
         // The one defaulted parameter: twelve fixtures hand-build intervals to test the engine and
-        // the watch projection, and none of them is about effort. `PlanFlattener` and `withLoad`
-        // are the production call sites, and `PlanFlattenerTests` pins that the flattener passes
+        // the watch projection, and none of them is about effort. `WorkoutFlattener` and `withLoad`
+        // are the production call sites, and `WorkoutFlattenerTests` pins that the flattener passes
         // this through.
         intensity: Intensity? = nil
     ) {
@@ -336,7 +379,7 @@ public struct Interval: Codable, Equatable, Sendable, Identifiable {
     }
 }
 
-/// One implementation, shared by `PlanStep` (the prescription) and `Interval` (what actually
+/// One implementation, shared by `WorkoutStep` (the prescription) and `Interval` (what actually
 /// runs), so the two cannot drift apart in how they read.
 public enum MeasurementFormat {
 

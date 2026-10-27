@@ -129,9 +129,9 @@ final class SessionScheduleTests: XCTestCase {
     ///
     /// Kept as a test rather than a claim: if a later change reintroduces polling, this fails.
     func testAFifteenMinuteSessionWakesAboutEightyTimesInsteadOfThreeThousandSixHundred() {
-        let intervals = PlanFlattener.flatten(Plan(name: "P", blocks: [
-            PlanBlock(name: "Main", steps: (0..<10).map { i in
-                PlanStep(label: "Set \(i + 1)", mode: .time, duration: 60, restAfter: 30)
+        let intervals = WorkoutFlattener.flatten(Workout(name: "P", blocks: [
+            WorkoutBlock(name: "Main", steps: (0..<10).map { i in
+                WorkoutStep(label: "Set \(i + 1)", mode: .time, duration: 60, restAfter: 30)
             }),
         ]), exercises: [:])
         let duration = intervals.compactMap(\.duration).reduce(0, +)

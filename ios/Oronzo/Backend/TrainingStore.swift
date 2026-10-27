@@ -2,26 +2,28 @@ import Foundation
 import OronzoCore
 import SwiftUI
 
-/// Holds the plans the app is showing, with a disk cache so a workout can be started
-/// without a network — which is the normal case in a basement gym.
+/// Holds the workouts and weekly plans the app is showing, with a disk cache so a workout can be
+/// started without a network — which is the normal case in a basement gym.
 @MainActor
 @Observable
-final class PlanStore {
+final class TrainingStore {
 
-    private(set) var plans: [Plan] = []
+    private(set) var workouts: [Workout] = []
+    private(set) var weekPlans: [WeekPlan] = []
     /// What flattening resolves against: each exercise's name, whether it is done per side, and
     /// whether it is done alternatingly.
     private(set) var exercises: [UUID: ExerciseInfo] = [:]
     private(set) var isLoading = false
     private(set) var error: String?
 
-    private let repository = PlanRepository()
-    private let cache = PlanCache()
+    private let repository = TrainingRepository()
+    private let cache = TrainingCache()
 
     /// Load the cache immediately, then refresh from the network in the background.
     func load() async {
-        if plans.isEmpty, let cached = cache.load() {
-            plans = cached.plans
+        if workouts.isEmpty, let cached = cache.load() {
+            workouts = cached.plans
+            weekPlans = cached.weekPlans ?? []
             exercises = Self.exerciseInfo(names: cached.exerciseNames,
                                           twoSided: cached.twoSidedExerciseIDs,
                                           alternating: cached.alternatingExerciseIDs ?? [])
@@ -30,7 +32,7 @@ final class PlanStore {
         await refresh()
     }
 
-    /// The in-memory map and the cached fields are two shapes of one thing — see `CachedPlanList`
+    /// The in-memory map and the cached fields are two shapes of one thing — see `CachedTraining`
     /// for why they are not the same shape, and for why one id list is required there and the
     /// other is not.
     private static func exerciseInfo(
@@ -64,7 +66,7 @@ final class PlanStore {
             // request that arrives holding a just-expired token fails — and what it fails *with*
             // is the "weird JWT" text: "invalid JWT: unable to parse or verify signature, token
             // is unverifiable…". That is a renewable session reading as a broken one, which is
-            // what made the plan list fall back to the cache so often.
+            // what made the workout list fall back to the cache so often.
             //
             // Gated on the diagnosis rather than run unconditionally: `refreshSession()` rotates
             // the refresh token, and rotating it after, say, a `400` from a column that does not
@@ -89,16 +91,19 @@ final class PlanStore {
     /// The fetch itself, so it can be attempted twice without repeating the assignments.
     /// (`load()` above is the cache entry point — this is the network half of a refresh.)
     private func fetchLatest() async throws {
-        async let plans = repository.fetchPlans()
+        async let workouts = repository.fetchWorkouts()
+        async let weekPlans = repository.fetchWeekPlans()
         async let exercises = repository.fetchExercises()
 
-        let loadedPlans = try await plans
+        let loadedWorkouts = try await workouts
+        let loadedWeekPlans = try await weekPlans
         let loadedExercises = try await exercises
 
-        self.plans = loadedPlans
+        self.workouts = loadedWorkouts
+        self.weekPlans = loadedWeekPlans
         self.exercises = loadedExercises
         invalidateIntervals()
-        cache.save(plans: loadedPlans, exercises: loadedExercises)
+        cache.save(workouts: loadedWorkouts, weekPlans: loadedWeekPlans, exercises: loadedExercises)
     }
 
     /// True when the session was renewed, so another attempt is worth making.
@@ -111,7 +116,7 @@ final class PlanStore {
             try await Backend.client.auth.refreshSession()
             return true
         } catch {
-            Log.debug("plan refresh: could not renew the session: \(error)")
+            Log.debug("training refresh: could not renew the session: \(error)")
             return false
         }
     }
@@ -135,35 +140,35 @@ final class PlanStore {
     /// that needs renewing. The original goes to the debug log, where it is worth having.
     private static func readable(_ error: Error, aboutTheSession: Bool) -> String {
         let raw = error.localizedDescription
-        Log.debug("plan refresh failed: \(raw)")
+        Log.debug("training refresh failed: \(raw)")
 
         return aboutTheSession
             ? "Your session has expired. Sign out and sign in again to renew it."
             : raw
     }
 
-    /// The flattened intervals for a plan — **cached, because this is called from view bodies.**
+    /// The flattened intervals for a workout — **cached, because this is called from view bodies.**
     ///
-    /// It used to be a bare `PlanFlattener.flatten` on every call, and the callers are not
-    /// occasional: `PlanListView` asks once per row per redraw, and `PlanDetailView` asks from two
+    /// It used to be a bare `WorkoutFlattener.flatten` on every call, and the callers are not
+    /// occasional: `TodayView` asks once per row per redraw, and `WorkoutDetailView` asks from two
     /// computed properties that four places in one `body` read. Flattening allocates a fresh
-    /// `[Interval]` of size blocks × rounds × sets, so a list of eight plans was re-deriving the
+    /// `[Interval]` of size blocks × rounds × sets, so a list of eight workouts was re-deriving the
     /// same eight arrays every frame, and the detail screen four times per frame.
     ///
-    /// Keyed by plan id and thrown away whenever the plans or the exercise info are replaced,
-    /// which is the only thing that can change the answer — a plan is a value, and the exercises
+    /// Keyed by workout id and thrown away whenever the workouts or the exercise info are replaced,
+    /// which is the only thing that can change the answer — a workout is a value, and the exercises
     /// are what flattening resolves against, name and side count alike.
-    func intervals(for plan: Plan) -> [Interval] {
-        if let cached = intervalCache[plan.id] { return cached }
-        let intervals = PlanFlattener.flatten(plan, exercises: exercises)
-        intervalCache[plan.id] = intervals
+    func intervals(for workout: Workout) -> [Interval] {
+        if let cached = intervalCache[workout.id] { return cached }
+        let intervals = WorkoutFlattener.flatten(workout, exercises: exercises)
+        intervalCache[workout.id] = intervals
         return intervals
     }
 
     private var intervalCache: [UUID: [Interval]] = [:]
 
-    /// Any change to the plans or the exercises invalidates every entry: both are inputs to
-    /// flattening, so a refresh that only replaced `exercises` would otherwise leave every plan
+    /// Any change to the workouts or the exercises invalidates every entry: both are inputs to
+    /// flattening, so a refresh that only replaced `exercises` would otherwise leave every workout
     /// running its old names and its old interval count.
     private func invalidateIntervals() {
         intervalCache.removeAll(keepingCapacity: true)
@@ -171,46 +176,46 @@ final class PlanStore {
 
     // MARK: - Following a load adjustment
 
-    /// Moves the app's own copy of a plan to match a load the runner has just written.
+    /// Moves the app's own copy of a workout to match a load the runner has just written.
     ///
-    /// **Without this the store contradicts the server.** `plans` is what `SessionHost.begin`
-    /// flattens from and what the plan list and detail screen draw, and it is cached to disk — so
-    /// an adjustment that reached the database and not this array would come back the next time
-    /// the plan was started, in the same app run, with the old weight. A round trip would fix it
+    /// **Without this the store contradicts the server.** `workouts` is what `SessionHost.begin`
+    /// flattens from and what the Today screen and detail screen draw, and it is cached to disk —
+    /// so an adjustment that reached the database and not this array would come back the next time
+    /// the workout was started, in the same app run, with the old weight. A round trip would fix it
     /// too, but the write has already happened: re-fetching here would only add a race in which a
     /// stale read can win.
     ///
     /// Only the step named is touched, and only its load — the same blast radius the write has.
     func applyLoadEdit(_ edit: StepLoadEdit) {
         var changed = false
-        let updated = plans.map { plan in
-            var plan = plan
-            for blockIndex in plan.blocks.indices {
-                for stepIndex in plan.blocks[blockIndex].steps.indices
-                where plan.blocks[blockIndex].steps[stepIndex].id == edit.stepID {
-                    plan.blocks[blockIndex].steps[stepIndex].targetWeightKg = edit.weightKg
-                    plan.blocks[blockIndex].steps[stepIndex].intensity = edit.intensity
+        let updated = workouts.map { workout in
+            var workout = workout
+            for blockIndex in workout.blocks.indices {
+                for stepIndex in workout.blocks[blockIndex].steps.indices
+                where workout.blocks[blockIndex].steps[stepIndex].id == edit.stepID {
+                    workout.blocks[blockIndex].steps[stepIndex].targetWeightKg = edit.weightKg
+                    workout.blocks[blockIndex].steps[stepIndex].intensity = edit.intensity
                     changed = true
                 }
             }
-            return plan
+            return workout
         }
 
         guard changed else { return }
-        plans = updated
-        // The flattened intervals of that plan are now wrong — including the ones of the step
+        workouts = updated
+        // The flattened intervals of that workout are now wrong — including the ones of the step
         // itself, which is what the arrows are about to be drawn from.
         invalidateIntervals()
-        cache.save(plans: plans, exercises: exercises)
+        cache.save(workouts: workouts, weekPlans: weekPlans, exercises: exercises)
     }
 }
 
 #if DEBUG
-extension PlanStore {
+extension TrainingStore {
     /// A store holding only exercise info, for the launch-argument entry points that bypass the
     /// backend. Lives here because `exercises` is `private(set)`.
-    static func seeded(_ exercises: [UUID: ExerciseInfo]) -> PlanStore {
-        let store = PlanStore()
+    static func seeded(_ exercises: [UUID: ExerciseInfo]) -> TrainingStore {
+        let store = TrainingStore()
         store.exercises = exercises
         return store
     }
@@ -232,7 +237,7 @@ extension PlanStore {
 /// optional property — and an older file would then have kept working, with every exercise
 /// reading as one-sided. That is a workout that quietly runs half its sets: the phone would show
 /// three intervals where the builder showed six, and nothing anywhere would say why. A file that
-/// cannot be read is discarded instead, so the plan list is empty until one fetch succeeds —
+/// cannot be read is discarded instead, so the workout list is empty until one fetch succeeds —
 /// visible, and recoverable by going online. See `docs/known-issues.md` §3 for what that empty
 /// state currently says, which is a known and separate problem.
 ///
@@ -242,19 +247,28 @@ extension PlanStore {
 /// flattens it into the right number of intervals, and all that is lost is the `(alt)` on the
 /// name. Per `AGENTS.md`, a field whose absence costs a display name may be optional; one whose
 /// absence changes the workout may not. Keeping it optional is also what stops every device
-/// emptying its plan list once, which is what a required key added here would do.
+/// emptying its workout list once, which is what a required key added here would do.
 ///
-/// That reasoning holds only while `PlanFlattener.sideSuffixes` never reads the alternating flag —
-/// `PlanFlattenerTests.testAnAlternatingExerciseIsNotTwoSided` is the assertion that it does not.
-private struct CachedPlanList: Codable {
-    let plans: [Plan]
+/// That reasoning holds only while `WorkoutFlattener.sideSuffixes` never reads the alternating
+/// flag — `WorkoutFlattenerTests.testAnAlternatingExerciseIsNotTwoSided` is the assertion that it
+/// does not.
+///
+/// **The top-level key `plans` is historical and stays.** The values are now `Workout`s, but a
+/// file written before `0018` is still a valid workout list (same `id`/`name`/`blocks` keys), and
+/// `preferredTime` is optional, so renaming the key would throw away every device's offline copy
+/// for nothing. `weekPlans` is new and optional, so the same file decodes on both sides of the
+/// update.
+private struct CachedTraining: Codable {
+    let plans: [Workout]
     let exerciseNames: [UUID: String]
     let twoSidedExerciseIDs: [UUID]
     /// Absent from every file written before `0016`, which is the case it exists to tolerate.
     let alternatingExerciseIDs: [UUID]?
+    /// Absent from every file written before `0018`; Today falls back to All Workouts offline.
+    let weekPlans: [WeekPlan]?
 }
 
-private struct PlanCache {
+private struct TrainingCache {
     private let url: URL? = {
         guard let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
         else { return nil }
@@ -262,25 +276,25 @@ private struct PlanCache {
         return directory.appendingPathComponent("plan-cache.json")
     }()
 
-    func load() -> CachedPlanList? {
+    func load() -> CachedTraining? {
         guard let url, let data = try? Data(contentsOf: url) else { return nil }
         do {
-            return try JSONDecoder().decode(CachedPlanList.self, from: data)
+            return try JSONDecoder().decode(CachedTraining.self, from: data)
         } catch {
             // **Logged, and it is the only place in this codebase that used to swallow a failure
             // without saying so** (`docs/known-issues.md` §4). The cache is unversioned, so a
             // renamed `Codable` property invalidates every entry and this is the only trace it
             // leaves. A `nil` here is indistinguishable from "no cache yet" — which reads on screen
-            // as an empty plan list, and offline that is the difference between a workout and none.
+            // as an empty workout list, and offline that is the difference between a workout and none.
             Log.debug("plan cache: could not read \(url.lastPathComponent): \(error)")
             return nil
         }
     }
 
-    func save(plans: [Plan], exercises: [UUID: ExerciseInfo]) {
+    func save(workouts: [Workout], weekPlans: [WeekPlan], exercises: [UUID: ExerciseInfo]) {
         guard let url else { return }
-        let payload = CachedPlanList(
-            plans: plans,
+        let payload = CachedTraining(
+            plans: workouts,
             exerciseNames: exercises.mapValues(\.name),
             // Sorted so the file is the same bytes for the same data rather than following
             // dictionary order, which is worth having when the only way to read it is a text
@@ -292,7 +306,8 @@ private struct PlanCache {
             alternatingExerciseIDs: exercises
                 .filter { $0.value.alternatesSides }
                 .keys
-                .sorted { $0.uuidString < $1.uuidString }
+                .sorted { $0.uuidString < $1.uuidString },
+            weekPlans: weekPlans
         )
         guard let data = try? JSONEncoder().encode(payload) else { return }
         try? data.write(to: url, options: .atomic)

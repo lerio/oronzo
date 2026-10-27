@@ -11,7 +11,7 @@
 
   "vars": {
     // The project ref is not a secret — it is in the JavaScript that every browser running
-    // the plan builder downloads. The key is, and is set separately:
+    // the workout builder downloads. The key is, and is set separately:
     //   npx wrangler secret put SUPABASE_PUBLISHABLE_KEY
     "SUPABASE_PROJECT_REF": "qcgbowcngyysnlcoxcvv"
   },

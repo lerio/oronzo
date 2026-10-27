@@ -17,13 +17,13 @@ final class SessionScreenTests: XCTestCase {
 
     /// One timed exercise, one rest, one rep exercise — the three primaries.
     private func mixedIntervals() -> [Interval] {
-        let plan = Plan(name: "P", blocks: [
-            PlanBlock(name: "Main", steps: [
-                PlanStep(label: "Row", mode: .time, duration: 60, restAfter: 30),
-                PlanStep(label: "Bench Press", mode: .reps, reps: 8),
+        let workout = Workout(name: "P", blocks: [
+            WorkoutBlock(name: "Main", steps: [
+                WorkoutStep(label: "Row", mode: .time, duration: 60, restAfter: 30),
+                WorkoutStep(label: "Bench Press", mode: .reps, reps: 8),
             ]),
         ])
-        return PlanFlattener.flatten(plan, exercises: [:])
+        return WorkoutFlattener.flatten(workout, exercises: [:])
     }
 
     // MARK: - The state word
@@ -73,7 +73,7 @@ final class SessionScreenTests: XCTestCase {
         }
     }
 
-    func testFinishedShowsDoneWithTotalElapsedAndThePlanName() {
+    func testFinishedShowsDoneWithTotalElapsedAndTheWorkoutName() {
         let screen = SessionPresentation.screen(
             intervals: mixedIntervals(), index: 2,
             end: nil, isPaused: false, isFinished: true,
@@ -160,6 +160,34 @@ final class SessionScreenTests: XCTestCase {
         XCTAssertEqual(screen?.next, .exercise("Break", weight: nil))
     }
 
+    /// A "Get in position" prepare is skipped: the next line names the exercise it prepares for.
+    ///
+    /// A prepare is emitted before every set of a timed step, so without this the line you read
+    /// for the whole of every rest says `NEXT · Get in position` — the preamble, never the
+    /// exercise and never its load.
+    func testTheNextLineSkipsAComingPrepare() {
+        let workout = Workout(name: "P", blocks: [
+            WorkoutBlock(steps: [
+                WorkoutStep(label: "Plank", sets: 2, mode: .time, duration: 30,
+                         targetWeightKg: 10, restAfter: 15, prepareSeconds: 5),
+            ]),
+        ])
+        let intervals = WorkoutFlattener.flatten(workout, exercises: [:])
+        XCTAssertEqual(
+            intervals.map(\.name),
+            ["Get in position", "Plank", "Break", "Get in position", "Plank", "Break"]
+        )
+
+        let screen = SessionPresentation.screen(
+            intervals: intervals, index: 2,   // the break before the second set
+            end: t0.addingTimeInterval(15), isPaused: false, isFinished: false,
+            planName: "P", startedAt: t0, now: t0
+        )
+
+        XCTAssertEqual(screen?.next, .exercise("Plank", weight: "10 kg"))
+        XCTAssertEqual(screen?.next?.label, "NEXT · Plank · 10 kg")
+    }
+
     /// `LAST` answers "what's next" when the answer is "nothing". Knowing the final interval is
     /// the final one is the most motivating fact the watch can carry, so it gets the slot
     /// rather than a blank.
@@ -179,10 +207,10 @@ final class SessionScreenTests: XCTestCase {
     /// knowing the last interval is the last one is the most motivating fact this screen carries,
     /// and a blank slot would swallow it.
     func testTheFinalRestStillShowsLast() {
-        let plan = Plan(name: "P", blocks: [
-            PlanBlock(steps: [PlanStep(label: "Row", mode: .time, duration: 60, restAfter: 30)]),
+        let workout = Workout(name: "P", blocks: [
+            WorkoutBlock(steps: [WorkoutStep(label: "Row", mode: .time, duration: 60, restAfter: 30)]),
         ])
-        let intervals = PlanFlattener.flatten(plan, exercises: [:])   // [Row, Break]
+        let intervals = WorkoutFlattener.flatten(workout, exercises: [:])   // [Row, Break]
         let screen = SessionPresentation.screen(
             intervals: intervals, index: 1,
             end: t0.addingTimeInterval(30), isPaused: false, isFinished: false,
@@ -200,11 +228,11 @@ final class SessionScreenTests: XCTestCase {
     /// lifting and the load coming up are *different numbers*, which is what pins the next line
     /// to the right one.
     private func twoWeightedExercises() -> [Interval] {
-        PlanFlattener.flatten(Plan(name: "P", blocks: [
-            PlanBlock(steps: [
-                PlanStep(label: "Bench Press", mode: .reps, reps: 8,
+        WorkoutFlattener.flatten(Workout(name: "P", blocks: [
+            WorkoutBlock(steps: [
+                WorkoutStep(label: "Bench Press", mode: .reps, reps: 8,
                          targetWeightKg: 20, restAfter: 30),
-                PlanStep(label: "Lat Pulldown", mode: .reps, reps: 10, targetWeightKg: 40),
+                WorkoutStep(label: "Lat Pulldown", mode: .reps, reps: 10, targetWeightKg: 40),
             ]),
         ]), exercises: [:])
     }
@@ -263,13 +291,13 @@ final class SessionScreenTests: XCTestCase {
     /// punctuation for a small screen, not speech. It has to be spoken at all because both
     /// runners hide this line behind the composed label.
     func testTheUpcomingLoadIsSpokenOnTheNextLine() {
-        let plan = Plan(name: "P", blocks: [
-            PlanBlock(steps: [
-                PlanStep(label: "Row", mode: .time, duration: 60, restAfter: 30),
-                PlanStep(label: "Bench Press", mode: .reps, reps: 8, targetWeightKg: 20),
+        let workout = Workout(name: "P", blocks: [
+            WorkoutBlock(steps: [
+                WorkoutStep(label: "Row", mode: .time, duration: 60, restAfter: 30),
+                WorkoutStep(label: "Bench Press", mode: .reps, reps: 8, targetWeightKg: 20),
             ]),
         ])
-        let intervals = PlanFlattener.flatten(plan, exercises: [:])
+        let intervals = WorkoutFlattener.flatten(workout, exercises: [:])
 
         let screen = SessionPresentation.screen(
             intervals: intervals, index: 1,          // the rest before the weighted bench
@@ -323,7 +351,7 @@ final class SessionScreenTests: XCTestCase {
     /// one you are in, so neither is drawn. `PAUSED` is carried by the **blinking timer** instead
     /// — a badge is a line that appears and pushes the title and the clock down as it does, and
     /// this screen has just spent a pass getting rid of exactly that movement. `DONE` is the one
-    /// left: the name slot has become the plan name and no clock is running to blink.
+    /// left: the name slot has become the workout name and no clock is running to blink.
     func testOnlyDoneIsDrawnAsAWord() {
         XCTAssertFalse(SessionScreen.StateWord.work.showsBadge)
         XCTAssertFalse(SessionScreen.StateWord.rest.showsBadge)
@@ -336,13 +364,13 @@ final class SessionScreenTests: XCTestCase {
     /// A weighted set carries its load, and a rest does not — the weight belongs to the exercise,
     /// so the interval you rest between two weighted sets of the same exercise has none.
     func testAWeightedExerciseCarriesItsLoadAndARestDoesNot() {
-        let plan = Plan(name: "P", blocks: [
-            PlanBlock(steps: [
-                PlanStep(label: "Bench Press", mode: .reps, reps: 8,
+        let workout = Workout(name: "P", blocks: [
+            WorkoutBlock(steps: [
+                WorkoutStep(label: "Bench Press", mode: .reps, reps: 8,
                          targetWeightKg: 20, restAfter: 30),
             ]),
         ])
-        let intervals = PlanFlattener.flatten(plan, exercises: [:])   // [Bench, Break]
+        let intervals = WorkoutFlattener.flatten(workout, exercises: [:])   // [Bench, Break]
 
         let bench = SessionPresentation.screen(
             intervals: intervals, index: 0, end: nil,
@@ -363,13 +391,13 @@ final class SessionScreenTests: XCTestCase {
     /// before the progress. Both surfaces now hide this text behind the composed label, so a
     /// weight left out of the announcement would be one VoiceOver could not reach at all.
     func testTheLoadIsAnnouncedAfterThePrimary() {
-        let plan = Plan(name: "P", blocks: [
-            PlanBlock(steps: [
-                PlanStep(label: "Bench Press", sets: 4, mode: .reps, reps: 8,
+        let workout = Workout(name: "P", blocks: [
+            WorkoutBlock(steps: [
+                WorkoutStep(label: "Bench Press", sets: 4, mode: .reps, reps: 8,
                          targetWeightKg: 20, restAfter: 30),
             ]),
         ])
-        let intervals = PlanFlattener.flatten(plan, exercises: [:])
+        let intervals = WorkoutFlattener.flatten(workout, exercises: [:])
 
         let screen = SessionPresentation.screen(
             intervals: intervals, index: 0, end: nil,
@@ -518,13 +546,13 @@ final class SessionScreenTests: XCTestCase {
     }
 
     func testTheAnnouncementSpeaksStateNameTimeContextAndNext() {
-        let plan = Plan(name: "P", blocks: [
-            PlanBlock(steps: [
-                PlanStep(label: "Bench Press", sets: 4, mode: .time,
+        let workout = Workout(name: "P", blocks: [
+            WorkoutBlock(steps: [
+                WorkoutStep(label: "Bench Press", sets: 4, mode: .time,
                          duration: 60, restAfter: 30),
             ]),
         ])
-        let intervals = PlanFlattener.flatten(plan, exercises: [:])   // set 1, rest, set 2, ...
+        let intervals = WorkoutFlattener.flatten(workout, exercises: [:])   // set 1, rest, set 2, ...
         let screen = SessionPresentation.screen(
             intervals: intervals, index: 0,
             end: t0.addingTimeInterval(42), isPaused: false, isFinished: false,
@@ -540,12 +568,12 @@ final class SessionScreenTests: XCTestCase {
     /// The spoken line is the drawn line where the drawn line is about progress — the same place
     /// in the same order, so a VoiceOver user and a glance at the wrist are told the same thing.
     func testTheAnnouncementSpeaksTheEffort() {
-        let plan = Plan(name: "P", blocks: [
-            PlanBlock(name: "HIIT", rounds: 6, steps: [
-                PlanStep(label: "Burpee", mode: .time, duration: 20, intensity: .hard),
+        let workout = Workout(name: "P", blocks: [
+            WorkoutBlock(name: "HIIT", rounds: 6, steps: [
+                WorkoutStep(label: "Burpee", mode: .time, duration: 20, intensity: .hard),
             ]),
         ])
-        let intervals = PlanFlattener.flatten(plan, exercises: [:])
+        let intervals = WorkoutFlattener.flatten(workout, exercises: [:])
         let screen = SessionPresentation.screen(
             intervals: intervals, index: 0,
             end: t0.addingTimeInterval(14), isPaused: false, isFinished: false,
@@ -568,14 +596,14 @@ final class SessionScreenTests: XCTestCase {
         intensity: Intensity? = nil,
         step: UUID? = UUID()
     ) -> [Interval] {
-        let plan = Plan(name: "P", blocks: [
-            PlanBlock(name: "Main", steps: [
-                PlanStep(id: step, label: "Bench Press", sets: sets, mode: mode,
+        let workout = Workout(name: "P", blocks: [
+            WorkoutBlock(name: "Main", steps: [
+                WorkoutStep(id: step, label: "Bench Press", sets: sets, mode: mode,
                          duration: mode == .time ? 60 : nil, reps: mode == .reps ? 8 : nil,
                          targetWeightKg: weight, restAfter: 30, intensity: intensity),
             ]),
         ])
-        return PlanFlattener.flatten(plan, exercises: [:])
+        return WorkoutFlattener.flatten(workout, exercises: [:])
     }
 
     private func screenOf(_ intervals: [Interval], at index: Int, pending: StepLoadEdit? = nil) -> SessionScreen? {
@@ -598,7 +626,7 @@ final class SessionScreenTests: XCTestCase {
         XCTAssertEqual(screenOf(intervals, at: 0)?.weight, "20 kg")
     }
 
-    /// An effort-only step — the warm-up in the demo plan — offers the effort and no weight.
+    /// An effort-only step — the warm-up in the demo workout — offers the effort and no weight.
     func testAnEffortOnlyStepOffersItsEffort() {
         let adjust = screenOf(adjustablePlan(mode: .time, intensity: .low), at: 0)?.adjust
 
@@ -622,7 +650,7 @@ final class SessionScreenTests: XCTestCase {
         XCTAssertNil(screenOf(adjustablePlan(), at: 0)?.adjust)
     }
 
-    /// **No row, no arrows.** A step built in code — a fixture, or a plan off a cache written
+    /// **No row, no arrows.** A step built in code — a fixture, or a workout off a cache written
     /// before ids travelled with the intervals — has nowhere to save an adjustment to, so the
     /// control is not offered rather than being offered and failing. Compare the same step *with*
     /// an id, which does offer it.

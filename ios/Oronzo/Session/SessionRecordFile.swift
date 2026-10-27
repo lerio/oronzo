@@ -19,7 +19,7 @@ import OronzoCore
 /// context already taught, at a smaller scale. The file is a few kilobytes and it is written when
 /// the session changes, not on every tick.
 ///
-/// See `PlanCache` in `PlanStore.swift` for the same shape, and `docs/known-issues.md` §4 for why
+/// See `TrainingCache` in `TrainingStore.swift` for the same shape, and `docs/known-issues.md` §4 for why
 /// a decode failure here is logged rather than swallowed.
 @MainActor
 enum SessionRecordFile {

@@ -120,7 +120,7 @@ struct WatchSessionView: View {
             Text("No workout")
                 .font(.system(size: titleSize, weight: .semibold, design: .rounded))
                 .foregroundStyle(ColorRole.text.color(colorScheme))
-            Text("Start a plan on your iPhone")
+            Text("Start a workout on your iPhone")
                 .font(.system(size: captionSize))
                 .foregroundStyle(ColorRole.muted.color(colorScheme))
                 .multilineTextAlignment(.center)

@@ -2,7 +2,7 @@
 
 ## Where the tests are
 
-**All 290 tests live in `ios/OronzoCore/Tests/OronzoCoreTests/`.** Nothing else in the repository
+**All 304 tests live in `ios/OronzoCore/Tests/OronzoCoreTests/`.** Nothing else in the repository
 has a single automated test — not the iOS app target, not the watch app, not the web app.
 
 ```bash
@@ -11,13 +11,14 @@ cd ios/OronzoCore && swift test     # ~1 second, no simulator, no signing, no de
 
 | File | Tests | Covers |
 |---|---|---|
-| `PlanFlattenerTests.swift` | 47 | The flattening contract — sets, rounds, two-sided and alternating exercises, all three synthetic intervals, naming, formatting |
-| `SessionScreenTests.swift` | 45 | The presentation model both screens draw from — state words, `LAST`, what a rep interval shows |
+| `WorkoutFlattenerTests.swift` | 47 | The flattening contract — sets, rounds, two-sided and alternating exercises, all three synthetic intervals, naming, formatting |
+| `SessionScreenTests.swift` | 46 | The presentation model both screens draw from — state words, `LAST`, what a rep interval shows |
 | `ExecutionEngineTests.swift` | 31 | The session state machine — start/tick/pause/resume/advance/goBack/finish/abandon/snapshot |
 | `PressEchoTests.swift` | 22 | What the wrist shows between a press and the phone's answer — which presses it may echo, when the phone's word takes over, and that the echoed state is what `ExecutionEngine` itself would produce |
 | `HealthOwedLedgerTests.swift` | 21 | The Health retry policy — when a workout may be offered again, when the app stops, and the climbing version that keeps a second attempt from becoming a second workout |
-| `SessionRecordTests.swift` | 18 | The written-down session — the disk format, decode tolerance, what a restore refuses, and that a stale anchor cannot rewind |
-| `PlanSummaryTests.swift` | 17 | What the plan summary says about a plan, including the spoken meta line |
+| `SessionRecordTests.swift` | 19 | The written-down session — the disk format, its historical keys, decode tolerance, what a restore refuses, and that a stale anchor cannot rewind |
+| `WorkoutSummaryTests.swift` | 17 | What the workout summary says about a workout, including the spoken meta line |
+| `WeekScheduleTests.swift` | 12 | ISO weekday mapping, the same-day time/name/id order, preferred-time parsing, and cache tolerance for a workout without a time |
 | `LinkTests.swift` | 13 | The phone↔watch wire format — the control vocabulary, a whole snapshot, decode tolerance, and the version handshake |
 | `SessionScheduleTests.swift` | 14 | When a surface may next wake — the rule that replaced polling, and the wake counts that prove it |
 | `LoadAdjustmentTests.swift` | 11 | The runner's load arrows — what a nudge is, and which interval it may be applied to |
@@ -67,7 +68,7 @@ Be explicit about this rather than implying coverage that does not exist:
   under the same sync identifier and a greater version leaves one workout is Apple's documented
   behaviour, not something this repository has observed. (Signing the entitlement
   *can* be checked from a desk — `codesign -d --entitlements` on a device build — and was.)
-- **Every SwiftUI view.** No view has a test. `SessionRunner`, `PlanEditor`, `PlanListView` and
+- **Every SwiftUI view.** No view has a test. `SessionRunner`, `WorkoutEditor`, `TodayView` and
   friends are verified by looking at them.
 - **The entire web app.** There is no test framework in `web/package.json` — no Vitest, no Jest,
   no Playwright, no Testing Library. What exists instead is:
@@ -77,7 +78,7 @@ Be explicit about this rather than implying coverage that does not exist:
     `set-state-in-effect` in `ExercisePicker` that is a deliberate after-mount focus). Anything
     beyond those four is new.
 - **The hand-written select strings.** `tsc -b` checks the TypeScript type against the *declared*
-  type, not against the database. A column dropped from Postgres but still named in `PLAN_SELECT`
+  type, not against the database. A column dropped from Postgres but still named in `WORKOUT_SELECT`
   compiles cleanly and 400s at runtime on a device. Only `contract-auditor` or a real request
   catches that.
 
@@ -143,12 +144,12 @@ you just started.
 For the web app, screenshot it with headless Chrome. Arithmetic alone missed real CSS bugs twice
 on this project — a selector that never matched, and a placeholder clipped in a narrow field.
 
-**Dragging a plan is the one thing on this list that nothing here can check.** There is no web
+**Dragging a workout is the one thing on this list that nothing here can check.** There is no web
 test framework, and a headless screenshot cannot perform an HTML5 drag — the events are the whole
-feature, and `swift test` never sees the plans list. So the drag is verified by hand, and the
+feature, and `swift test` never sees the workouts list. So the drag is verified by hand, and the
 sequence matters because the order lives in the database rather than in the page. Step 1 is not
 optional and comes first for the reason `docs/runbook.md` gives: both clients order by a column
-that does not exist until it is applied, so until then the plan list is a `400`.
+that does not exist until it is applied, so until then the workout list is a `400`.
 
 1. Apply `0015` in the SQL Editor, then read the probe in `docs/runbook.md` — `0015` must be `200`
    where it was `400`.
@@ -156,12 +157,19 @@ that does not exist until it is applied, so until then the plan list is a `400`.
 3. `cd web && npm run dev`, drag a row, then **reload** — the order must survive, which is what
    proves the RPC ran rather than the array merely moving on screen.
 4. Drag a row and **drop it where it started** — no request should be sent at all.
-5. On the phone, **pull to refresh** the plans list. The order is read on fetch, so nothing about
+5. On the phone, **pull to refresh** the workouts list. The order is read on fetch, so nothing about
    it is live: there is no push channel, and a phone left showing an old order is a phone that has
    not refetched, not a phone that disagreed.
 
 Step 5 is the only one that proves the feature's actual claim — *"the same order in the iPhone
 app"* — and it needs the device. A simulator cannot get past sign-in without an account.
+
+**The week board's scheduling is in the same category, with one difference: there is no order to
+get wrong.** `swift test` pins `WeekSchedule`, and the web still has no test framework, so the
+grid and its `+` picker are hand-verified: add, move and remove an occurrence, reload, and confirm
+`plan_workouts` holds exactly those rows. Every action is one row, so a failure rolls back one
+occurrence rather than a week — which is the point of the row-level design, and is worth probing
+by deleting a row in the SQL editor and reloading.
 
 ## How to use this when something breaks
 

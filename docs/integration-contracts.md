@@ -5,37 +5,42 @@ they agree.** A change in one and not the others is the single most likely way t
 breaks, and it breaks *quietly* — the web preview flattens differently from the engine, so a
 workout reads one way when you build it and runs another way when you do it.
 
-Read this before changing anything about blocks, steps, sets, rounds, rest, or the plan/session
+Read this before changing anything about blocks, steps, sets, rounds, rest, or the workout/session
 schema. Then run the `contract-auditor` agent.
 
 ## The three mirrors
 
 | Concern | Swift | TypeScript | SQL |
 |---|---|---|---|
-| Flattening rule | `OronzoCore/PlanFlattener.swift` | `flattenPlan`, `web/src/lib/types.ts` | `save_plan` in `supabase/migrations/` |
+| Flattening rule | `OronzoCore/WorkoutFlattener.swift` | `flattenWorkout`, `web/src/lib/types.ts` | `save_workout` in `supabase/migrations/` |
 | Exercise facts the flattener needs | `OronzoCore/Models.swift` (`ExerciseInfo`) | the `Exercise` record itself | `exercises.name`, `exercises.has_two_sides`, `exercises.alternates_sides` |
-| Plan shape | `OronzoCore/Models.swift` (`Intensity`) | `types.ts` (`Plan`/`PlanBlock`/`PlanStep`, `INTENSITIES`) | `plans`, `plan_blocks`, `plan_steps` |
-| Reading a plan | `PlanRepository.swift` select string | `api.ts` `PLAN_SELECT` | the column names themselves |
-| Read order of the plan list | `PlanRepository.fetchPlans` `.order("position")` | `api.ts` `listPlans` `.order('position')` | `plans.position` |
+| Workout shape | `OronzoCore/Models.swift` (`Workout`/`WorkoutBlock`/`WorkoutStep`, `PreferredTime`) | `types.ts` (`Workout`/`WorkoutBlock`/`WorkoutStep`) | `workouts`, `workout_blocks`, `workout_steps` |
+| Reading a workout | `TrainingRepository.workoutSelect` | `api.ts` `WORKOUT_SELECT` | the column names themselves |
+| Read order of the workout list | `TrainingRepository.fetchWorkouts` `.order("position")` | `api.ts` `listWorkouts` `.order('position')` | `workouts.position` |
+| Weekly schedule | `WeekPlan`/`PlanSlot`/`WeekSchedule` | `types.ts` (`WeekPlan`/`PlanSlot`, `compareWorkoutsByTimeThenName`) | `plans`, `plan_workouts.weekday` |
 | Writing a session | `SessionLogger.swift` wire types | — | `sessions`, `session_steps` |
 
 The flattening rule itself is stated in full in `AGENTS.md`. What follows is the field-level and
 wire-level detail that the pseudocode does not carry.
 
-## Current schema (post-`0017`)
+## Current schema (post-`0019`)
 
 Migrations are **cumulative and append-only**, so `0001` is not the current shape. This is the
-shape as of `0017_exercise_mode_moves_to_step.sql`; check the newest file before assuming.
+shape as of `0019_my_week_backfill.sql`; check the newest file before assuming.
 
 ```
 exercises      id, user_id, slug, name, muscle_group, has_two_sides, alternates_sides,
                notes, created_at, updated_at
 
-plans          id, user_id, name, position, created_at, updated_at
-plan_blocks    id, plan_id, position, name, rounds, rest_between_rounds_seconds, created_at, updated_at
-plan_steps     id, block_id, exercise_id NOT NULL, position, label, sets, mode,
+workouts       id, user_id, name, position, preferred_time, created_at, updated_at
+workout_blocks id, workout_id, position, name, rounds, rest_between_rounds_seconds,
+               created_at, updated_at
+workout_steps  id, block_id, exercise_id NOT NULL, position, label, sets, mode,
                duration_seconds, reps, target_weight_kg, rest_after_seconds,
                intensity, prepare_seconds, created_at, updated_at
+
+plans          id, user_id, name, created_at, updated_at
+plan_workouts  plan_id, workout_id, weekday (1 = Monday … 7 = Sunday), PK (plan_id, workout_id, weekday)
 
 sessions       id, user_id, plan_id, plan_name, started_at, finished_at, status,
                total_duration_seconds, notes, created_at, updated_at
@@ -44,28 +49,45 @@ session_steps  id, session_id, position, set_index, block_round, block_name, kin
                planned_reps, planned_weight_kg, actual_duration_seconds, status, created_at
 ```
 
-`plan_steps.intensity` (`0013`) is the one column whose **values** are a closed set — `low`,
+**`sessions.plan_id`/`plan_name` are historical names.** After `0018` the FK points at `workouts`;
+the columns were deliberately not renamed so an old iPhone can finish a workout during the
+cutover. `plan_name` holds the workout's name. Renaming them is a later migration that must touch
+`SessionLogger`, the web `listSessions` select and the docs together.
+
+`workouts.preferred_time` (`0018`) is a nullable `time without time zone`: a wall-clock
+preference, no timezone, no notification semantics. Null means "Anytime" and sorts last. Both
+clients normalise PostgREST's `"07:00:00"` to `"07:00"`.
+
+`plan_workouts` (`0018`) is the weekly schedule: one row per `(plan, workout, weekday)`. A workout
+may be on several days and in several plans; the composite primary key forbids only the same
+workout twice on the same day of the same plan. There is **no per-day position**: a day's order is
+`preferred_time` (null last), then name, then id — the same comparator in `WeekSchedule.precedes`
+and `compareWorkoutsByTimeThenName`. The schedule is written **one row at a time** (insert/delete),
+not by a whole-plan RPC; `plans.name` is one `update`. That makes a stale tab unable to overwrite a
+week and removes the old whole-plan payload.
+
+`workout_steps.intensity` (`0013`) is the one column whose **values** are a closed set — `low`,
 `medium` or `hard`, enforced by a check constraint on the same three words `Intensity` and
 `INTENSITIES` declare. It is nullable, and it rides to the screens as an *optional* field on
 `Interval`: an older snapshot decodes without it and a nil one is omitted from the JSON entirely,
 which is what `docs/decisions.md` records as the rule for adding anything to that type.
 
-`plan_steps.prepare_seconds` (`0014`) is the second column the flattener reads rather than passes
+`workout_steps.prepare_seconds` (`0014`) is the second column the flattener reads rather than passes
 through, after `has_two_sides`. Null means no preparation time; a positive number is the length of
 a synthetic "Get in position" interval before **each set** of a timed step, and before each side
 of a two-sided one. It is nullable and positive-only, and unlike `intensity` it reaches no screen
 as a field — the interval it produces is a plain exercise interval named for what it is. See
-`docs/decisions.md`, *"A prepare the plan asks for"*.
+`docs/decisions.md`, *"A prepare the workout asks for"*.
 
-`plans.position` (`0015`) is the one ordering column **no client ever sends**. It exists because
+`workouts.position` (`0015`) is the one ordering column **no client ever sends**. It exists because
 the list was ordered by `updated_at desc`, which made the order a side effect of editing; now the
 user arranges it in the builder and both clients read it. It is `not null` with no default, and
 `unique (user_id, position)` **deferrable initially deferred** — the only deferrable constraint in
-the schema, because `reorder_plans` and `save_plan` both renumber a whole list in one statement and
+the schema, because `reorder_workouts` and `save_workout` both renumber a whole list in one statement and
 a non-deferrable constraint is checked per row. Two consequences: a violation surfaces at COMMIT,
 from neither function, so it arrives as a PostgREST `500`; and the column is read only by `order`,
 never named in a select string — PostgREST applies `order` independently of `select`, verified
-against the live API. See `docs/decisions.md`, *"The plan list's order is content"*.
+against the live API. See `docs/decisions.md`, *"The workout list's order is content"*.
 
 `exercises.alternates_sides` (`0016`) is the third flag the flattener reads off an exercise, and
 the only one that changes nothing about the interval stream. An alternating exercise is deliberately
@@ -84,11 +106,11 @@ The same applies to the `(alt)` suffix from `0016`, which is why a past session 
 `Alternating Lunge (alt)` long after the flag or the name has changed.
 
 Columns that **no longer exist**, and must not reappear in a select string or a model:
-`plan_steps.kind` and `plan_steps.notes` (dropped in `0006`/`0008`), `plans.notes` (`0008`),
-`plan_steps.reps_max` / `target_weight_max_kg` (`0004`), `session_steps.actual_reps` /
+`workout_steps.kind` and `workout_steps.notes` (dropped in `0006`/`0008`), `workouts.notes` (`0008`),
+`workout_steps.reps_max` / `target_weight_max_kg` (`0004`), `session_steps.actual_reps` /
 `session_steps.actual_weight_kg` (`0008`), `session_steps.round_index` (renamed `set_index` in `0005`),
 `exercises.equipment` (`0011`), `exercises.default_mode` / `default_duration_seconds` /
-`default_reps` (`0017` — the rep/time choice is `plan_steps.mode`'s).
+`default_reps` (`0017` — the rep/time choice is `workout_steps.mode`'s).
 
 `exercises` is in this list for the first time because the flattener reads three of its columns —
 `name`, `has_two_sides` and `alternates_sides` — which is why the phone's exercise fetch is a
@@ -100,19 +122,19 @@ GET /rest/v1/exercises?select=id,name,has_two_sides,alternates_sides
 ```
 
 The side suffix the flattener writes is spelled `"… (left)"` / `"… (right)"` in both mirrors —
-`PlanFlattener.sideSuffixes` and `sideSuffixes` in `types.ts` — and it goes into `Interval.name`,
-never into `PlanFlattener.name(for:)`, which the plan detail screen uses to list a plan as
+`WorkoutFlattener.sideSuffixes` and `sideSuffixes` in `types.ts` — and it goes into `Interval.name`,
+never into `WorkoutFlattener.name(for:)`, which the workout detail screen uses to list a workout as
 authored. A two-sided exercise therefore doubles an interval stream and *not* a step list, and
-`PlanSummary`'s rep estimate reads the same `sideSuffixes` rather than its own copy of the rule.
+`WorkoutSummary`'s rep estimate reads the same `sideSuffixes` rather than its own copy of the rule.
 
 **`alternates_sides` (`0016`) is the third behaviour, and it is spelled `"… (alt)"`** —
-`PlanFlattener.alternatingLabel` and `ALT_LABEL` in `types.ts`. It goes into the same place, for the
+`WorkoutFlattener.alternatingLabel` and `ALT_LABEL` in `types.ts`. It goes into the same place, for the
 same reason, and it is **not** a case of `sideSuffixes`: an alternating exercise is not two-sided,
 so it falls through to `[nil]` and emits exactly **one interval per set**, the same stream an
 ordinary one-sided exercise produces. Two things follow that are easy to get wrong:
 
 - **A step's `reps` means different things under the two flags.** Two-sided reads "8 reps" as eight
-  *each* — the interval is emitted twice, and `PlanSummary` counts it twice. Alternating reads
+  *each* — the interval is emitted twice, and `WorkoutSummary` counts it twice. Alternating reads
   "20 reps" as twenty *altogether*, counted once. Neither number is converted anywhere; the flag
   decides which reading applies.
 - **The two flags are mutually exclusive**, enforced by `exercises_sides_shape`, so a step has a
@@ -126,33 +148,34 @@ oversight — `docs/decisions.md`, "Alternating: a third behaviour".
 
 ### Enforced in the database, not the client
 
-`plan_steps` carries constraints the clients deliberately mirror so failures surface as readable
+`workout_steps` carries constraints the clients deliberately mirror so failures surface as readable
 messages rather than raw Postgres errors:
 
 - `exercise_id` is **NOT NULL** after `0006`. A step is always an exercise.
-- `plan_steps_mode_shape`: `mode = 'time'` requires `duration_seconds`; `mode = 'reps'` requires
+- `workout_steps_mode_shape`: `mode = 'time'` requires `duration_seconds`; `mode = 'reps'` requires
   `reps`.
-- `plan_steps_sets_positive`: `sets >= 1`.
+- `workout_steps_sets_positive`: `sets >= 1`.
 - `session_steps.status` allows `pending | completed | skipped | not_reached`.
+- `plan_workouts.weekday` is `1…7`, and its composite PK refuses the same workout twice on one day.
 
-`web/src/routes/PlanEditor.tsx` `stepProblem()` mirrors the first three exactly, and is applied
-per row plus aggregated to gate the Save button (`"Fix N step(s) before saving"`).
+`web/src/routes/WorkoutEditor.tsx` `stepProblem()` mirrors the step constraints exactly, and is
+applied per row plus aggregated to gate the Save button (`"Fix N step(s) before saving"`).
 
-## The `save_plan` payload
+## The `save_workout` payload
 
-The **only** way a plan is written by an app — the three hand-run scripts in `supabase/plans/`
-write one directly, and are the only other writer that exists. Written nine times over — the
-newest is in `0015`. It is a
-whole-tree replace: it upserts `plans` by id (raising `42501` if the row is not the caller's),
-then `delete from plan_blocks where plan_id = …` and re-inserts every block and step. Since `0015`
-it also decides where a plan sits: a **new** plan is inserted at `position = 0` and every other
-plan of that user is shifted down one, while an **edit** leaves the position untouched, so saving a
-plan no longer moves it in the list.
+The **only** way a workout tree is written by an app. The function name and the table names
+changed in `0018`; the tree body is the ninth `save_plan` body, re-homed. It is a whole-tree
+replace: it upserts `workouts` by id (raising `42501` if the row is not the caller's), then
+`delete from workout_blocks where workout_id = …` and re-inserts every block and step. It also
+decides where a workout sits: a **new** workout is inserted at `position = 0` and every other
+workout of that user is shifted down one, while an **edit** leaves the position untouched, so
+saving a workout no longer moves it in the list.
 
 ```jsonc
 {
   "id": "<uuid or null>",          // null → server generates
   "name": "…",
+  "preferred_time": "07:00" | null, // wall-clock; null = Anytime
   "blocks": [{
     "name": …, "rounds": 3, "rest_between_rounds_seconds": …,
     "steps": [{
@@ -169,36 +192,65 @@ Three things about this that surprise people:
 - **`position` is ignored — the ones *inside* the payload, that is.** The web sends block and step
   positions; the RPC overwrites them from its own loop counters (`v_block_pos`, `v_step_pos`).
   Array order *is* position order. Don't add position handling server-side. This is a different
-  column from `plans.position`, which is the *list's* order, is never sent by any client, and **is**
-  computed server-side — see `reorder_plans` below.
+  column from `workouts.position`, which is the *list's* order, is never sent by any client, and **is**
+  computed server-side — see `reorder_workouts` below.
 - **Every save mints new block and step UUIDs**, because the tree is deleted and re-inserted.
-  Never hold a `plan_steps.id` across a save. (The `id?` fields on `PlanBlock`/`PlanStep` in
-  `types.ts` are therefore vestigial on the web path.)
+  Never hold a `workout_steps.id` across a save. (The `id?` fields on `WorkoutBlock`/`WorkoutStep`
+  in `types.ts` are therefore vestigial on the web path.)
 - **Empty strings are coerced to NULL** throughout (`nullif(v_step->>'label', '')`), so `''` never
   round-trips. The web sends `null` for absent values, matching.
 
-`save_plan` is `security invoker` with `set search_path = public`, so RLS still applies to every
+`save_workout` is `security invoker` with `set search_path = public`, so RLS still applies to every
 statement inside it. A redefined function needs its grant re-stated —
-`grant execute on function public.save_plan(jsonb) to authenticated;` — which is why every
+`grant execute on function public.save_workout(jsonb) to authenticated;` — which is why every
 migration that redefines it repeats the line.
 
-## `reorder_plans`
+## `reorder_workouts`
 
-`reorder_plans(p_ids uuid[]) returns void` — `0015`, `security invoker`, `set search_path =
-public`, granted to `authenticated`. The array **is** the new order: index 0 is the top. Called
-by the web builder after a drag; nothing else calls it, and iOS has no reorder path at all.
+`reorder_workouts(p_ids uuid[]) returns void` — the `0015` body, renamed in `0018`,
+`security invoker`, `set search_path = public`, granted to `authenticated`. The array **is** the
+new order: index 0 is the top. Called by `Workouts.tsx` after a drag; nothing else calls it, and
+iOS has no reorder path at all.
 
 **It is a whole-list operation, and refuses anything else.** Two checks, both explicit because RLS
 alone would make a foreign or repeated id a *silent no-op* rather than an error:
 
 - every id must be the caller's (counted, so a repeated id fails too) — `42501`;
-- the array must name **every** plan the caller has — `22023`.
+- the array must name **every** workout the caller has — `22023`.
 
-The second is not tidiness. If a plan the caller did not name kept an old position, the loop would
+The second is not tidiness. If a workout the caller did not name kept an old position, the loop would
 hand that number to another row, and the deferred `unique (user_id, position)` would abandon the
 request **at COMMIT** — after the function had already returned `void`. So a refused reorder is not
-something the client can retry into working: `Plans.tsx` puts the dragged rows back where they were
-and reports it, and the list is stale until it is reloaded.
+something the client can retry into working: `Workouts.tsx` puts the dragged rows back where they
+were and reports it, and the list is stale until it is reloaded.
+
+## The weekly schedule
+
+A weekly plan is **not** saved as a tree. There is no weekly `save_plan` RPC. `plans` holds only
+`id, user_id, name, created_at, updated_at`, and the schedule is rows in `plan_workouts`:
+
+- create a plan: `insert into plans` (`createPlan` in `api.ts` sets `user_id` from
+  `auth.getUser()`);
+- rename: `update plans set name` (`.select('id').single()` so a no-op or a missing row is an
+  error);
+- add: `insert into plan_workouts (plan_id, workout_id, weekday)`;
+- remove: `delete ... where plan_id and workout_id and weekday`;
+- move: insert the target, then delete the source. A `23505` on the insert means the target
+  already has it, which is a no-op; the source is still removed, so the workout collapses onto the
+  target rather than duplicating.
+
+All of these are **row-level writes under RLS**, not an RPC. The week board (`WeekPlanEditor.tsx`)
+does them optimistically, one at a time, and rolls the row back on failure. A failed move after the
+insert shows the workout on both days — visible, and allowed by the model.
+
+There is deliberately no per-day position. The same-day order is `preferred_time` (null last), then
+name case-insensitively, then id. The Swift comparator is `WeekSchedule.precedes`; the TypeScript
+one is `compareWorkoutsByTimeThenName`. Two orderings would put different workouts first on the
+builder and the phone for the same plan.
+
+`plans` are ordered by `created_at`, then `name`; neither column needs to be selected (PostgREST
+orders the outer query independently of `select`). The workout library keeps its own user-arranged
+`workouts.position`.
 
 ## The Watch wire format
 
@@ -213,6 +265,12 @@ struct SessionSnapshot { planName, intervals: [Interval], startedAt, state: Sess
 struct SessionState    { currentIndex, isPaused, isFinished, intervalEnd: Date?,
                          remainingWhenPaused: TimeInterval?, finishedAt: Date? }
 ```
+
+**`SessionSnapshot.planName` is historical.** It carries the workout's name and must not be
+renamed with the workout/plan split: it crosses two independently installed apps, and a rename
+would make every mixed-install snapshot fail to decode. The same rule applies to the on-disk
+`SessionRecord` keys `planID`/`planName` and to `HealthOwedEntry.planName`; the Swift properties
+are `workoutID`/`workoutName` where the type is ours, and the JSON keys stay.
 
 **Every field added to these types must be `Optional`**, or hand-decoded with `decodeIfPresent`.
 The application context persists across launches and the two apps install separately, so a snapshot
@@ -233,8 +291,8 @@ other. Nothing clears a screen over a mismatch; the workout is still drawable.
 **`SessionSnapshot` is always complete, and that is not a style choice.** The application context
 is a *single slot* — whatever is written last is all that survives. Sending a "start" and then an
 "update" back to back leaves only the update, so a watch app that was asleep at that moment wakes
-to a position with no plan in it and sits showing "no workout" while the phone believes it has
-been told everything. Sending the plan every time costs a few kilobytes and removes that entire
+to a position with no workout in it and sits showing "no workout" while the phone believes it has
+been told everything. Sending the workout every time costs a few kilobytes and removes that entire
 class of bug. **Do not optimise this into incremental messages.**
 
 **`intervalEnd` is an absolute `Date`, never a countdown.** That is what lets the watch stay
@@ -376,20 +434,26 @@ session sleep: see `SessionController.nextWake` and `SessionRunner.runner`.
 
 1. Change the SQL first if the shape changes — and remember migrations are append-only, applied by
    hand, in filename order.
-2. Update all three: `Models.swift`, `types.ts`, and the newest `save_plan`.
-3. Update both hand-written select strings. A column dropped from the database but still named in
-   a select string produces a **runtime 400 in an app on a device** — `tsc -b` cannot catch it.
-   The exception is a column a client only ever **orders** by: `order` is applied to the outer
-   query independently of `select`, so a column may be ordered without being returned, and
-   `plans.position` is exactly that case. Adding one to a select string it does not need would
-   change the payload for no reason — and, on iOS, invalidate every device's `PlanCache` file.
-4. If the change makes the currently-deployed web bundle invalid, **deploy before migrating** —
-   the deployed bundle is what breaks, not the new build. `/deploy` exists to make you answer this
-   question before shipping. **An additive column is the opposite case and the quieter one**: the
-   deployed bundle keeps working, but a save from it writes null over the new column, because
-   `save_plan` replaces the whole tree and that bundle does not send the key. Migrate and deploy in
-   the same sitting, before anything is authored into it. `0014` is the worked example. **A column
-   no client writes is quieter still, and that is `0015`**: a stale bundle saves exactly as it did,
+2. Update all three tree mirrors (`Models.swift`, `types.ts`, the newest `save_workout` in
+   `0018`) and, if the schedule changed, `WeekPlan`/`PlanSlot`/`WeekSchedule` plus the row-level
+   calls in `api.ts`.
+3. Update both hand-written select strings (`WORKOUT_SELECT` and `WEEK_PLAN_SELECT` on the web;
+   `TrainingRepository.workoutSelect`/`weekPlanSelect` on iOS). A column dropped from the database
+   but still named in a select string produces a **runtime 400 in an app on a device** — `tsc -b`
+   cannot catch it. The exception is a column a client only ever **orders** by: `order` is applied
+   to the outer query independently of `select`, so `workouts.position` and `plans.created_at`
+   need not be returned. Adding one to a select string it does not need would change the payload
+   for no reason — and, on iOS, invalidate every device's `plan-cache.json`.
+4. **`0018` is a breaking rename, not an additive migration.** The old clients select
+   `plan_blocks`/`plan_steps` and call `save_plan`; the new ones select `workout_blocks`/
+   `workout_steps` and call `save_workout`. Build the web and iOS clients first, then apply
+   `0018`/`0019`, deploy the web bundle and install the iOS app in one sitting. The old iPhone can
+   still write history because the session columns kept their names; do not train while the
+   clients and the database disagree. For an ordinary **additive** migration the usual rule still
+   applies: the deployed bundle keeps working, but a save from it writes null over the new column,
+   because `save_workout` replaces the whole tree and that bundle does not send the key. Migrate and
+   deploy in the same sitting, before anything is authored into it. `0014` is the worked example.
+   **A column no client writes is quieter still, and that is `0015`**: a stale bundle saves exactly as it did,
    and the only thing it cannot do is read the new order — which for a *read* is a `400` and an
    empty list, so migrate before deploying either client.
 5. Run `swift test`, then the `contract-auditor` agent.

@@ -26,7 +26,7 @@ public struct SessionScreen: Equatable, Sendable {
         /// interval. `paused` is carried by the **blinking timer** instead (see
         /// `PausedTimerBlink`), which signals it without adding a line that pushes the title and
         /// the clock around as it appears. What is left is `done`, where the name slot has become
-        /// the plan name and no clock is running to blink.
+        /// the workout name and no clock is running to blink.
         ///
         /// The word is still spoken in **every** state, `paused` included — see
         /// `accessibilityAnnouncement`. Speech costs no layout, and it is what keeps the state
@@ -133,7 +133,7 @@ public struct SessionScreen: Equatable, Sendable {
     public let context: String?
     public let next: Next?
     /// What this interval offers to adjust. Nil on a rest, on a step with neither a weight nor an
-    /// effort, and on a step that has no `plan_steps` row to write to.
+    /// effort, and on a step that has no `workout_steps` row to write to.
     public let adjust: Adjust?
     /// Whether a pause control applies to this screen.
     ///
@@ -211,7 +211,9 @@ public enum SessionPresentation {
     ) -> SessionScreen? {
         guard intervals.indices.contains(index) else { return nil }
         let interval = intervals[index]
-        let upcoming = intervals.indices.contains(index + 1) ? intervals[index + 1] : nil
+        // A "Get in position" prepare is a preamble, not the answer to "what's next" — skip it
+        // and name the exercise it is getting you ready for, load included.
+        let upcoming = intervals.dropFirst(index + 1).first { !$0.isPrepare }
 
         // MARK: State word
 
@@ -311,7 +313,7 @@ public enum SessionPresentation {
     /// * **Nothing prescribed** — a hold, a bodyweight movement, a step nobody wrote a load for.
     ///   This is the rule the request states: the arrows are for an exercise that *has* a weight
     ///   or an effort. Nothing here invents one for a step that declared none.
-    /// * **No `plan_steps` row** — a step built in code, or a plan off a cache written before ids
+    /// * **No `workout_steps` row** — a step built in code, or a workout off a cache written before ids
     ///   travelled with the intervals. There is nowhere to save an adjustment to, so offering the
     ///   control would be offering a tap that cannot work. `docs/known-issues.md` §4's rule holds:
     ///   what a missing field costs here is the arrows, not the workout.

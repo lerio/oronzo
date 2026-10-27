@@ -48,9 +48,11 @@ export function isForeignKeyViolation(err: unknown): boolean {
 /**
  * Postgres's `unique_violation`, which PostgREST reports as **409 Conflict**.
  *
- * The exercise one is `exercises_user_name_key` on `(user_id, lower(name))`, so this is "you
- * already have one of those". It is the only unique index an edit can reach: the table's other
- * one, `exercises_slug_key`, is on a column a custom exercise never writes.
+ * Two callers reach it now. The exercise one is `exercises_user_name_key` on
+ * `(user_id, lower(name))`, so this is "you already have one of those" — the table's other index,
+ * `exercises_slug_key`, is on a column a custom exercise never writes. The weekly schedule's
+ * `plan_workouts` primary key is the other: a duplicate means the workout is already scheduled on
+ * that day, and `addPlanWorkout` treats it as a no-op.
  *
  * Same reasoning as the foreign-key helper above — branch on the code, never on the message text,
  * which is Postgres's and not ours. It lives here rather than at the call site so that no route

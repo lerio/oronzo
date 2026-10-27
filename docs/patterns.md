@@ -11,7 +11,7 @@ the edge of each data-access file, and never leaks inward.
 
 Swift wire structs are deliberately named in snake_case so the synthesised `Codable` decoder
 matches the PostgREST payload with no `CodingKeys` — stated once in the file that owns it
-(`ios/Oronzo/Backend/PlanRepository.swift:6-9`):
+(`ios/Oronzo/Backend/TrainingRepository.swift:6-9`):
 
 > *"These deliberately mirror the PostgREST payload — snake_case property names and all — so that
 > decoding needs no CodingKeys and cannot silently drift from the schema. They are mapped to
@@ -24,7 +24,7 @@ private struct StepRow: Decodable {          // snake_case, mirrors the columns
     let duration_seconds: Int?
 }
 // → toDomain(), in the same file:
-PlanStep(
+WorkoutStep(
     exerciseID: step.exercise_id,            // camelCase domain type
     targetWeightKg: step.target_weight_kg,
     duration: step.duration_seconds.map(TimeInterval.init),  // Int seconds → TimeInterval, here only
@@ -35,8 +35,8 @@ Wire types are `private`, suffixed `Row` for reads and `New<Table>` for inserts 
 `NewStep`), and mirror SQL table names. There is **no `CodingKeys` anywhere** in the codebase —
 if you find yourself needing one, the wire struct is misnamed.
 
-TypeScript follows the same split: `PlanStep.exercise_id` is snake_case because it mirrors the
-column, while `flattenPlan` and `estimatePlanDuration` are camelCase because they are behaviour.
+TypeScript follows the same split: `WorkoutStep.exercise_id` is snake_case because it mirrors the
+column, while `flattenWorkout` and `estimateWorkoutDuration` are camelCase because they are behaviour.
 
 ## Data access
 
@@ -50,31 +50,37 @@ Web:    Route component → lib/api.ts → supabase client
 - `ios/Oronzo/Backend/Backend.swift` — `enum` namespace holding the lazily-built
   `SupabaseClient`. Lazily, so an unconfigured build still launches and shows
   `ConfigurationView` instead of hitting a `preconditionFailure`.
-- `PlanRepository` — network **reads**. `SessionLogger` — network **writes**.
+- `TrainingRepository` — network **reads**. `SessionLogger` — network **writes**.
 - `web/src/lib/api.ts` — every Supabase call for the SPA. No route or component imports
   `supabase` directly.
 
-**Read ordering is normalised client-side — except the plan list, which the server orders.**
+**Read ordering is normalised client-side — except the workout list, which the server orders.**
 PostgREST does not guarantee embed order, so both clients sort blocks and steps by `position`
-after fetching (`PlanRepository.swift:96,103`, `api.ts` `toPlan`). The live preview's `normalize()`
+after fetching (`TrainingRepository.swift:96,103`, `api.ts` `toWorkout`). The live preview's `normalize()`
 re-indexes `position` from array order after every mutation, because positions must be contiguous
 per parent.
 
 The **top-level** query is different: `order` there is a real `ORDER BY` on the outer query, so it
-is a guarantee rather than a hint, and both clients let the database do it — `plans.position`, the
-order the user drags plans into. That column is deliberately absent from both select strings: a
+is a guarantee rather than a hint, and both clients let the database do it — `workouts.position`, the
+order the user drags workouts into. That column is deliberately absent from both select strings: a
 column a client only orders by need not be returned (verified against the live API), which keeps
-the payload and the iOS `PlanCache` shape unchanged. See `docs/decisions.md`.
+the payload and the iOS `TrainingCache` shape unchanged. See `docs/decisions.md`.
 
 **Defensive coercion at the boundary.** A malformed row degrades rather than throwing:
 `max(1, block.rounds)`, `StepMode(rawValue: step.mode ?? "reps") ?? .reps`.
 
-**Writes go through `save_plan`.** A plan save touches 1 + N + M rows; doing it as sequential
-client calls risks a half-saved plan. The RPC replaces the whole block/step tree, so **every save
+**Writes go through `save_workout`.** A workout save touches 1 + N + M rows; doing it as sequential
+client calls risks a half-saved workout. The RPC replaces the whole block/step tree, so **every save
 mints new block and step UUIDs** — never cache them across a save.
 
+**The weekly schedule is the deliberate exception.** A plan's slots are independent
+`plan_workouts` rows, so the week board writes one row at a time (`insert`/`delete`) and saves
+`plans.name` with a one-row update. There is no whole-week RPC and no whole-week payload to go
+stale; a failed row is rolled back alone. The same rule as `save_workout` applies only to the
+workout tree, not to the schedule.
+
 **Each select string must stay on one line.** PostgREST parses it as a query string, so embedded
-newlines break it. Both `PlanRepository.planSelect` and `api.ts` `PLAN_SELECT` carry this comment.
+newlines break it. Both `TrainingRepository.workoutSelect` and `api.ts` `WORKOUT_SELECT` carry this comment.
 
 ## Error handling
 
@@ -82,20 +88,20 @@ newlines break it. Both `PlanRepository.planSelect` and `api.ts` `PLAN_SELECT` c
 and no `Result` anywhere. Only the three data-layer functions throw; the house style is:
 
 ```swift
-// ios/Oronzo/Backend/PlanStore.swift:44-47
+// ios/Oronzo/Backend/TrainingStore.swift:44-47
 } catch {
-    // Keep whatever the cache gave us; a stale plan list beats an empty screen.
+    // Keep whatever the cache gave us; a stale workout list beats an empty screen.
     self.error = error.localizedDescription
 }
 ```
 
 The type information is destroyed at the catch site, so no view can branch on the *kind* of
 failure. Each view then chooses its own treatment: inline red text (`SignInView`), a
-non-blocking banner over stale content (`PlanListView`), or a message plus a "Try again" button
+non-blocking banner over stale content (`TodayView`), or a message plus a "Try again" button
 (`SessionRunner`'s private `SaveState` enum — the closest thing to a phase enum, and not reused).
 
 **Web — hand-rolled per route, and currently inconsistent.** Typically
-`if (loading) … if (error) …`, but `Plans`/`History` replace the whole screen while `Exercises`
+`if (loading) … if (error) …`, but `WeekPlans`/`Workouts`/`History` replace the whole screen while `Exercises`
 renders the error above a still-visible list. New code should keep the list visible and put the
 error inline; see `known-issues.md`.
 
@@ -198,7 +204,7 @@ shortly — reads like an obvious improvement and would put a finished workout's
 timer for as long as it stayed up. That is why the rule is a named, tested function rather than a
 `guard` in each loop: battery failures do not announce themselves.
 
-**Web has no state library.** `useState` + `useEffect`, one `Plan` object per editor, nested
+**Web has no state library.** `useState` + `useEffect`, one `Workout` object per editor, nested
 arrays, and a single `mutate()` funnel that runs `normalize()` on every change.
 
 ## Naming

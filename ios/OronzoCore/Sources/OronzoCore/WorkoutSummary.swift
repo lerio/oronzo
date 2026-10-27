@@ -1,31 +1,31 @@
 import Foundation
 
-/// What a plan amounts to before you start it: how long, how many blocks, how many exercises.
+/// What a workout amounts to before you start it: how long, how many blocks, how many exercises.
 ///
-/// Two screens ask this — the plan summary and the row in the plan list — and they must not
+/// Two screens ask this — the workout summary and the row in the workout list — and they must not
 /// answer it differently. Defining it once here is the same argument `DesignTokens.swift` makes
-/// for the shared vocabulary and `PlanFlattener` makes for the shared execution order: one
+/// for the shared vocabulary and `WorkoutFlattener` makes for the shared execution order: one
 /// definition makes drift impossible rather than merely discouraged.
 ///
 /// **The time is part exact and part estimated, and the difference matters.**
 ///
 /// Timed work and rests are known: they come off the flattened `[Interval]` stream rather than
-/// being recomputed from the `Plan`, because deriving them from the plan alone would mean
+/// being recomputed from the `Workout`, because deriving them from the workout alone would mean
 /// re-implementing when `restAfter` and `restBetweenRounds` fire — the one contract that must
 /// live in exactly three places and change together (`AGENTS.md`).
 ///
 /// Rep-based work is *not* known. A rep-based step has no duration by definition, which is what
 /// `mode: .reps` means, so it has to be estimated from a pace — see `secondsPerRep`. This is
 /// the difference between an estimate and a floor: counting only the timed half of the Monday
-/// plan gives 32.5 minutes for a workout the programme itself budgets at 45–50.
-public struct PlanSummary: Equatable, Sendable {
+/// workout gives 32.5 minutes for a workout the programme itself budgets at 45–50.
+public struct WorkoutSummary: Equatable, Sendable {
 
     /// How long a rep-based set takes, per rep.
     ///
     /// **Calibrated against a real session**, which is the only honest basis for a constant
-    /// like this. `supabase/plans/monday-upper-body-a.sql` — the plan whose own notes say
-    /// "roughly 45–50 min" — sums to 1950s (32.5 min) of timed work and rest, and its 202
-    /// uncounted reps take it to about 50 minutes in practice. At this pace the estimate lands
+    /// like this. The old Monday plan seed — deleted in the workout/plan split — was a workout
+    /// whose own notes said "roughly 45–50 min"; it summed to 1950s (32.5 min) of timed work and
+    /// rest, and its 202 uncounted reps took it to about 50 minutes in practice. At this pace the estimate lands
     /// on 45, the low end of the range the programme claims, which is the right place for it:
     /// an estimate read before a workout should be met without rushing.
     ///
@@ -41,6 +41,11 @@ public struct PlanSummary: Equatable, Sendable {
     let timedSeconds: TimeInterval
 
     /// Estimated from the rep targets, at `secondsPerRep`.
+    ///
+    /// Counted once per authored step, not once per block round, so a step inside a multi-round
+    /// circuit contributes one round's worth. That is a known under-count shared with
+    /// `estimateWorkoutDuration` in `types.ts`; the two surfaces agreeing matters more than either
+    /// being right, and the calibrated numbers in `WorkoutSummaryTests` are pinned to it.
     let repSeconds: TimeInterval
 
     /// What the workout will actually take.
@@ -48,13 +53,13 @@ public struct PlanSummary: Equatable, Sendable {
 
     /// Part of the total is an estimate rather than a known duration, so it cannot be stated
     /// as a fact. True when any step is rep-based, or is timed but missing its duration —
-    /// either way its contribution to the total is not something the plan can prove.
+    /// either way its contribution to the total is not something the workout can prove.
     let hasEstimatedWork: Bool
 
-    public init(plan: Plan, intervals: [Interval], exercises: [UUID: ExerciseInfo]) {
-        let steps: [PlanStep] = plan.blocks.flatMap { $0.steps }
+    public init(workout: Workout, intervals: [Interval], exercises: [UUID: ExerciseInfo]) {
+        let steps: [WorkoutStep] = workout.blocks.flatMap { $0.steps }
 
-        self.blockCount = plan.blocks.count
+        self.blockCount = workout.blocks.count
         self.exerciseCount = steps.count
         self.timedSeconds = intervals.compactMap(\.duration).reduce(0, +)
         self.repSeconds = steps
@@ -65,7 +70,7 @@ public struct PlanSummary: Equatable, Sendable {
                 // `hasTwoSides`: the timed half above already doubles, because it sums the
                 // doubled interval stream, and one total with two opinions in it is worse than
                 // either.
-                let sides = PlanFlattener.sideSuffixes(of: step, exercises: exercises).count
+                let sides = WorkoutFlattener.sideSuffixes(of: step, exercises: exercises).count
                 return total + Double(step.sets * (step.reps ?? 0) * sides) * Self.secondsPerRep
             }
         self.hasEstimatedWork = steps.contains { $0.mode == .reps || $0.duration == nil }
@@ -77,17 +82,17 @@ public struct PlanSummary: Equatable, Sendable {
         guard estimatedSeconds > 0 else { return nil }
 
         // Round to nearest, but only once there is a minute to round to. Rounding first would
-        // call a 35-second plan "1 min" — a near doubling, and short timed blocks are exactly
+        // call a 35-second workout "1 min" — a near doubling, and short timed blocks are exactly
         // where a summary earns its place.
         return estimatedSeconds < 60
             ? (Int(estimatedSeconds.rounded()), false)
             : (Int((estimatedSeconds / 60).rounded()), true)
     }
 
-    /// "45 min", "~45 min", or nil for a plan with nothing in it.
+    /// "45 min", "~45 min", or nil for a workout with nothing in it.
     ///
-    /// The `~` is what `hasEstimatedWork` is for: a plan with rep-based work is not a duration
-    /// the data can prove, and presenting it as one would be a promise the plan cannot keep.
+    /// The `~` is what `hasEstimatedWork` is for: a workout with rep-based work is not a duration
+    /// the data can prove, and presenting it as one would be a promise the workout cannot keep.
     /// Spelling follows `MeasurementFormat`.
     var durationText: String? {
         guard let parts = durationParts else { return nil }

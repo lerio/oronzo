@@ -51,8 +51,13 @@ struct SessionLogger {
     }
 
     /// Records the session and its steps. Returns the new session's id.
+    ///
+    /// The two columns are still named `plan_id`/`plan_name` in the database: they are historical
+    /// names that now reference a workout, kept so a phone on the old build can finish a session
+    /// during the cutover. The `NewSession` fields below mirror those columns and must not be
+    /// renamed with the domain.
     @discardableResult
-    func log(_ session: CompletedSession, planID: UUID, planName: String) async throws -> UUID {
+    func log(_ session: CompletedSession, workoutID: UUID, workoutName: String) async throws -> UUID {
         let userID = try await Backend.client.auth.session.user.id
 
         // The parent row first: the steps need its id, and a session without steps is still
@@ -62,8 +67,8 @@ struct SessionLogger {
             .insert(
                 NewSession(
                     user_id: userID,
-                    plan_id: planID,
-                    plan_name: planName,
+                    plan_id: workoutID,
+                    plan_name: workoutName,
                     started_at: session.startedAt.formatted(Self.iso),
                     finished_at: session.finishedAt.formatted(Self.iso),
                     status: session.status.rawValue,

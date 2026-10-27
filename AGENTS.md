@@ -1,7 +1,8 @@
 # Oronzo — agent guide
 
-A personal fitness system: workout plans are authored in a web app, executed on an iPhone, and
-mirrored to an Apple Watch. Single user, personal project, everything on free tiers.
+A personal fitness system: workouts and weekly plans are authored in a web app, a workout is
+executed on an iPhone, and mirrored to an Apple Watch. Single user, personal project, everything
+on free tiers.
 
 This file is the entry point. It states the stack, the patterns that matter, and the rules that
 have already cost real time. Deeper detail lives in `docs/` — see [Reading list](#reading-list).
@@ -20,9 +21,29 @@ have already cost real time. Deeper detail lives in `docs/` — see [Reading lis
 | Shared Swift | Models, flattener, session engine, watch wire format | `ios/OronzoCore/` |
 | Ops | Cloudflare Worker on a daily cron | `ops/keepalive/` |
 
-**Plans are authored only in the web app.** The iPhone executes them; the Watch displays them.
-That separation is deliberate — building a structured workout on a phone is miserable, and on a
-watch worse.
+## The model
+
+```
+exercise → block → workout → plan
+```
+
+- A **workout** is the reusable tree that is executed: blocks of exercises, plus an optional
+  `preferred_time` ("when is this best done").
+- A **plan** is a **weekly template**: workouts assigned to weekdays. It has no dates and no
+  start/end; it repeats. A workout can be in zero plans, on several days, and in several plans.
+- A scheduled occurrence is one `plan_workouts(plan_id, workout_id, weekday)` row. Weekday is ISO:
+  **1 = Monday … 7 = Sunday**. Same-day order is `preferred_time` (null last), then name, then id.
+  There is deliberately no per-day position.
+- The **Watch never sees a plan** and never sees `preferred_time`. The unit of execution is the
+  workout; only its flattened intervals and its name cross the wire.
+
+**Workouts and weekly plans are authored only in the web app.** The iPhone selects a plan and
+executes one workout; the Watch displays it. That separation is deliberate — building a structured
+workout on a phone is miserable, and on a watch worse.
+
+The schedule is **row-level**: the week board adds, removes or moves one `plan_workouts` row at a
+time, so there is no whole-week save RPC and no stale tab can overwrite a plan. The workout tree
+itself is written atomically through `save_workout`.
 
 ## The one idea that matters
 
@@ -41,7 +62,7 @@ command the user just gave it, not holding state of its own.
 There is no per-second message stream, and **there must never be one.** See
 `docs/integration-contracts.md` for why this is load-bearing rather than an optimisation choice.
 
-## The one contract: `flatten(plan) -> [Interval]`
+## The one contract: `flatten(workout) -> [Interval]`
 
 ```
 for block in blocks ordered by position:
@@ -60,16 +81,17 @@ It lives in **three places that must change together**:
 
 | Home | File |
 |---|---|
-| Canonical, and the one with tests | `ios/OronzoCore/Sources/OronzoCore/PlanFlattener.swift` |
-| Builder live preview | `web/src/lib/types.ts` — `flattenPlan` |
-| Plan persistence | `supabase/migrations/*.sql` — `save_plan` re-encodes the same tree shape |
+| Canonical, and the one with tests | `ios/OronzoCore/Sources/OronzoCore/WorkoutFlattener.swift` |
+| Builder live preview | `web/src/lib/types.ts` — `flattenWorkout` |
+| Workout persistence | `supabase/migrations/*.sql` — `save_workout` re-encodes the same tree shape |
 
 A step is **always an exercise**; rest is synthetic, never a step. A step's `sets` is its set
 count; a block's `rounds` repeats the whole group — different words on purpose. A third thing
 doubles the stream without being either: an exercise flagged `has_two_sides` is performed left,
 then right, and the pair **is** one set, so both halves carry the same set number and the rest
-still falls once. `PlanFlattener.name(for:)` stays side-free — the side belongs to an interval
-being done, not to the step being planned, and the plan detail screen lists a plan as authored.
+still falls once. `WorkoutFlattener.name(for:)` stays side-free — the side belongs to an interval
+being done, not to the step being planned, and the workout detail screen lists a workout as
+authored.
 
 An exercise flagged **`alternates_sides`** (`0016`) is the third behaviour, not a relabelling of
 the second: it is done on both sides *within* one interval, so the pair collapses and the step
@@ -91,7 +113,7 @@ from a hold. It carries no new type — `kind: .exercise` and the name — so a 
 draws a five-second countdown with the right words on it rather than failing to decode.
 
 Run the `contract-auditor` agent after changing anything about blocks, steps, sets, rounds, rest,
-or the plan/session schema.
+or the workout/plan/session schema.
 
 ## Core patterns
 
@@ -100,9 +122,11 @@ Full detail in `docs/patterns.md`. The short version:
 - **The database boundary is snake_case; behaviour is camelCase.** Swift wire structs are named
   in snake_case so decoding needs no `CodingKeys` and cannot drift from the schema. They map to
   camelCase domain types immediately and never escape their file.
-- **Hand-written PostgREST select strings** (`PlanRepository.planSelect`, `api.ts` `PLAN_SELECT`)
-  are the most fragile code in the repo — a dropped column produces a runtime 400 in an app on a
-  device. Keep each on **one line**: PostgREST parses it as a query string.
+- **Hand-written PostgREST select strings** (`TrainingRepository.workoutSelect`, `api.ts`
+  `WORKOUT_SELECT`, and the small `WEEK_PLAN_SELECT`) are the most fragile code in the repo — a
+  dropped column produces a runtime 400 in an app on a device. Keep each on **one line**:
+  PostgREST parses it as a query string. A column a client only **orders** by (workout `position`,
+  plan `created_at`) need not be selected.
 - **Time is injected, never read from the clock.** The engine takes `now: Date` as a parameter, so
   it is deterministically testable and suspension-safe. `intervalEnd` is an absolute `Date`, never
   a decrementing counter.
@@ -118,12 +142,14 @@ Full detail in `docs/patterns.md`. The short version:
   beat instead of three.
 - **iOS state is `@MainActor @Observable final class`** (Observation, not Combine). Nonisolated
   delegate callbacks hop with `Task { @MainActor in ... }`.
-- **Plans save atomically** through the `save_plan` RPC — never as sequential client calls.
+- **A workout tree saves atomically** through the `save_workout` RPC — never as sequential client
+  calls. **A weekly plan's schedule is the opposite**: each add/remove/move is one
+  `plan_workouts` row, and the row is the unit of truth.
 
 ## Commands
 
 ```bash
-cd ios/OronzoCore && swift test      # 290 tests, no simulator or signing — run this first
+cd ios/OronzoCore && swift test      # 304 tests, no simulator or signing — run this first
 cd ios && xcodegen generate          # after editing ios/project.yml or adding files
 cd web && npm run dev                # localhost:5173
 cd web && npm run build              # tsc -b is what catches stale field references
@@ -137,7 +163,7 @@ and traps that are easy to forget — prefer them over doing the thing by hand.
 Debug builds accept launch arguments that skip sign-in entirely:
 
 ```bash
-xcrun simctl launch booted com.lerio.oronzo -demoSession       # a realistic plan
+xcrun simctl launch booted com.lerio.oronzo -demoSession       # a realistic workout
 xcrun simctl launch booted com.lerio.oronzo -demoFinish        # 6 seconds, reaches the summary
 xcrun simctl launch booted com.lerio.oronzo -demoSession -demoAdjust   # drives the load arrows
 xcrun simctl launch booted com.lerio.oronzo.watchkitapp -demoSession
@@ -146,7 +172,7 @@ xcrun simctl launch booted com.lerio.oronzo.watchkitapp -demoSession
 `-demoAdjust` exists because **the arrows cannot otherwise be looked at**: nothing here can tap a
 simulator, so a nudge and then a save are performed for you, two seconds apart, which is what makes
 the pending state and the Adjust button reachable at all. It is a fixture, so the save changes the
-session and not the plan — see `SessionController.savesPlan`.
+session and not the workout — see `SessionController.savesWorkout`.
 
 ## Traps
 
@@ -158,7 +184,7 @@ Each of these cost real time. They are not hypothetical.
   looks nothing like a product-type problem.
 - **`updateApplicationContext` is a single slot.** Whatever is written last is all that survives, so
   a "start" followed by an "update" leaves only the update. That is why `SessionSnapshot` carries
-  the plan *and* the position and is re-sent whole on every change. Do not "optimise" this into
+  the workout *and* the position and is re-sent whole on every change. Do not "optimise" this into
   incremental messages.
 - **The watch can ask, and must be able to.** `WatchControl.requestState` exists because every way
   a push can go missing is silent — a write that lands before the phone's session activates, a
@@ -198,23 +224,44 @@ Each of these cost real time. They are not hypothetical.
   requires the key and still fails. An optional one is readable in both directions. `Interval`
   itself is the wrong place for anything but new keys — a new interval concept belongs in the
   stream, and `0012` carried the exercise's side in `name` rather than adding a field.
-- **`PlanCache` is unversioned.** It encodes `Plan` (and so `PlanBlock`/`PlanStep`) directly to
-  JSON with no version key, so renaming a Codable property in `Models.swift` invalidates every
-  existing cache. That failure is no longer silent — `PlanCache.load()` logs it and
-  `docs/known-issues.md` §4 records the fix — but it still *degrades* to an empty plan list until
-  the next fetch, which offline is the difference between a workout and none. So: prefer adding a
-  field over renaming one, and ask what a *missing* field would do before making it optional. A
-  field whose absence changes the workout — the two-sided ids in `0012` — is required, so an older
-  file is discarded rather than silently flattening every exercise once. A field whose absence only
-  costs a display name can be optional, which is the alternating ids in `0016`: a file that has
-  never heard of the flag still flattens an alternating exercise into the right number of intervals,
-  and loses only the `(alt)` on its name. `twoSidedExerciseIDs` and `alternatingExerciseIDs` in
-  `PlanStore.swift` carry the reasoning, side by side.
+- **The workout cache is unversioned.** `plan-cache.json` encodes `Workout` (and so
+  `WorkoutBlock`/`WorkoutStep`) directly to JSON with no version key, so renaming a Codable
+  property in `Models.swift` invalidates every existing cache. That failure is no longer silent —
+  `TrainingCache.load()` logs it and `docs/known-issues.md` §4 records the fix — but it still
+  *degrades* to an empty workout list until the next fetch, which offline is the difference
+  between a workout and none. So: prefer adding a field over renaming one, and ask what a
+  *missing* field would do before making it optional. A field whose absence changes the workout —
+  the two-sided ids in `0012` — is required, so an older file is discarded rather than silently
+  flattening every exercise once. A field whose absence only costs a display name can be optional,
+  which is the alternating ids in `0016`: a file that has never heard of the flag still flattens an
+  alternating exercise into the right number of intervals, and loses only the `(alt)` on its name.
+  `twoSidedExerciseIDs` and `alternatingExerciseIDs` in `TrainingStore.swift` carry the reasoning,
+  side by side.
+- **The cache and the session record keep their historical JSON keys.** `plan-cache.json` still
+  uses the top-level key `plans` for its `[Workout]`, and `session-record.json` still writes
+  `planID`/`planName` (mapped from `workoutID`/`workoutName` in `SessionRecord`'s hand-written
+  `CodingKeys`). Renaming either would throw away every device's offline copy or lose a workout
+  that was in flight across an app update. `preferredTime` and `weekPlans` are optional additions,
+  which is what lets an old file decode.
+- **`SessionSnapshot.planName` is a wire key between independently installed apps.** It carries the
+  workout's name; the property and the key must not be renamed during the workout/plan split. A
+  rename makes every mixed-install snapshot fail to decode — a silent "No workout" on the wrist.
+- **`sessions.plan_id`/`plan_name` are historical column names that now reference a workout.**
+  They were deliberately not renamed in `0018`: the FK follows the table rename by OID, and keeping
+  the names lets an old iPhone finish a workout and write its history during the cutover. A later
+  migration may rename them; change `SessionLogger`, the web `listSessions` select and the docs
+  together when it does.
 - **`.gitignore` needs `.build/`, not `build/`.** Patterns match the exact name, so the `build/`
   line does not cover SwiftPM's directory. This exact mistake committed ~2,300 build files.
 - **Migrations are applied by hand**, pasted into the Supabase SQL Editor in filename order. They
-  are **append-only**: never edit an applied migration's logic — write a new one. `save_plan` has
-  been written nine times, so check the newest definition before changing that function.
+  are **append-only**: never edit an applied migration's logic — write a new one. The workout-tree
+  writer has been written nine times (as `save_plan`, now `save_workout`), so check the newest
+  `save_workout` definition in `0018` before changing that function. A weekly plan's schedule has
+  no RPC: it is one `plan_workouts` row per action, under RLS.
+- **`0018` is a breaking rename, not an additive migration.** Old clients select `plan_blocks` and
+  call `save_plan`; the new ones select `workout_blocks` and call `save_workout`. Build the web and
+  iOS clients first, then apply `0018`/`0019`, deploy and install in one sitting. The old iPhone can
+  still write history because the session columns kept their names. See `docs/integration-contracts.md`.
 - **Free personal team:** provisioning profiles expire every 7 days (the apps stop launching until
   rebuilt from Xcode), and there are no App Groups. **HealthKit signs** — see the next bullet. The
   Watch stays alive via `WKExtendedRuntimeSession` with `WKBackgroundModes = [physical-therapy]` — a

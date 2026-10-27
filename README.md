@@ -1,7 +1,7 @@
 # Oronzo
 
-A personal fitness system: author workout plans in the browser, run them on iPhone, follow them on
-Apple Watch.
+A personal fitness system: author workouts and weekly plans in the browser, run a workout on
+iPhone, follow it on Apple Watch.
 
 | Piece | Stack | Lives in |
 |---|---|---|
@@ -15,7 +15,7 @@ Apple Watch.
 ## How it fits together
 
 The **iPhone owns session state** — it is the single source of truth for what you actually did. It
-loads plans from Supabase (cached for offline use), runs the session engine, and writes the finished
+loads workouts from Supabase (cached for offline use), runs the session engine, and writes the finished
 session back.
 
 The **Watch is a companion**, not an independent app. It is sent the *full flattened interval list
@@ -23,7 +23,8 @@ with absolute end dates*, so it renders an always-accurate countdown and fires i
 without needing a per-second message stream — it keeps working even if the phone is briefly
 unreachable. Controls travel back to the phone over WatchConnectivity.
 
-Plans are authored **only** in the web app; the iPhone executes them.
+Workouts and weekly plans are authored **only** in the web app. The iPhone selects a weekly plan
+and executes one workout; the Watch displays it.
 
 ## Getting started
 

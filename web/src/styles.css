@@ -710,3 +710,222 @@ textarea:focus {
   gap: 8px;
   margin-top: 14px;
 }
+
+/* ---------- preferred time ---------- */
+
+.time-choices {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.time-choice {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 13px;
+}
+
+.time-choice.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.time-choice .muted {
+  margin-left: 4px;
+}
+
+.time-choices input[type='time'] {
+  width: auto;
+}
+
+/* ---------- weekly plans list ---------- */
+
+.mini-week {
+  display: flex;
+  gap: 3px;
+  margin-top: 4px;
+}
+
+.mini-day {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 18px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.mini-day.on {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+/* ---------- week board ---------- */
+
+.week-plan-name {
+  display: block;
+  width: 100%;
+  margin: 2px 0 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 24px;
+  font-weight: 600;
+}
+
+.week-plan-name:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.week-shelf {
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.week-shelf-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.week-shelf-head input {
+  width: 180px;
+}
+
+.week-shelf-head .link-btn {
+  margin-left: auto;
+}
+
+.week-shelf-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.week-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(112px, 1fr));
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+}
+
+.week-day {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 160px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.week-day.drop-target {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.week-day-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.week-day-head .muted {
+  font-weight: 400;
+}
+
+.week-add {
+  max-width: 70px;
+  margin-left: auto;
+  font-size: 12px;
+}
+
+.week-day-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.week-day-empty {
+  margin: 0;
+  padding: 10px 6px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.week-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  cursor: grab;
+}
+
+.week-card.shelf {
+  width: 170px;
+}
+
+.week-card.dragging {
+  opacity: 0.4;
+}
+
+.week-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+.week-card-name {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.week-card-name:hover {
+  text-decoration: underline;
+}
+
+.week-card .muted {
+  font-size: 11px;
+}
+
+.time-chip {
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}

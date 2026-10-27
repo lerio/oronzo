@@ -79,7 +79,7 @@ public enum Appearance: String, CaseIterable, Sendable {
 public enum Palette {
 
     /// The seven colours that already existed are adopted **verbatim** from
-    /// `web/src/styles.css`, so the phone, the watch and the plan builder share one palette
+    /// `web/src/styles.css`, so the phone, the watch and the workout builder share one palette
     /// rather than three. Only `rest` is new — the web had no state colours because it does
     /// not run a session.
     ///

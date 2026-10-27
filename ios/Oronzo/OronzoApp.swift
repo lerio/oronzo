@@ -4,7 +4,7 @@ import UIKit
 @main
 struct OronzoApp: App {
     @State private var auth = AuthStore()
-    @State private var plans = PlanStore()
+    @State private var training = TrainingStore()
     /// The workout, owned here rather than by the screen that started it. See `SessionHost`.
     @State private var session = SessionHost()
 
@@ -12,7 +12,7 @@ struct OronzoApp: App {
         WindowGroup {
             RootView()
                 .environment(auth)
-                .environment(plans)
+                .environment(training)
                 .environment(session)
                 // Activated once, early, and left alone: there is exactly one WCSession and
                 // it has to be running before a workout starts, not when one does.
@@ -37,15 +37,15 @@ private struct RootView: View {
     var body: some View {
         Group {
             #if DEBUG
-            // `-demoSummary` shows the plan summary rather than the runner, so it can be looked at
-            // without an account or a backend. See DemoPlan. (`-demoSession` no longer has a branch
+            // `-demoSummary` shows the workout summary rather than the runner, so it can be looked at
+            // without an account or a backend. See DemoWorkout. (`-demoSession` no longer has a branch
             // of its own — it starts a session like any other, just one that is not written down,
             // so it cannot leave a fixture behind that a real launch would resume.)
-            if DemoPlan.wantsSummary {
+            if DemoWorkout.wantsSummary {
                 NavigationStack {
-                    PlanDetailView(plan: DemoPlan.builderShaped())
+                    WorkoutDetailView(workout: DemoWorkout.builderShaped())
                 }
-                .environment(PlanStore.seeded(DemoPlan.builderExercises))
+                .environment(TrainingStore.seeded(DemoWorkout.builderExercises))
             } else {
                 content
             }
@@ -53,8 +53,8 @@ private struct RootView: View {
             content
             #endif
         }
-        // **Presented here rather than from the plan's own screen**, for two reasons. A workout
-        // resumed at launch has no plan screen to be presented from; and a cover at the root
+        // **Presented here rather than from the workout's own screen**, for two reasons. A workout
+        // resumed at launch has no workout screen to be presented from; and a cover at the root
         // leaves the navigation stack intact underneath it, so finishing a workout puts you back
         // where you started rather than at the top of the list.
         .fullScreenCover(isPresented: presentation) {
@@ -79,32 +79,32 @@ private struct RootView: View {
             Task { await HealthWriteQueue.shared.resolveAll() }
 
             #if DEBUG
-            if let demo = DemoPlan.launchArgumentPlan {
+            if let demo = DemoWorkout.launchArgumentWorkout {
                 // A fixture must not inherit a workout, and — unless it is the one flag that asks
                 // to be written down — must not leave one either, or the next ordinary launch
                 // resumes a session nobody started. Launch arguments can only be passed to an app
                 // that is not running, so there is never a real session here to discard.
-                if !DemoPlan.persistsRecord { SessionRecordFile.clear() }
+                if !DemoWorkout.persistsRecord { SessionRecordFile.clear() }
                 session.begin(
-                    plan: demo,
-                    exercises: DemoPlan.builderExercises,
-                    persistsRecord: DemoPlan.persistsRecord,
+                    workout: demo,
+                    exercises: DemoWorkout.builderExercises,
+                    persistsRecord: DemoWorkout.persistsRecord,
                     // **Nobody did this workout, so nothing about it goes to Apple Health** — not
                     // even for `-demoRecord`, which is the one fixture that wants to be written
-                    // down. It runs the full-length `DemoPlan.make()`, so the three-minute bar
+                    // down. It runs the full-length `DemoWorkout.make()`, so the three-minute bar
                     // does not filter it, and a Health entry would outlive the phone: it would be
                     // a workout nobody did, sitting in the Fitness app, deleted by hand.
                     recordsHealth: false,
-                    // And nothing about it goes to the **plan** either. The runner's arrows need a
+                    // And nothing about it goes to the **workout** either. The runner's arrows need a
                     // demo to exercise them, so a fixture folds a load adjustment into its own
-                    // session and reports it saved without sending anything — a real plan's step
-                    // would otherwise be edited by a launch argument. See `SessionController.savesPlan`.
-                    savesPlan: false
+                    // session and reports it saved without sending anything — a real workout's step
+                    // would otherwise be edited by a launch argument. See `SessionController.savesWorkout`.
+                    savesWorkout: false
                 )
                 // The adjust walkthrough, if it was asked for. Debug-only, like everything above
                 // it, and outside `begin` because the session has to exist before it can be nudged.
-                // See `DemoPlan.wantsAdjustWalkthrough` for why this route is the only one.
-                if DemoPlan.wantsAdjustWalkthrough, let running = session.controller {
+                // See `DemoWorkout.wantsAdjustWalkthrough` for why this route is the only one.
+                if DemoWorkout.wantsAdjustWalkthrough, let running = session.controller {
                     Task { @MainActor in
                         // Onto the bench press — the demo's first weighted step, and the one the
                         // arrows are for. Found by its step id rather than by counting intervals:
@@ -113,7 +113,7 @@ private struct RootView: View {
                         // bound is a backstop, so a fixture that loses its step cannot spin.
                         try? await Task.sleep(for: .seconds(2))
                         for _ in 0..<8 {
-                            if running.current?.stepID == DemoPlan.adjustStepID { break }
+                            if running.current?.stepID == DemoWorkout.adjustStepID { break }
                             running.advance()
                         }
                         try? await Task.sleep(for: .seconds(2))
@@ -142,7 +142,7 @@ private struct RootView: View {
             // still starting cannot be cleared. See `PhoneConnectivity.currentWatchMessage`.
             if phase == .active {
                 // Re-read the registration facts before anything draws the banner: this is the
-                // moment the plan screens come forward, and a drop that happened while the app
+                // moment the workout screens come forward, and a drop that happened while the app
                 // was suspended is only visible if someone asks — `sessionWatchStateDidChange`
                 // cannot fire into a process that was not running.
                 PhoneConnectivity.shared.refreshWatchState()
@@ -193,7 +193,7 @@ private struct RootView: View {
             case .signedOut:
                 SignInView()
             case .signedIn:
-                PlanListView()
+                TodayView()
             }
         }
     }

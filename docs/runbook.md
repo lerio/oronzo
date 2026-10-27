@@ -111,7 +111,7 @@ cd web && npm run dev
 
 ## Deploying the web app
 
-The plan builder is a static SPA: build locally, push with wrangler.
+The workout builder is a static SPA: build locally, push with wrangler.
 
 ```bash
 cd web
@@ -126,7 +126,7 @@ Live at https://oronzo.valerio-donati.workers.dev
 - `assets.directory` — without it wrangler publishes the whole source folder rather than
   the build output, which "succeeds" while serving entirely the wrong thing.
 - `not_found_handling: single-page-application` — without it a hard refresh on
-  `/plans/<id>` returns 404, because the router is client-side.
+  `/workouts/<id>` returns 404, because the router is client-side.
 
 The Supabase URL and publishable key are compiled into the bundle at build time from
 `web/.env.local`, so whoever builds needs that file. That is safe: the publishable key
@@ -139,15 +139,23 @@ deploys are manual; a push to `main` does not publish.
 ## Supabase
 
 **Applying migrations.** Paste the files in `supabase/migrations/` into the Supabase SQL
-Editor, in filename order. They are idempotent — `0002` upserts on `slug`, so re-running it
-corrects the seed rather than duplicating it.
+Editor, in filename order. Most are written to be re-runnable — `0002` upserts on `slug`, so
+re-running it corrects the seed rather than duplicating it. **`0018` is not**: it is a one-time
+rename of the whole plan tree into workouts, wrapped in a transaction. Apply it once, as one
+script, and read the cutover note below before doing so.
 
-**The plan scripts in `supabase/plans/` are not migrations** — they are user data, pasted by
-hand once an account exists, and safe to re-run (each deletes and recreates only its own plan by
-name). They follow the migrations rather than leading them: since `0015` each names
-`plans.position`, so pasting one into a database that has not had `0015` applied fails on a
-column that does not exist. They append the plan to the end of the list rather than putting it at
-the top, because a re-seed restores a plan the user already had and must not reorder the rest.
+**The three old hand-run seed scripts (`supabase/plans/*.sql`) were deleted in the workout/plan
+split.** They had already stopped running end-to-end when `0010` removed the seeded exercise
+catalogue, and after `0018` their table names were wrong too. `0019` is the one-time `My week`
+backfill; there is no seed-script writer any more. The migration history is the record.
+
+**`0018` is a breaking rename, not an additive migration.** Apply it — and `0019` — as one sitting,
+then deploy the web bundle and install the new iPhone app immediately. The SQL is wrapped in
+`begin; … commit;` and ends with `notify pgrst, 'reload schema';`; paste it as one script, not
+statement by statement. Old web/iOS reads name `plan_blocks`/`plan_steps` and return `400`; old
+writes call `save_plan`/`reorder_plans`, which are gone (`404`). The session columns kept their
+names, so an old iPhone can still finish a workout and write history while the clients move. Do
+not train during the window.
 
 **The free project pauses after 7 days of low inactivity**, and a paused project is
 entirely unavailable until you restore it by hand from the dashboard. Normal use keeps it
@@ -183,7 +191,7 @@ through a sign-up flow.
 
 There are three moving parts — the database, the deployed web bundle, and the app on the
 phone — and they are updated by hand, separately. A mismatch does not announce itself: it
-arrives as a `400` from one client, or as a plan list that quietly came from the cache.
+arrives as a `400` from one client, or as a workout list that quietly came from the cache.
 
 **Ask the database, do not remember.** Each migration that changes the schema leaves a
 footprint, and a missing column is a `400` while a present one is a `200` — the same failure
@@ -194,26 +202,33 @@ cd web && K=$(grep VITE_SUPABASE_PUBLISHABLE_KEY .env.local | cut -d= -f2) \
         U=$(grep VITE_SUPABASE_URL .env.local | cut -d= -f2)
 curl -s -o /dev/null -w "0011 dropped equipment:   %{http_code}\n" "$U/rest/v1/exercises?select=equipment&limit=1" -H "apikey: $K"
 curl -s -o /dev/null -w "0012 has_two_sides:       %{http_code}\n" "$U/rest/v1/exercises?select=has_two_sides&limit=1" -H "apikey: $K"
-curl -s -o /dev/null -w "0013 step intensity:      %{http_code}\n" "$U/rest/v1/plans?select=id,plan_blocks(plan_steps(intensity))&limit=1" -H "apikey: $K"
-curl -s -o /dev/null -w "0014 step prepare:        %{http_code}\n" "$U/rest/v1/plans?select=id,plan_blocks(plan_steps(prepare_seconds))&limit=1" -H "apikey: $K"
-curl -s -o /dev/null -w "0015 plan position:       %{http_code}\n" "$U/rest/v1/plans?select=id&order=position.asc&limit=1" -H "apikey: $K"
+curl -s -o /dev/null -w "0013 step intensity:      %{http_code}\n" "$U/rest/v1/workouts?select=id,workout_blocks(workout_steps(intensity))&limit=1" -H "apikey: $K"
+curl -s -o /dev/null -w "0014 step prepare:        %{http_code}\n" "$U/rest/v1/workouts?select=id,workout_blocks(workout_steps(prepare_seconds))&limit=1" -H "apikey: $K"
+curl -s -o /dev/null -w "0015 workout position:       %{http_code}\n" "$U/rest/v1/workouts?select=id&order=position.asc&limit=1" -H "apikey: $K"
 curl -s -o /dev/null -w "0016 alternates_sides:    %{http_code}\n" "$U/rest/v1/exercises?select=alternates_sides&limit=1" -H "apikey: $K"
+curl -s -o /dev/null -w "0017 mode dropped:       %{http_code}\n" "$U/rest/v1/exercises?select=default_mode&limit=1" -H "apikey: $K"
+curl -s -o /dev/null -w "0018 preferred_time:     %{http_code}\n" "$U/rest/v1/workouts?select=id,preferred_time&limit=1" -H "apikey: $K"
+curl -s -o /dev/null -w "0018 weekly plans:       %{http_code}\n" "$U/rest/v1/plans?select=id,plan_workouts(workout_id,weekday)&limit=1" -H "apikey: $K"
+curl -s -o /dev/null -w "0018 session columns:    %{http_code}\n" "$U/rest/v1/sessions?select=plan_name&limit=1" -H "apikey: $K"
 ```
 
-`0011` expects **400** (the column is gone); `0012`, `0013`, `0014`, `0015` and `0016` expect
-**200**.
+`0011` and `0017` expect **400** (the columns are gone); `0012`–`0016` and `0018` expect
+**200**. The `0018` weekly-plan probe is the whole weekly model in one request: the embed only
+resolves if `plans`, `plan_workouts` and both ownership policies exist.
 The `0015` line reads nothing but the id, so it also proves the `order` — PostgREST applies it to
 the outer query independently of `select`, which is what lets both clients order by a column they
-never fetch.
+never fetch. `plans` is ordered the same way by its `created_at`, which that probe does not select.
 
-**`reorder_plans` cannot be probed this way.** These curls carry no session, and the function
-raises `28000` on a null `auth.uid()` exactly as `save_plan` does — so whatever status comes back
+**`reorder_workouts` cannot be probed this way.** These curls carry no session, and the function
+raises `28000` on a null `auth.uid()` exactly as `save_workout` does — so whatever status comes back
 is an answer about authentication rather than about the function, and a `403` looks the same
 whether the function is absent or merely refusing an anonymous caller. Ask the SQL editor instead,
 where the answer is a row rather than a number:
 
 ```sql
-select proname from pg_proc where proname in ('save_plan', 'reorder_plans');
+select proname from pg_proc
+ where proname in ('save_workout', 'reorder_workouts', 'save_plan', 'reorder_plans');
+-- save_workout and reorder_workouts only; the other two were dropped in 0018.
 ```
 
 **`0010` cannot be probed this way** — it only deletes rows, and RLS means an anonymous
@@ -227,19 +242,19 @@ select count(*) from exercises where user_id is null;   -- 0 once 0010 has run
 
 | If the database is… | then the web app | and the phone |
 |---|---|---|
-| ahead of the code (a column was added) | its insert names a column that is not there → `400` on create | a named select over that column → every fetch `400`s, plan list falls back to the cache |
+| ahead of the code (a column was added) | its insert names a column that is not there → `400` on create | a named select over that column → every fetch `400`s, workout list falls back to the cache |
 | behind the code (a column was dropped) | it still writes the dropped column → `400` on create | unaffected: it selects by name and ignores what it does not ask for |
 
-**The third direction is the quiet one.** A column *added* to `plan_steps` does not break the
-deployed bundle — it simply does not send the key — but `save_plan` replaces the whole tree, so
+**The third direction is the quiet one.** A column *added* to `workout_steps` does not break the
+deployed bundle — it simply does not send the key — but `save_workout` replaces the whole tree, so
 every save from that bundle writes null over it. Nothing 400s and nothing is logged; the values
-are just gone the next time a plan is saved. Apply an additive migration and `npm run deploy` in
+are just gone the next time a workout is saved. Apply an additive migration and `npm run deploy` in
 the same sitting, before anything is authored into the new column. (`0014` is the worked example.)
 
 **The fourth is quieter still, and `0015` is it**: a column no client ever *writes*. A stale bundle
 saves exactly as it did, so there is nothing to lose — but it also cannot *read* the new order, and
 a read naming a column that is not there is a `400` with an empty list rather than an error anyone
-would recognise. On the phone that is indistinguishable from having no plans. So the rule holds and
+would recognise. On the phone that is indistinguishable from having no workouts. So the rule holds and
 gets stricter: migrate first, then deploy, then rebuild.
 
 So the rule is **migrations first, clients second**, and the client-side half is manual:
@@ -254,7 +269,7 @@ curl -s https://oronzo.valerio-donati.workers.dev/ | grep -o 'assets/index-[^"]*
 ```
 
 then fetch that file and grep it for a string literal only the newest code contains — for
-example `intensity,prepare_seconds` (the plan select, `0014`), `reorder_plans` (the reorder RPC,
+example `intensity,prepare_seconds` (the workout select, `0014`), `reorder_workouts` (the reorder RPC,
 `0015`), or `2 sides`. Zero hits means the live bundle predates that change, whatever is in the
 working tree.
 
@@ -263,16 +278,16 @@ working tree.
 Debug builds accept two launch arguments that skip sign-in entirely:
 
 ```bash
-xcrun simctl launch booted com.lerio.oronzo -demoSession   # a realistic plan
+xcrun simctl launch booted com.lerio.oronzo -demoSession   # a realistic workout
 xcrun simctl launch booted com.lerio.oronzo -demoFinish    # 6 seconds, reaches the summary
-xcrun simctl launch booted com.lerio.oronzo -demoRecord    # the same plan, written down
+xcrun simctl launch booted com.lerio.oronzo -demoRecord    # the same workout, written down
 ```
 
 `-demoRecord` is `-demoSession` with the session record left on disk, which is what makes the
 resume path testable without an account — see [Reproducing a cleared watch](#reproducing-a-cleared-watch).
 
 Useful for working on the runner UI without an account or a network. Release builds have
-no such entry point — see `ios/Oronzo/Session/DemoPlan.swift`, which is wrapped in
+no such entry point — see `ios/Oronzo/Session/DemoWorkout.swift`, which is wrapped in
 `#if DEBUG`.
 
 The watch app has the same escape hatch, seeding a session already in progress so its
@@ -375,7 +390,7 @@ console):
 | `host: a record was found but is not live (phase …)` | A record exists but is finished, or older than six hours. It is not resumed; the phone still answers the watch from it while it is fresh. |
 | `session: re-asserted by …` | A runner reappeared onto a session that was already running. Normal, and the fix for a wrist that was cleared and never told again. |
 | `health: recorded the workout ending …` | Health accepted the finished workout. **The only proof the write worked** — the app requests write-only access, so it can never read its own sample back to check. |
-| `health: not recorded — Ns is under the 180s minimum` | The three-minute rule declined the session. Ordinary for a mis-tap, or a plan tapped through faster than it runs. |
+| `health: not recorded — Ns is under the 180s minimum` | The three-minute rule declined the session. Ordinary for a mis-tap, or a workout tapped through faster than it runs. |
 | `health: could not write the workout — …` | Health refused the save. The summary shows this line too. The usual cause is permission: Settings → Health → Data Access & Devices → Oronzo. A refused save is offered again by a later launch (see the owed write below), so fixing permission can still rescue a workout that is still inside its window. |
 | `health: owed the workout ending …` | The obligation was written to `health-owed.json` before the attempt. Every real session that clears three minutes logs this, and most are settled moments later. |
 | `health: offering … (attempt N of 3, version V)` | An attempt is being made — the first one from the summary, or a later one from launch, foreground, or an unlock. The version only ever climbs; that is what keeps a second attempt from becoming a second workout. |

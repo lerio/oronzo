@@ -1,24 +1,28 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import ExercisePicker from '../components/ExercisePicker';
-import { getPlan, listExercises, savePlan } from '../lib/api';
+import { addPlanWorkout, getWorkout, listExercises, listPlans, saveWorkout } from '../lib/api';
 import { errorMessage } from '../lib/errors';
 import {
   INTENSITIES,
-  estimatePlanDuration,
-  flattenPlan,
+  WEEKDAYS,
+  estimateWorkoutDuration,
+  flattenWorkout,
   formatDuration,
   repsDisplay,
+  toInputTime,
   weightDisplay,
   type Exercise,
   type Intensity,
-  type Plan,
-  type PlanBlock,
-  type PlanStep,
   type StepMode,
+  type WeekPlan,
+  type Weekday,
+  type Workout,
+  type WorkoutBlock,
+  type WorkoutStep,
 } from '../lib/types';
 
-const blankPlan = (): Plan => ({ id: '', name: '', blocks: [] });
+const blankWorkout = (): Workout => ({ id: '', name: '', preferred_time: null, blocks: [] });
 
 /** What the "get in position" checkbox writes. The column is a duration so that a per-step value
  * would need no second migration; five seconds is the only value there is for now. */
@@ -28,14 +32,21 @@ const PREPARE_SECONDS = 5;
 const DEFAULT_REPS = 10;
 const DEFAULT_DURATION_SECONDS = 45;
 
-function stepFromExercise(exercise?: Exercise): PlanStep {
+/** Offered as chips next to the time input. Any other time can be picked with the input. */
+const TIME_PRESETS = [
+  { label: 'Morning', time: '07:00' },
+  { label: 'Midday', time: '12:00' },
+  { label: 'Evening', time: '18:00' },
+];
+
+function stepFromExercise(exercise?: Exercise): WorkoutStep {
   return {
     exercise_id: exercise?.id ?? null,
     position: 0,
     label: null,
     sets: 1,
     // Reps until the author says otherwise: the mode belongs to the step now, so the same
-    // exercise can run on reps in one plan and on the clock in another.
+    // exercise can run on reps in one workout and on the clock in another.
     mode: 'reps',
     duration_seconds: null,
     reps: DEFAULT_REPS,
@@ -47,7 +58,7 @@ function stepFromExercise(exercise?: Exercise): PlanStep {
     intensity: null,
     // Opt-in, and off until somebody ticks it: a timed step is not always work — the seeded HIIT
     // blocks prescribe their recoveries as timed steps too, and nothing tells those apart from a
-    // hold. See `flattenPlan`.
+    // hold. See `flattenWorkout`.
     prepare_seconds: null,
   };
 }
@@ -55,13 +66,13 @@ function stepFromExercise(exercise?: Exercise): PlanStep {
 /**
  * Switching a step between reps and time.
  *
- * The field the new mode needs is filled in when it is missing — `plan_steps_mode_shape` refuses
- * a timed step with no duration and a rep step with no rep target. The other mode's fields are
- * cleared rather than left set-but-hidden: the flattener carries `intensity` and
+ * The field the new mode needs is filled in when it is missing — `workout_steps_mode_shape`
+ * refuses a timed step with no duration and a rep step with no rep target. The other mode's
+ * fields are cleared rather than left set-but-hidden: the flattener carries `intensity` and
  * `target_weight_kg` into the interval whatever the mode, so a stale one would show up in the
  * preview on an interval it does not describe.
  */
-function modePatch(step: PlanStep, mode: StepMode): Partial<PlanStep> {
+function modePatch(step: WorkoutStep, mode: StepMode): Partial<WorkoutStep> {
   return mode === 'time'
     ? {
         mode,
@@ -79,10 +90,10 @@ function modePatch(step: PlanStep, mode: StepMode): Partial<PlanStep> {
 }
 
 /** Re-index positions from array order — positions must always be contiguous per parent. */
-function normalize(plan: Plan): Plan {
+function normalize(workout: Workout): Workout {
   return {
-    ...plan,
-    blocks: plan.blocks.map((block, blockIndex) => ({
+    ...workout,
+    blocks: workout.blocks.map((block, blockIndex) => ({
       ...block,
       position: blockIndex,
       steps: block.steps.map((step, stepIndex) => ({ ...step, position: stepIndex })),
@@ -91,23 +102,33 @@ function normalize(plan: Plan): Plan {
 }
 
 /**
- * Mirrors the DB's plan_steps_mode_shape constraint, so problems surface before a failed save
+ * Mirrors the DB's workout_steps_mode_shape constraint, so problems surface before a failed save
  * rather than as a raw Postgres error.
  */
-function stepProblem(step: PlanStep): string | null {
+function stepProblem(step: WorkoutStep): string | null {
   if (!step.exercise_id) return 'Pick an exercise';
   if (step.mode === 'time' && !step.duration_seconds) return 'Needs a duration';
   if (step.mode === 'reps' && !step.reps) return 'Needs a rep target';
   return null;
 }
 
-export default function PlanEditor() {
+export default function WorkoutEditor() {
   const { id } = useParams();
+  const [params] = useSearchParams();
   const navigate = useNavigate();
   const isNew = !id;
 
-  const [plan, setPlan] = useState<Plan | null>(null);
+  /** Set by the week board: after a save, schedule the new workout and return to that plan. */
+  const planId = params.get('plan');
+  const weekdayParam = params.get('weekday');
+  const returnWeekday = weekdayParam != null && /^[1-7]$/.test(weekdayParam)
+    ? (Number(weekdayParam) as Weekday)
+    : null;
+
+  const [workout, setWorkout] = useState<Workout | null>(null);
   const [exercises, setExercises] = useState<Exercise[]>([]);
+  const [plans, setPlans] = useState<WeekPlan[]>([]);
+  const [plansUnavailable, setPlansUnavailable] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
@@ -116,18 +137,24 @@ export default function PlanEditor() {
     let cancelled = false;
     (async () => {
       try {
-        // In parallel: the two requests do not depend on each other, and awaiting them in turn
-        // made opening an existing plan two round trips deep instead of one. `setExercises`
-        // happens once both are in, exactly as before.
-        const [loaded, found] = await Promise.all([
+        // In parallel: the requests do not depend on each other, and awaiting them in turn made
+        // opening an existing workout two round trips deep instead of one.
+        const [loadedExercises, found, loadedPlans] = await Promise.all([
           listExercises(),
-          isNew ? Promise.resolve(null) : getPlan(id!),
+          isNew ? Promise.resolve(null) : getWorkout(id!),
+          // The "Scheduled in" line is secondary: a plan fetch failure must not block editing.
+          listPlans().catch(() => {
+            setPlansUnavailable(true);
+            setError('Could not load plan memberships.');
+            return [] as WeekPlan[];
+          }),
         ]);
         if (cancelled) return;
-        setExercises(loaded);
-        setPlan(isNew ? blankPlan() : (found ?? blankPlan()));
+        setExercises(loadedExercises);
+        setPlans(loadedPlans);
+        setWorkout(isNew ? blankWorkout() : (found ?? blankWorkout()));
       } catch (err) {
-        if (!cancelled) setError(errorMessage(err, 'Could not load plan'));
+        if (!cancelled) setError(errorMessage(err, 'Could not load workout'));
       }
     })();
     return () => {
@@ -143,41 +170,56 @@ export default function PlanEditor() {
   );
 
   const preview = useMemo(
-    () => (plan ? flattenPlan(plan, exercisesById) : []),
-    [plan, exercisesById],
+    () => (workout ? flattenWorkout(workout, exercisesById) : []),
+    [workout, exercisesById],
   );
 
   // `exercisesById` is listed as well as `preview`, rather than relied on through it: the rep
   // half of the estimate reads the map directly, so a changed map with an unchanged preview
   // would otherwise leave the total stale.
   const duration = useMemo(
-    () => (plan ? estimatePlanDuration(plan, preview, exercisesById) : { seconds: 0, isEstimate: false }),
-    [plan, preview, exercisesById],
+    () => (workout
+      ? estimateWorkoutDuration(workout, preview, exercisesById)
+      : { seconds: 0, isEstimate: false }),
+    [workout, preview, exercisesById],
   );
 
-  // Per step, in the plan's own shape, so each row below can index straight into it. Flattened it
-  // would lose which step each problem belongs to, and the row would have to work it out again —
-  // which is what it did, so every keystroke walked all the steps twice.
+  // Per step, in the workout's own shape, so each row below can index straight into it. Flattened
+  // it would lose which step each problem belongs to, and the row would have to work it out again.
   const stepProblems = useMemo(
-    () => plan?.blocks.map((block) => block.steps.map(stepProblem)) ?? [],
-    [plan],
+    () => workout?.blocks.map((block) => block.steps.map(stepProblem)) ?? [],
+    [workout],
   );
   const problemCount = stepProblems.reduce(
     (total, block) => total + block.filter((problem) => problem !== null).length,
     0,
   );
 
-  if (!plan) return <p className="muted">{error ?? 'Loading…'}</p>;
+  const memberships = useMemo(() => {
+    if (!workout || isNew) return [];
+    return plans.flatMap((plan) => {
+      const days = plan.slots
+        .filter((slot) => slot.workout_id === workout.id)
+        .map((slot) => WEEKDAYS.find((day) => day.value === slot.weekday)?.label ?? '');
+      return days.length > 0 ? [`${plan.name} · ${days.join(', ')}`] : [];
+    });
+  }, [plans, workout, isNew]);
 
-  const mutate = (fn: (draft: Plan) => Plan) => setPlan((current) => (current ? normalize(fn(current)) : current));
+  if (!workout) return <p className="muted">{error ?? 'Loading…'}</p>;
 
-  const updateBlock = (blockIndex: number, patch: Partial<PlanBlock>) =>
+  const mutate = (fn: (draft: Workout) => Workout) =>
+    setWorkout((current) => (current ? normalize(fn(current)) : current));
+
+  const setPreferredTime = (time: string | null) =>
+    mutate((draft) => ({ ...draft, preferred_time: time }));
+
+  const updateBlock = (blockIndex: number, patch: Partial<WorkoutBlock>) =>
     mutate((draft) => ({
       ...draft,
       blocks: draft.blocks.map((block, i) => (i === blockIndex ? { ...block, ...patch } : block)),
     }));
 
-  const updateStep = (blockIndex: number, stepIndex: number, patch: Partial<PlanStep>) =>
+  const updateStep = (blockIndex: number, stepIndex: number, patch: Partial<WorkoutStep>) =>
     mutate((draft) => ({
       ...draft,
       blocks: draft.blocks.map((block, i) =>
@@ -214,7 +256,7 @@ export default function PlanEditor() {
       return { ...draft, blocks };
     });
 
-  const addStep = (blockIndex: number, step: PlanStep) =>
+  const addStep = (blockIndex: number, step: WorkoutStep) =>
     mutate((draft) => ({
       ...draft,
       blocks: draft.blocks.map((block, i) => (i === blockIndex ? { ...block, steps: [...block.steps, step] } : block)),
@@ -259,9 +301,9 @@ export default function PlanEditor() {
   }
 
   async function onSave() {
-    if (!plan) return;
-    if (!plan.name.trim()) {
-      setError('Give the plan a name first.');
+    if (!workout) return;
+    if (!workout.name.trim()) {
+      setError('Give the workout a name first.');
       return;
     }
     if (problemCount > 0) {
@@ -271,9 +313,20 @@ export default function PlanEditor() {
     setSaving(true);
     setError(null);
     try {
-      const savedId = await savePlan(plan);
+      const savedId = await saveWorkout(workout);
       setSavedAt(new Date().toLocaleTimeString());
-      if (isNew) navigate(`/plans/${savedId}`, { replace: true });
+
+      // The week board's "New workout for <day>" / "New workout" paths come back here. The
+      // membership is a separate row by design; a 23505 (already on that day) is a no-op.
+      if (planId) {
+        if (returnWeekday != null) {
+          await addPlanWorkout(planId, savedId, returnWeekday);
+        }
+        navigate(`/plans/${planId}`);
+        return;
+      }
+
+      if (isNew) navigate(`/workouts/${savedId}`, { replace: true });
     } catch (err) {
       setError(errorMessage(err, 'Save failed'));
     } finally {
@@ -281,17 +334,14 @@ export default function PlanEditor() {
     }
   }
 
-  // Derived once per plan change rather than on every render. This was the worst of the three
-  // memos put in: `stepProblem` ran over every step for `problems`, and then ran again per row
-  // inside the JSX below — so a single keystroke in any field walked all the steps twice.
   return (
     <section>
       <div className="page-head">
-        <h1>{isNew ? 'New plan' : 'Edit plan'}</h1>
+        <h1>{isNew ? 'New workout' : 'Edit workout'}</h1>
         <div className="head-actions">
           {savedAt && <span className="muted small">Saved {savedAt}</span>}
           <button className="primary" onClick={() => void onSave()} disabled={saving}>
-            {saving ? 'Saving…' : 'Save plan'}
+            {saving ? 'Saving…' : 'Save workout'}
           </button>
         </div>
       </div>
@@ -302,20 +352,61 @@ export default function PlanEditor() {
         <label className="field">
           <span>Name</span>
           <input
-            value={plan.name}
+            value={workout.name}
             placeholder="e.g. Push A"
             onChange={(e) => mutate((draft) => ({ ...draft, name: e.target.value }))}
           />
         </label>
+
+        <div className="field">
+          <span>Preferred time</span>
+          <div className="time-choices">
+            <button
+              type="button"
+              className={workout.preferred_time === null ? 'time-choice active' : 'time-choice'}
+              onClick={() => setPreferredTime(null)}
+            >
+              Anytime
+            </button>
+            {TIME_PRESETS.map((preset) => (
+              <button
+                key={preset.time}
+                type="button"
+                className={workout.preferred_time === preset.time ? 'time-choice active' : 'time-choice'}
+                onClick={() => setPreferredTime(preset.time)}
+              >
+                {preset.label} <span className="muted small">{preset.time}</span>
+              </button>
+            ))}
+            <input
+              type="time"
+              value={toInputTime(workout.preferred_time)}
+              onChange={(e) => setPreferredTime(e.target.value || null)}
+              aria-label="Custom preferred time"
+            />
+          </div>
+          <p className="muted small">
+            Used to order the day on the phone and in the week board.
+          </p>
+        </div>
+
+        <p className="muted small">
+          {isNew
+            ? 'Save it, then schedule it into a weekly plan.'
+            : plansUnavailable
+              ? 'Plan memberships unavailable.'
+              : memberships.length > 0
+                ? `Scheduled in ${memberships.join('; ')}.`
+                : 'Not in a plan yet.'}
+        </p>
       </div>
 
       <div className="summary-bar">
         <span>
-          {plan.blocks.length} block{plan.blocks.length === 1 ? '' : 's'} · {preview.length} interval
+          {workout.blocks.length} block{workout.blocks.length === 1 ? '' : 's'} · {preview.length} interval
           {preview.length === 1 ? '' : 's'}
-          {/* No longer "of timed work": the figure now includes the reps, as the phone's does. */}
           {duration.seconds > 0 &&
-            ` · ~${formatDuration(duration.seconds)}${duration.isEstimate ? ' plus reps' : ''}`}
+            ` · ${duration.isEstimate ? '~' : ''}${formatDuration(duration.seconds)}`}
         </span>
         <span className="muted small">
           An exercise's <em>sets</em> is its set count; a block's <em>rounds</em> repeats the whole
@@ -323,7 +414,7 @@ export default function PlanEditor() {
         </span>
       </div>
 
-      {plan.blocks.map((block, blockIndex) => (
+      {workout.blocks.map((block, blockIndex) => (
         <div key={blockIndex} className="card block-card">
           <div className="block-head">
             <input
@@ -393,8 +484,7 @@ export default function PlanEditor() {
 
                 {/* Nothing belongs to a step until it has an exercise. Which fields apply — a
                     rep target and a load, or a duration — is the step's own mode, chosen below;
-                    before an exercise is picked there is nothing here that would not be a guess.
-                    The row says "Pick an exercise" below and waits. */}
+                    before an exercise is picked there is nothing here that would not be a guess. */}
                 {step.exercise_id && (
                   <>
                     <label className="inline-field" title="How many times this exercise repeats — its set count">
@@ -410,8 +500,8 @@ export default function PlanEditor() {
                       />
                     </label>
 
-                    {/* The one choice the exercise used to make. Both modes are always offered:
-                        an exercise can be a rep target in one plan and a hold in another. */}
+                    {/* Both modes are always offered: an exercise can be a rep target in one
+                        workout and a hold in another. */}
                     <label
                       className="inline-field"
                       title="Whether this step runs on a rep target or on the clock"
@@ -447,10 +537,6 @@ export default function PlanEditor() {
                           />
                         </label>
 
-                        {/* Offered for a timed step only, and optional within one: the effort is
-                            what a HIIT interval is prescribed as, while a strength hold is just a
-                            hold. "—" is the same empty placeholder the numeric fields use, and it
-                            means the interval says nothing about effort while it runs. */}
                         <label
                           className="inline-field"
                           title="How hard this interval is meant to be — shown while it runs"
@@ -473,12 +559,6 @@ export default function PlanEditor() {
                           </select>
                         </label>
 
-                        {/* A timed step starts the moment the previous one ends, so the first
-                            seconds of the hold are spent getting into position. Ticking this puts
-                            a five-second "Get in position" in front of every set — and before
-                            each side of a two-sided exercise. The value is a duration in the
-                            database so a per-step one would need no migration; five seconds is
-                            the only value there is for now. */}
                         <label
                           className="inline-field"
                           title="A five-second 'Get in position' before each set of this exercise"

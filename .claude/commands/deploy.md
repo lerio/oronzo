@@ -1,5 +1,5 @@
 ---
-description: Deploy the plan builder to Cloudflare, after checking it is safe to
+description: Deploy the workout builder to Cloudflare, after checking it is safe to
 argument-hint: [optional note about what is being shipped]
 ---
 
@@ -30,6 +30,13 @@ So, before deploying, ask: has the schema changed since the last deploy, and in 
   still exists — so deploying first is strictly the safe order.
 - **Added a column the new bundle needs?** Migrate first, or the new bundle 400s on arrival.
 
+**A breaking rename is the third case, and `0018` is it.** The old bundle selects `plan_blocks`
+and calls `save_plan`; the new bundle selects `workout_blocks` and calls `save_workout`. Neither
+one runs against the other's schema, so neither "deploy first" nor "migrate first" is safe alone.
+Build both clients, apply `0018`/`0019`, deploy the web bundle and install the iPhone app in one
+sitting; the session columns kept their names so the old phone can still write history during the
+window. See `docs/integration-contracts.md` and `docs/runbook.md`.
+
 State which case this is before running the deploy. If it is neither, say so.
 
 ## 3. Deploy
@@ -41,7 +48,7 @@ cd web && npm run deploy
 `npm run deploy` is `npm run build && wrangler deploy`. `web/wrangler.jsonc` holds the target:
 `assets.directory: ./dist` (without it wrangler publishes the whole source folder — which
 "succeeds" while serving entirely the wrong thing) and
-`not_found_handling: single-page-application` (without it a hard refresh on `/plans/<id>` 404s,
+`not_found_handling: single-page-application` (without it a hard refresh on `/workouts/<id>` 404s,
 because the router is client-side).
 
 There is **no git integration** — a push to `main` does not publish. This command is the only
@@ -51,7 +58,7 @@ way the site changes.
 
 Live at https://oronzo.valerio-donati.workers.dev.
 
-Verify rather than assume: load the URL and check the plan list renders, and that signing in
+Verify rather than assume: load the URL and check the workout list renders, and that signing in
 works. A deploy that reports success but serves a stale bundle is the exact failure
 `assets.directory` guards against, and it looks identical to a successful one from the terminal.
 

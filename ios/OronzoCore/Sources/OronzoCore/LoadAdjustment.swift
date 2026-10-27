@@ -1,18 +1,18 @@
 import Foundation
 
 /// A step's load as the user has left it: the value the runner's arrows move, and the value
-/// Adjust writes back to `plan_steps`.
+/// Adjust writes back to `workout_steps`.
 ///
 /// It belongs to a **step**, not an interval and not an exercise. An interval is one execution of a
 /// step — one set, one side, one round — and the whole point of adjusting is that all of them move
-/// together; an exercise can appear in several steps of one plan at different loads, which is why
-/// `exerciseID` would be the wrong key. `stepID` is what `PlanFlattener` carries across for it.
+/// together; an exercise can appear in several steps of one workout at different loads, which is why
+/// `exerciseID` would be the wrong key. `stepID` is what `WorkoutFlattener` carries across for it.
 ///
 /// The value is *pending* until Adjust commits it. Nothing here knows about the network or the
 /// session — it is a value, and `SessionController` decides what to do with it.
 public struct StepLoadEdit: Equatable, Sendable {
 
-    /// The `plan_steps` row this edit belongs to.
+    /// The `workout_steps` row this edit belongs to.
     public let stepID: UUID
 
     /// The whole load, not a delta. An edit is seeded from the interval it was started on, so the
@@ -72,7 +72,7 @@ public enum LoadDial {
 
     /// One tap on a weight arrow.
     ///
-    /// **Floors at zero**, because `plan_steps.target_weight_kg` carries `check (>= 0)` — a
+    /// **Floors at zero**, because `workout_steps.target_weight_kg` carries `check (>= 0)` — a
     /// negative weight is a request the database refuses, and the arrow would be offering
     /// something the save cannot keep. Rounded to two decimals on the way out, which is the
     /// column's own scale (`numeric(6, 2)`): repeatedly adding 2.5 to a value that is not itself

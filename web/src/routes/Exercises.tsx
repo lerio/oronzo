@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { Link } from 'react-router-dom';
 import {
   createExercise,
   deleteExercise,
   listExercises,
-  plansUsingExercise,
+  workoutsUsingExercise,
   updateExercise,
 } from '../lib/api';
 import { errorMessage, isForeignKeyViolation, isUniqueViolation } from '../lib/errors';
@@ -16,26 +17,26 @@ import {
 } from '../lib/types';
 
 /**
- * Why the exercise cannot go yet, naming the plans that hold it.
+ * Why the exercise cannot go yet, naming the workouts that hold it.
  *
- * The refusal is a RESTRICT foreign key: `plan_steps.exercise_id` cannot be left orphaned, so a
- * plan step still points at this exercise. That is deliberate — silently gutting a plan would be
- * worse — and it is also the whole rule, since an exercise no plan uses deletes normally. It
+ * The refusal is a RESTRICT foreign key: `workout_steps.exercise_id` cannot be left orphaned, so a
+ * workout step still points at this exercise. That is deliberate — silently gutting a workout would be
+ * worse — and it is also the whole rule, since an exercise no workout uses deletes normally. It
  * arrives as a 409, reported by `isForeignKeyViolation`.
  *
- * Naming them is the point of the message: the refusal is correct, but "a plan" is not something
+ * Naming them is the point of the message: the refusal is correct, but "a workout" is not something
  * you can go and act on. Best-effort — if the lookup itself fails the sentence is still true,
  * just less immediately useful.
  */
 async function inUseMessage(exercise: Exercise): Promise<string> {
-  const fallback = `"${exercise.name}" is still used by a plan. Remove it from that plan first.`;
+  const fallback = `"${exercise.name}" is still used by a workout. Remove it from that workout first.`;
   try {
-    const plans = await plansUsingExercise(exercise.id);
-    if (plans.length === 0) return fallback;
+    const workouts = await workoutsUsingExercise(exercise.id);
+    if (workouts.length === 0) return fallback;
     const where =
-      plans.length === 1
-        ? `the plan "${plans[0]}"`
-        : `these plans: ${plans.map((name) => `"${name}"`).join(', ')}`;
+      workouts.length === 1
+        ? `the workout "${workouts[0].name}"`
+        : `these workouts: ${workouts.map((workout) => `"${workout.name}"`).join(', ')}`;
     return `"${exercise.name}" is used by ${where}. Remove it there first.`;
   } catch {
     return fallback;
@@ -69,11 +70,11 @@ function groupOptions(stored: string): readonly string[] {
 }
 
 /**
- * What changing how an exercise is performed will do to the plans that use it — said while the
+ * What changing how an exercise is performed will do to the workouts that use it — said while the
  * change is being staged, and only then.
  *
  * **It is not a rename, which is why it used to be read-only here.** `has_two_sides` doubles every
- * interval of every plan using this exercise (a set becomes left, then right) and taking it away
+ * interval of every workout using this exercise (a set becomes left, then right) and taking it away
  * halves them again; `alternates_sides` keeps one interval per set but changes what the step's rep
  * count means — the total for both sides rather than the number for each. Silently rewriting the
  * shape of a workout from a panel that otherwise edits a label is the thing this line exists to
@@ -82,31 +83,49 @@ function groupOptions(stored: string): readonly string[] {
 function sidesChangeNote(exercise: Exercise, sides: Sides): string | null {
   if (sides === sidesOf(exercise)) return null;
   const notes: Record<Sides, string> = {
-    none: '1 side stops the left/right split, halving the intervals of every plan using this exercise.',
-    two: '2 sides makes every set of every plan using this exercise two intervals — left, then right.',
+    none: '1 side stops the left/right split, halving the intervals of every workout using this exercise.',
+    two: '2 sides makes every set of every workout using this exercise two intervals — left, then right.',
     alternate:
       'Alternating keeps one interval per set, and reads the step’s reps as the total for both sides.',
   };
   return notes[sides];
 }
 
-/** What is known about which plans hold an exercise: the names, or why they are not here. */
-type Usage = string[] | 'loading' | 'unavailable';
+/** What is known about which workouts hold an exercise: the names, or why they are not here. */
+type Usage = { id: string; name: string }[] | 'loading' | 'unavailable';
 
 /**
- * "Used in N plans", or what to say instead while that is unknown.
+ * "Used in N workouts", or what to say instead while that is unknown.
  *
- * Named rather than counted, for the reason `inUseMessage` gives: a bare number is not something
- * you can go and act on. `unavailable` is deliberately not `0` — "not used in any plan" is a
- * claim, and it is the one wrong claim that would make someone think a delete will succeed when
- * this page is about to refuse it.
+ * Named and linked rather than counted, for the reason `inUseMessage` gives: a bare number is not
+ * something you can go and act on. `unavailable` is deliberately not `0` — "not used in any
+ * workout" is a claim, and it is the one wrong claim that would make someone think a delete will
+ * succeed when this page is about to refuse it.
  */
-function usageLine(state: Usage | undefined): string {
-  if (state === undefined || state === 'loading') return 'Checking which plans use this…';
-  if (state === 'unavailable') return 'Could not check which plans use this.';
-  if (state.length === 0) return 'Not used in any plan.';
-  const where = state.map((plan) => `"${plan}"`).join(', ');
-  return `Used in ${state.length} plan${state.length === 1 ? '' : 's'}: ${where}`;
+function UsageLine({ state }: { state: Usage | undefined }) {
+  if (state === undefined || state === 'loading') {
+    return <p className="muted small">Checking which workouts use this…</p>;
+  }
+  if (state === 'unavailable') {
+    return <p className="muted small">Could not check which workouts use this.</p>;
+  }
+  if (state.length === 0) {
+    return <p className="muted small">Not used in any workout.</p>;
+  }
+
+  return (
+    <p className="muted small">
+      Used in {state.length} workout{state.length === 1 ? '' : 's'}:{' '}
+      {state.map((workout, index) => (
+        <span key={workout.id}>
+          <Link className="link-btn" to={`/workouts/${workout.id}`}>
+            {workout.name}
+          </Link>
+          {index < state.length - 1 ? ', ' : ''}
+        </span>
+      ))}
+    </p>
+  );
 }
 
 export default function Exercises() {
@@ -142,7 +161,7 @@ export default function Exercises() {
   const [editError, setEditError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   /**
-   * Which plans hold an exercise, asked the first time its panel is opened and kept for the life
+   * Which workouts hold an exercise, asked the first time its panel is opened and kept for the life
    * of the page. Keyed by id rather than held as "the open one": there is no cancellation anywhere
    * in this app, and keying is what stops a slow answer landing under the exercise the user has
    * since moved to.
@@ -217,19 +236,19 @@ export default function Exercises() {
   }
 
   /**
-   * Asks which plans hold this exercise, once.
+   * Asks which workouts hold this exercise, once.
    *
-   * Deliberately not on page load: `plansUsingExercise` is a whole plan list behind a one-line
+   * Deliberately not on page load: `workoutsUsingExercise` is a whole workout list behind a one-line
    * answer, and this page is usually read rather than edited. Answered once per exercise per visit
-   * rather than on every open, because nothing *on this page* can change the answer — a plan built
+   * rather than on every open, because nothing *on this page* can change the answer — a workout built
    * in another tab is the one thing that can, and the same staleness is already assumed by
    * `inUseMessage` and by the delete it reports on.
    */
   function loadUsage(exerciseId: string) {
     if (usage[exerciseId]) return;
     setUsage((current) => ({ ...current, [exerciseId]: 'loading' }));
-    plansUsingExercise(exerciseId)
-      .then((names) => setUsage((current) => ({ ...current, [exerciseId]: names })))
+    workoutsUsingExercise(exerciseId)
+      .then((workouts) => setUsage((current) => ({ ...current, [exerciseId]: workouts })))
       .catch(() => setUsage((current) => ({ ...current, [exerciseId]: 'unavailable' })));
   }
 
@@ -237,7 +256,7 @@ export default function Exercises() {
    * Saves the three fields the panel owns — its name, its group, and how it is performed.
    *
    * The sides flags go from the draft like every other field, and the note above the buttons is
-   * what says they are not a rename: changing one re-lays-out every plan using this exercise. The
+   * what says they are not a rename: changing one re-lays-out every workout using this exercise. The
    * database is still the authority on the shapes it allows — `exercises_sides_shape` — and the
    * draft cannot express the pair it refuses.
    *
@@ -354,7 +373,7 @@ export default function Exercises() {
             : `No exercise matches “${filter.trim()}”.`}
         </p>
       ) : (
-        <ul className="plan-list">
+        <ul className="workout-list">
           {filtered.map((exercise) => {
             const isEditing = draft?.id === exercise.id;
             // Computed per row rather than inside the form, so the one call that decides it is
@@ -363,17 +382,17 @@ export default function Exercises() {
             return (
               <li
                 key={exercise.id}
-                className={isEditing ? 'card plan-row editing' : 'card plan-row'}
+                className={isEditing ? 'card workout-row editing' : 'card workout-row'}
               >
-                <div className="plan-main">
-                  <span className="plan-name">{exercise.name}</span>
+                <div className="workout-main">
+                  <span className="workout-name">{exercise.name}</span>
                   <span className="muted small">{exerciseSummary(exercise)}</span>
                 </div>
 
                 {/* The pair the Plans list shows, so the two pages read the same. Edit toggles
                     rather than opening a second panel: only one row is ever expanded, and its own
                     Cancel is the other way out. */}
-                <div className="plan-actions">
+                <div className="workout-actions">
                   <button
                     className="link-btn"
                     aria-expanded={isEditing}
@@ -446,13 +465,13 @@ export default function Exercises() {
                     </div>
 
                     {/* Said only while the change is staged, and it is the price of offering the
-                        field at all: the flags re-lay-out every plan that uses this exercise, so
+                        field at all: the flags re-lay-out every workout that uses this exercise, so
                         the consequence is named before Save rather than discovered afterwards. */}
                     {sidesNote && <p className="muted small">{sidesNote}</p>}
 
                     {/* Muted even when the check failed: the red in here is reserved for a save
                         that did not happen, which is the only thing needing an action. */}
-                    <p className="muted small">{usageLine(usage[exercise.id])}</p>
+                    <UsageLine state={usage[exercise.id]} />
 
                     {editError && <p className="error small">{editError}</p>}
 

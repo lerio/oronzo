@@ -18,7 +18,7 @@ final class LoadAdjustmentTests: XCTestCase {
         XCTAssertEqual(LoadDial.weight(0, up: true), 2.5)
     }
 
-    /// `plan_steps.target_weight_kg` is `check (target_weight_kg >= 0)`, so an arrow that could
+    /// `workout_steps.target_weight_kg` is `check (target_weight_kg >= 0)`, so an arrow that could
     /// offer a negative weight would be offering a save the database refuses. It stops at zero.
     func testWeightFloorsAtZero() {
         XCTAssertEqual(LoadDial.weight(2.5, up: false), 0)

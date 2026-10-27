@@ -123,7 +123,7 @@ final class PressEchoTests: XCTestCase {
         XCTAssertNil(echo)
     }
 
-    func testAPressWithNoPlanBehindItIsRefused() {
+    func testAPressWithNoWorkoutBehindItIsRefused() {
         let echo = PressEcho.earned(
             by: .next, intervals: [], showing: 0, isPaused: false, isFinished: false, now: t0
         )

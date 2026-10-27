@@ -3,14 +3,14 @@ import Foundation
 import OronzoCore
 import SwiftUI
 
-/// A plan built in code, so the session runner can be exercised without an account, a
+/// A workout built in code, so the session runner can be exercised without an account, a
 /// backend or a network.
 ///
 /// Launch with `-demoSession` to go straight to the runner, or use the `#Preview` below.
 /// Debug builds only — the release build has no such entry point.
-enum DemoPlan {
+enum DemoWorkout {
 
-    static var launchArgumentPlan: Plan? {
+    static var launchArgumentWorkout: Workout? {
         let arguments = ProcessInfo.processInfo.arguments
         if arguments.contains("-demoSession") { return make() }
         if arguments.contains("-demoRecord") { return make() }
@@ -34,13 +34,13 @@ enum DemoPlan {
         ProcessInfo.processInfo.arguments.contains("-demoRecord")
     }
 
-    /// `-demoSummary` shows the plan summary rather than the runner. See `RootView`.
+    /// `-demoSummary` shows the workout summary rather than the runner. See `RootView`.
     ///
-    /// It is a separate plan rather than `make()` because the two exist to show different
+    /// It is a separate workout rather than `make()` because the two exist to show different
     /// things: `make()` sets every step's `label`, and the builder sets **none** of them
-    /// (`docs/known-issues.md` §1 — no input in `PlanEditor.tsx` writes the field). So `make()`
+    /// (`docs/known-issues.md` §1 — no input in `WorkoutEditor.tsx` writes the field). So `make()`
     /// never exercises the branch that actually runs in production, where a step is named from
-    /// the exercise table. This one is in the shape a real plan arrives in.
+    /// the exercise table. This one is in the shape a real workout arrives in.
     static var wantsSummary: Bool {
         ProcessInfo.processInfo.arguments.contains("-demoSummary")
     }
@@ -58,7 +58,7 @@ enum DemoPlan {
         ProcessInfo.processInfo.arguments.contains("-demoAdjust")
     }
 
-    /// Stable ids, because the plan and the info it resolves against are built separately.
+    /// Stable ids, because the workout and the info it resolves against are built separately.
     private static let benchID = UUID(uuidString: "00000000-0000-0000-0000-00000000B001")!
     private static let pulldownID = UUID(uuidString: "00000000-0000-0000-0000-00000000B002")!
     private static let squatID = UUID(uuidString: "00000000-0000-0000-0000-00000000B003")!
@@ -67,10 +67,10 @@ enum DemoPlan {
     /// Stable **step** ids, in a namespace of their own.
     ///
     /// A step id is what the runner writes a load adjustment back through, so a demo needs one to
-    /// exercise the arrows at all — but it must never be able to name a real `plan_steps` row,
+    /// exercise the arrows at all — but it must never be able to name a real `workout_steps` row,
     /// even if a launch were somehow signed in. These are fabricated rather than random for
     /// exactly that reason, the same way the exercise ids above are: `00000000-…-000000000001`
-    /// cannot collide with a `gen_random_uuid()`. Belt and braces with `SessionController.savesPlan`,
+    /// cannot collide with a `gen_random_uuid()`. Belt and braces with `SessionController.savesWorkout`,
     /// which stops the request being sent at all.
     ///
     /// They also let `make()` show why the id belongs to the *step* and not the exercise: it uses
@@ -99,23 +99,23 @@ enum DemoPlan {
         rowID: ExerciseInfo(name: "One-Arm Dumbbell Row", hasTwoSides: true),
     ]
 
-    /// Shaped the way `save_plan` writes a plan: `exercise_id` set, `label` null throughout.
-    static func builderShaped() -> Plan {
-        Plan(
+    /// Shaped the way `save_workout` writes a workout: `exercise_id` set, `label` null throughout.
+    static func builderShaped() -> Workout {
+        Workout(
             id: UUID(),
             name: "Demo — Built in the web app",
             blocks: [
-                PlanBlock(name: "Warm-up", steps: [
-                    PlanStep(id: stepID(7), exerciseID: squatID, mode: .time, duration: 90),
+                WorkoutBlock(name: "Warm-up", steps: [
+                    WorkoutStep(id: stepID(7), exerciseID: squatID, mode: .time, duration: 90),
                 ]),
-                PlanBlock(name: "Main work", steps: [
-                    PlanStep(id: stepID(8), exerciseID: benchID, sets: 4, mode: .reps, reps: 8,
+                WorkoutBlock(name: "Main work", steps: [
+                    WorkoutStep(id: stepID(8), exerciseID: benchID, sets: 4, mode: .reps, reps: 8,
                              targetWeightKg: 20, restAfter: 90),
-                    PlanStep(id: stepID(9), exerciseID: pulldownID, sets: 3, mode: .reps, reps: 10,
+                    WorkoutStep(id: stepID(9), exerciseID: pulldownID, sets: 3, mode: .reps, reps: 10,
                              targetWeightKg: 50, restAfter: 60),
                 ]),
-                PlanBlock(name: "Finisher", rounds: 4, steps: [
-                    PlanStep(id: stepID(10), exerciseID: squatID, mode: .time, duration: 30, restAfter: 15),
+                WorkoutBlock(name: "Finisher", rounds: 4, steps: [
+                    WorkoutStep(id: stepID(10), exerciseID: squatID, mode: .time, duration: 30, restAfter: 15),
                 ]),
             ]
         )
@@ -123,21 +123,21 @@ enum DemoPlan {
 
     /// Six seconds end to end, so the finish-and-save path can be exercised without waiting
     /// two minutes for a real warm-up to drain.
-    static func short() -> Plan {
-        Plan(
+    static func short() -> Workout {
+        Workout(
             id: UUID(),
             name: "Demo — Finish",
             blocks: [
-                PlanBlock(steps: [
-                    PlanStep(id: stepID(11), label: "Sprint", mode: .time, duration: 3),
-                    PlanStep(id: stepID(12), label: "Breathe", mode: .time, duration: 3),
+                WorkoutBlock(steps: [
+                    WorkoutStep(id: stepID(11), label: "Sprint", mode: .time, duration: 3),
+                    WorkoutStep(id: stepID(12), label: "Breathe", mode: .time, duration: 3),
                 ]),
             ]
         )
     }
 
-    static func make() -> Plan {
-        Plan(
+    static func make() -> Workout {
+        Workout(
             id: UUID(),
             name: "Demo — Upper Body A",
             blocks: [
@@ -145,18 +145,18 @@ enum DemoPlan {
                 // for preparation time, so the very first interval of a demo session is the
                 // "Get in position" one. That is the case worth looking at: a prepare in front of
                 // interval 0, with nothing before it to have emitted it.
-                PlanBlock(name: "Warm-up", steps: [
-                    PlanStep(id: stepID(1), label: "Warm-up", mode: .time, duration: 120,
+                WorkoutBlock(name: "Warm-up", steps: [
+                    WorkoutStep(id: stepID(1), label: "Warm-up", mode: .time, duration: 120,
                              intensity: .low, prepareSeconds: 5),
                 ]),
-                PlanBlock(name: "Main work", steps: [
-                    PlanStep(id: stepID(2), label: "Flat Dumbbell Bench Press", sets: 4, mode: .reps,
+                WorkoutBlock(name: "Main work", steps: [
+                    WorkoutStep(id: stepID(2), label: "Flat Dumbbell Bench Press", sets: 4, mode: .reps,
                              reps: 8, targetWeightKg: 20, restAfter: 90),
-                    PlanStep(id: stepID(3), label: "Neutral-Grip Lat Pulldown", sets: 4, mode: .reps,
+                    WorkoutStep(id: stepID(3), label: "Neutral-Grip Lat Pulldown", sets: 4, mode: .reps,
                              reps: 6, targetWeightKg: 50, restAfter: 90),
                     // The one step carrying an exercise id rather than a label, so the session
                     // runs the two-sided path — left, right, rest — with no backend behind it.
-                    PlanStep(id: stepID(4), exerciseID: rowID, sets: 3, mode: .reps,
+                    WorkoutStep(id: stepID(4), exerciseID: rowID, sets: 3, mode: .reps,
                              reps: 10, targetWeightKg: 22, restAfter: 60),
                 ]),
                 // The effort used to be spelled into the labels ("Hard — 20 sec"), which was the
@@ -165,10 +165,10 @@ enum DemoPlan {
                 // The work bout asks for preparation time and the recovery does not, which is the
                 // whole point of the field being per-step: both are timed steps, and nothing but
                 // the author can tell them apart. A demo session therefore shows both answers.
-                PlanBlock(name: "HIIT", rounds: 6, steps: [
-                    PlanStep(id: stepID(5), label: "Sprint", mode: .time, duration: 20,
+                WorkoutBlock(name: "HIIT", rounds: 6, steps: [
+                    WorkoutStep(id: stepID(5), label: "Sprint", mode: .time, duration: 20,
                              intensity: .hard, prepareSeconds: 5),
-                    PlanStep(id: stepID(6), label: "Recover", mode: .time, duration: 40, intensity: .low),
+                    WorkoutStep(id: stepID(6), label: "Recover", mode: .time, duration: 40, intensity: .low),
                 ]),
             ]
         )
@@ -178,11 +178,11 @@ enum DemoPlan {
 #Preview("Session runner") {
     // Built here rather than by `SessionHost`, because a preview has no app lifetime to hang a
     // session on — and nothing in the runner needs one, now that it does not own its controller.
-    // The store is the one the app injects, and the runner reads it for the plan a saved
+    // The store is the one the app injects, and the runner reads it for the workout a saved
     // adjustment changes.
     SessionRunner(
-        controller: SessionController(plan: DemoPlan.make(), exercises: DemoPlan.builderExercises)
+        controller: SessionController(workout: DemoWorkout.make(), exercises: DemoWorkout.builderExercises)
     )
-    .environment(PlanStore.seeded(DemoPlan.builderExercises))
+    .environment(TrainingStore.seeded(DemoWorkout.builderExercises))
 }
 #endif

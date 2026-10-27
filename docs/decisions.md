@@ -12,9 +12,9 @@ chosen, and are marked as such — those are the ones that will bite you if you 
 | iOS app | SwiftUI, iOS 26 | `ios/Oronzo/` |
 | Watch app | SwiftUI, watchOS 26 | `ios/OronzoWatch/` |
 
-**Plans are authored only in the web app.** The iPhone executes them; the Watch displays
-them. That separation is deliberate: building a structured workout on a phone is miserable,
-and building one on a watch is worse.
+**Workouts and weekly plans are authored only in the web app.** The iPhone selects a weekly
+plan and executes one workout; the Watch displays it. That separation is deliberate: building a
+structured workout on a phone is miserable, and building one on a watch is worse.
 
 ## The one idea that matters
 
@@ -24,9 +24,42 @@ dates**, so the Watch renders an always-accurate countdown and fires its own hap
 a per-second message stream. It keeps working when the phone is briefly unreachable or
 suspended, which is what makes the free-tier constraints survivable rather than crippling.
 
+## Workouts are templates; plans are schedules
+
+A **workout** is the reusable tree that is executed: blocks of exercises, plus a nullable
+`preferred_time` — when it is best done. A **plan** is a **weekly template**: a name and a set of
+`plan_workouts` rows assigning workouts to weekdays (ISO 1 = Monday … 7 = Sunday). It has no dates
+and no start or end; it repeats until edited.
+
+The split is driven by reuse. Before `0018`, a workout existed once, inside one plan, so running
+the same session on Monday and Thursday meant copying its whole tree. Now the workout is the
+template and a membership is one row: a workout may be in zero plans (the library is the
+backlog), on several days, and in several plans. Deleting a workout removes its memberships and
+leaves history; deleting a plan removes only the schedule.
+
+Five consequences are decisions rather than accidents:
+
+- **The preferred time lives on the workout, not on the membership.** It describes when that
+  workout is best done, so it travels with the workout wherever it is scheduled. It is wall-clock,
+  `time without time zone`, no reminder semantics. If a different time per plan/day is ever
+  wanted, the column moves to `plan_workouts`; that is not a thing to guess into now.
+- **A day is ordered by time, not by a second position.** `preferred_time` ascending (null last),
+  then name, then id, in `WeekSchedule.precedes` and `compareWorkoutsByTimeThenName`. A per-day
+  position would be a second ordering that can disagree with the one the user set.
+- **The schedule is written one row at a time.** Add/remove/move is one `plan_workouts` insert or
+  delete; a move is insert-target then delete-source. There is no whole-week RPC and no whole-week
+  payload, so a stale tab cannot overwrite a week and a failed row rolls back alone. The workout
+  tree keeps its atomic `save_workout`; the schedule is not a tree.
+- **The phone's active plan is a device preference**, `@AppStorage("activePlanID")`, not a column.
+  Two phones can sit on different plans, and the Watch never learns about either.
+- **The migration kept the session column names.** `sessions.plan_id`/`plan_name` were not renamed
+  in `0018`; the FK follows `plans` → `workouts` by OID, so the ids are still right, and an old
+  iPhone can finish a workout and write history during the cutover. A later migration may rename
+  them once every client is installed.
+
 ## Workout model: a step is an exercise, and rest is synthetic
 
-A plan is an ordered list of **blocks**, each repeating its ordered list of **steps**
+A workout is an ordered list of **blocks**, each repeating its ordered list of **steps**
 `rounds` times. A step is always an **exercise** — timed (auto-advance) or rep-based (tap to
 advance). A step is never a rest.
 
@@ -51,9 +84,9 @@ double rests that are painful to debug in the editor.
 
 Two things were tried and removed, rather than merely hidden:
 
-- **Standalone rest steps** (`plan_steps.kind = 'rest'`, dropped in `0006`). Once rest lived
+- **Standalone rest steps** (`workout_steps.kind = 'rest'`, dropped in `0006`). Once rest lived
   on the step and the block, a rest step had nothing left to express.
-- **Plan and step notes** (dropped in `0008`). Step notes were still editable in the builder
+- **Workout and step notes** (dropped in `0008`). Step notes were still editable in the builder
   but iOS decoded and discarded them, so guidance like "per side" never reached a workout.
   Half-supporting a field is worse than not having it.
 
@@ -63,9 +96,9 @@ Two things were tried and removed, rather than merely hidden:
   once, after both sides, and both intervals read "set 1 of 3". See below for why the side is
   carried in the interval's name.
 
-**Effort is structured now** (`plan_steps.intensity`, `0013`). A timed interval is prescribed as a
+**Effort is structured now** (`workout_steps.intensity`, `0013`). A timed interval is prescribed as a
 duration *and* an effort, and the effort had nowhere to live but the step's `label` — the seeded
-plans write "Hard — 20 sec" and `PlanFlattener` prefers a label over the exercise name, so it
+workouts write "Hard — 20 sec" and `WorkoutFlattener` prefers a label over the exercise name, so it
 reached the screen as a name. A name is not a value: nothing could reason about it, and the
 builder cannot set a label at all (`docs/known-issues.md` §1). The three words are policed by a
 check constraint rather than by the client, the same way `mode` is, so no fourth word can exist and
@@ -83,9 +116,9 @@ in the minute). Adding it means a new interval concept, not a new column.
 
 **Why two-sided lives on the exercise, and why it rides in the name.** The flag is a property of
 the movement, not of a prescription, so it sits on `exercises` and is resolved while flattening —
-ticking it changes every plan that uses the exercise, which is what "this movement has two sides"
-means. The alternative, snapshotting it onto `plan_steps` the way `mode` is snapshotted, would
-have needed a column there, a seventh redefinition of `save_plan`, and an edit to both
+ticking it changes every workout that uses the exercise, which is what "this movement has two sides"
+means. The alternative, snapshotting it onto `workout_steps` the way `mode` is snapshotted, would
+have needed a column there, a seventh redefinition of `save_workout`, and an edit to both
 hand-written PostgREST select strings.
 
 Carrying the side in `Interval.name` rather than in a field of its own costs no wire change at
@@ -109,9 +142,9 @@ deliberately *not* two-sided, so `sideSuffixes` already returns `[nil]` for it a
 one interval per set — you switch sides inside it. The rest falls once, a `prepareSeconds` falls
 once, and the stream is identical in length, order and timings to what an ordinary one-sided
 exercise produces; the name is the only difference. It also makes the feature cheap in a way worth
-protecting — `PlanFlattenerTests` pins the side count for an alternating exercise, because what
+protecting — `WorkoutFlattenerTests` pins the side count for an alternating exercise, because what
 matters is the *length* of what `sideSuffixes` returns: a case giving it `["left", "right"]` would
-double both the intervals a workout emits and the reps `PlanSummary` allows, while looking like a
+double both the intervals a workout emits and the reps `WorkoutSummary` allows, while looking like a
 renaming.
 
 **The marker rides in `Interval.name`, for the third time.** Same reasoning as the side and the
@@ -151,9 +184,9 @@ argument would give the same answer only if the flags failed the same way, and t
 that has never heard of `alternates_sides` still flattens an alternating exercise into the right
 number of intervals, and all that is lost is the `(alt)` on the name. `AGENTS.md`'s rule — a field
 whose absence costs a display name may be optional, one whose absence changes the workout may not —
-puts the two on opposite sides. `PlanStore.CachedPlanList` carries the argument in full.
+puts the two on opposite sides. `TrainingStore.CachedPlanList` carries the argument in full.
 
-## Getting in position: the plan asks for it, and the interval has no type of its own
+## Getting in position: the workout asks for it, and the interval has no type of its own
 
 A timed interval starts the instant the previous one ends, so the first seconds of a hold are spent
 getting into the hold. The fix is five seconds of "Get in position" in front of it — and four
@@ -164,13 +197,13 @@ gets one — was written, planned and then dropped, because a timed step is *not
 seeded HIIT blocks prescribe their recoveries as timed steps (`Hard — 20 sec` alternating with
 `Easy — 40 sec`, and the demo's `Recover`), and nothing in the model distinguishes a recovery from
 a hold: `intensity` is optional and a warm-up is `.low` too, and there is no other candidate.
-Under the blanket rule Monday's plan gains twelve prepares and sixty seconds, six of them in front
-of a recovery. So the decision moved to where the knowledge is — `plan_steps.prepare_seconds`, and
+Under the blanket rule Monday's workout gains twelve prepares and sixty seconds, six of them in front
+of a recovery. So the decision moved to where the knowledge is — `workout_steps.prepare_seconds`, and
 a checkbox on the timed rows of the builder.
 
 **A duration, not a flag.** `rest_after_seconds` is the shape being copied, and the ask was
 explicit that five seconds is only today's value: with seconds in the column, a per-step value is
-a builder change and not a ninth `save_plan`. The builder holds the `5`; the database does not care
+a builder change and not a ninth `save_workout`. The builder holds the `5`; the database does not care
 what it holds, so nothing has to be migrated to widen it.
 
 **No new `StepKind` case, and no new field on `Interval`.** This is the `0012` reasoning applied
@@ -213,7 +246,7 @@ The consequences are the point of the design, not a side effect:
   the server actually refuses — may change it.
 * A request that then fails shows its reason and offers the way out (Sign out → sign in), rather
   than the app silently logging itself out and taking the user's context with it.
-* `PlanStore.refresh()` gets one retry behind a `refreshSession()` — but only when the failure
+* `TrainingStore.refresh()` gets one retry behind a `refreshSession()` — but only when the failure
   looks like the session (a 401, or the words "jwt", "unauthorized", "refresh token"). The common
   case it fixes is a request that arrives holding a token that expired a moment ago. It is gated
   rather than unconditional because `refreshSession()` *rotates* the refresh token, and rotating
@@ -277,7 +310,7 @@ mattered.
 record was introduced to fix, one layer further in.** The link answered from what it had been
 *told* to advertise (set when the runner's `start()` claims it) and then from the record on disk.
 But between `SessionHost.begin` and that claim there is a window where the app has a session, the
-engine holds the whole plan, and the link has been told nothing. An ask landing in that window —
+engine holds the whole workout, and the link has been told nothing. An ask landing in that window —
 or `activationDidCompleteWith` firing in it — was answered **"nothing running"**, and that answer
 is a `.sessionEnded` written into the single-slot application context with the same authority as
 everything else. The phone's own log, captured on paired simulators:
@@ -519,7 +552,7 @@ simulators (the `/check` suite uses it) and never for a device.
 change of `isPaired`/`isWatchAppInstalled` is written at notice level as a `link:` line that
 survives in a `log collect` archive, and a scene-forward refresh covers the suspended case. The
 warning that used to be drawn only inside a running session — the worst possible moment — now also
-sits on the plan list and the plan summary (`WatchLinkWarning`), where the next workout is chosen.
+sits on the workout list and the workout summary (`WatchLinkWarning`), where the next workout is chosen.
 
 **What is still open, and how this rule is judged.** Which hash the wrist reports for a *fat*
 embedded binary — the whole file or the arm64 slice — is the one thing the first push measures; the
@@ -570,7 +603,7 @@ Four decisions inside that are worth keeping:
   finished; a live one is left ticking and on the wrist. `onDisappear` fires for reasons that are
   not "the user left", and treating it as an ending is what let a spurious one take a session apart.
 * **Ownership moved out of the view.** `SessionHost` is created once by `OronzoApp` and injected,
-  like `AuthStore` and `PlanStore`; `SessionRunner` no longer builds a controller in
+  like `AuthStore` and `TrainingStore`; `SessionRunner` no longer builds a controller in
   `@State(initialValue:)`. The guards that contained that hazard are kept — they cost nothing and
   catch a regression — but nothing new needs them.
 
@@ -759,18 +792,18 @@ Watch has not yet hit in use.
 
 ## Adjusting a load mid-workout: one row, and no way for a fixture to reach it
 
-The runner's load arrows write `plan_steps.target_weight_kg` / `intensity` for the step being
+The runner's load arrows write `workout_steps.target_weight_kg` / `intensity` for the step being
 performed. Four things about that were decided rather than fallen into.
 
-**One row, not `save_plan`.** There are exactly two ways a step's load can change, and the other one
-is the wrong tool twice over: `save_plan` replaces the whole tree, so it mints new block and step
-ids — invalidating the very id the running session is holding — and it would write back a plan the
+**One row, not `save_workout`.** There are exactly two ways a step's load can change, and the other one
+is the wrong tool twice over: `save_workout` replaces the whole tree, so it mints new block and step
+ids — invalidating the very id the running session is holding — and it would write back a workout the
 web builder may have changed since the session started. A narrow `PATCH` needs no new SQL: the
-`for all` policy and the `update` grant on `plan_steps` both date from `0001`.
+`for all` policy and the `update` grant on `workout_steps` both date from `0001`.
 
 **An empty echo is a failure.** PostgREST answers a `PATCH` that matched no rows with `200` and `[]`,
 which is what both a stale step id and an RLS-refused row look like from the client. Without checking
-the response the runner would report a save that went nowhere. It is reported as *"this plan changed
+the response the runner would report a save that went nowhere. It is reported as *"this workout changed
 elsewhere"*, and the stale id is the likelier cause by a distance — every web save mints new ones.
 
 **The interval carries its step id, and the id is optional.** `SessionRecord` holds the interval list
@@ -786,59 +819,59 @@ of production only incidentally, by the app happening to be signed out; this wri
 that. For a fixture the commit folds into the session and reports success without sending anything,
 which is also what makes the arrows exercisable by `-demoSession -demoAdjust` with no account.
 
-## The plan list's order is content, and it belongs to the user
+## The workout list's order is content, and it belongs to the user
 
-The list of plans was ordered by `updated_at desc` — not by a decision, but by what a timestamp
-will do if you let it. It meant the order could not be chosen at all (the only way to move a plan
-up was to edit it), and that editing a plan *did* move it, which is a different thing wearing the
+The list of workouts was ordered by `updated_at desc` — not by a decision, but by what a timestamp
+will do if you let it. It meant the order could not be chosen at all (the only way to move a workout
+up was to edit it), and that editing a workout *did* move it, which is a different thing wearing the
 same clothes. The list is the picker you scroll on your way into a workout, so its order is
 content, and content the user cannot arrange is content that is wrong.
 
-`plans.position` (`0015`) stores that order, and both clients read it. Three choices inside it are
+`workouts.position` (`0015`) stores that order, and both clients read it. Three choices inside it are
 worth the ink, because each looks like an accident and is not:
 
 **The first is that it is in the database at all.** `localStorage` would have been less work and
 correct on a desktop — and would have been wrong the moment the order had to mean anything on the
-phone, which is the whole point. The iPhone fetches the plans and has no way to ask the browser
+phone, which is the whole point. The iPhone fetches the workouts and has no way to ask the browser
 what it thinks.
 
 **The second is the deferrable constraint.** `unique (user_id, position)` is the only deferrable
 constraint in the schema, because it is the only one whose rows are renumbered **in place**:
-`plan_blocks` and `plan_steps` get a fresh tree on every save, so their constraints never see a
+`workout_blocks` and `workout_steps` get a fresh tree on every save, so their constraints never see a
 transient collision. PostgreSQL checks a non-deferrable unique constraint per row, so renumbering
 0,1,2 to 1,2,0 fails on a state that is never committed. Deferring moves the check to COMMIT,
 which PostgREST makes the end of the request — with the honest consequence that a violation
 arrives as a `500` from the commit rather than from the function that caused it. That is why
-`reorder_plans` refuses a partial list rather than trusting one: a list it cannot complete is a
+`reorder_workouts` refuses a partial list rather than trusting one: a list it cannot complete is a
 failure it cannot report.
 
 **The third is that the backfill runs with `plans_set_updated_at` disabled.** The trigger is
 `new.updated_at = now()` with no condition, so a plain `update … set position` would have stamped
-every plan with the migration's own timestamp — destroying the ordering the backfill exists to
+every workout with the migration's own timestamp — destroying the ordering the backfill exists to
 preserve, and doing it most invisibly on a phone that has not been rebuilt yet, which still orders
 by that column. It is the only place in the schema where a trigger is switched off, and the reason
 is that this migration must not have a side effect.
 
-**What is accepted.** Reordering, and creating a plan at the top, both bump `updated_at` on every
-plan the user owns — the same trigger fires, and there is no way to write a position without it.
+**What is accepted.** Reordering, and creating a workout at the top, both bump `updated_at` on every
+workout the user owns — the same trigger fires, and there is no way to write a position without it.
 The backfill is the one write that does not, because it runs with the trigger disabled, and the
 worth of that is bounded and worth stating exactly: it keeps the *pre-migration* order readable by
 a phone that has not been rebuilt yet, and it stops being true the first time anything writes a
 position. Nothing reads `updated_at` for ordering afterwards, and nothing renders it, so the cost
 is a column whose meaning is now "last time the list was touched" rather than "last edited". If
-something ever needs to know when a plan was last *edited*, that will have to be a `WHEN` clause on
+something ever needs to know when a workout was last *edited*, that will have to be a `WHEN` clause on
 the trigger or a second column — and this paragraph is here so that the difference is found before
 it is relied on.
 
-**What it forecloses.** A new plan goes to the top, which means `save_plan` shifts the whole list
+**What it forecloses.** A new workout goes to the top, which means `save_workout` shifts the whole list
 down on the insert path. That is O(n) writes for a rare event on a personal account, and it buys
 two things the sibling tables also keep: positions are **non-negative**, and inserting never
-requires a negative one. The alternative — giving a new plan `min(position) - 1` and dropping the
-check — is cheaper and would have made `plans` the one table whose positions can go below zero.
+requires a negative one. The alternative — giving a new workout `min(position) - 1` and dropping the
+check — is cheaper and would have made `workouts` the one table whose positions can go below zero.
 
 Contiguity is *not* on that list, and the difference is worth stating because it is the sort of
-claim that gets built on: **deleting a plan leaves a gap.** `deletePlan` is a bare delete and
-nothing renumbers, so removing the middle of three plans leaves `{0, 2}`. That is harmless — the
+claim that gets built on: **deleting a workout leaves a gap.** `deletePlan` is a bare delete and
+nothing renumbers, so removing the middle of three workouts leaves `{0, 2}`. That is harmless — the
 order is still a total order, uniqueness is about equality rather than adjacency, and the shift
 and the seed scripts' append are both gap-safe — and the next drag heals it, because a reorder
 renumbers `0..n-1`. But it is why nothing should ever "tidy up" gaps with a
@@ -854,7 +887,7 @@ implementation.
 
 **It worked.** Feasibility question 10 came back positive — a Live Activity provisions on a free
 personal team with no App Groups and no entitlement beyond `NSSupportsLiveActivities`, which was the
-one genuinely uncertain thing in the whole plan. The countdown was right: an absolute end date handed
+one genuinely uncertain thing in the whole workout. The countdown was right: an absolute end date handed
 to the system, which renders the timer itself, so the clock stayed correct with no per-second traffic.
 That is the same principle the Watch is built on, and it held.
 

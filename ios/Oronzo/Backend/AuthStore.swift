@@ -28,7 +28,7 @@ final class AuthStore {
     /// renewed that second.
     ///
     /// So the keychain decides the state, and renewing is a best-effort follow-up whose failure is
-    /// logged rather than acted on. If a request then turns out to be unauthorized, `PlanStore`
+    /// logged rather than acted on. If a request then turns out to be unauthorized, `TrainingStore`
     /// says so in words the person can act on, and Sign out → sign in again is the way out — which
     /// is also the only thing that *should* clear a session.
     func restore() async {

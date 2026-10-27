@@ -16,11 +16,11 @@ struct SessionRunner: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
 
-    /// The plans and exercises this session was started from.
+    /// The workouts and exercises this session was started from.
     ///
     /// Needed for one thing: a committed load adjustment changes a step, and the app's own copy of
-    /// that plan has to change with it. See `.onAppear` below.
-    @Environment(PlanStore.self) private var store
+    /// that workout has to change with it. See `.onAppear` below.
+    @Environment(TrainingStore.self) private var store
 
     /// **Owned by `SessionHost`, not by this view.** It used to be `@State(initialValue:)`, which
     /// SwiftUI re-evaluates on every re-render — so the view built controllers it threw away, and
@@ -73,7 +73,7 @@ struct SessionRunner: View {
         .onAppear {
             controller.start()
             // The one thing a saved adjustment has to reach that the controller cannot: the app's
-            // own copy of the plan. Without it the plan list, the plan detail screen and the next
+            // own copy of the workout. Without it the workout list, the workout detail screen and the next
             // session started in this app run would all still say the old weight.
             controller.onLoadEditCommitted = { [store] edit in store.applyLoadEdit(edit) }
         }
@@ -443,7 +443,7 @@ struct SessionRunner: View {
     private var topBar: some View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(controller.planName)
+                Text(controller.workoutName)
                     .font(.system(size: captionSize, weight: .semibold))
                     .foregroundStyle(ColorRole.text.color(colorScheme))
                     .lineLimit(1)
@@ -542,7 +542,7 @@ struct SessionRunner: View {
             VStack(spacing: 4) {
                 Text(session.status == .completed ? "Workout complete" : "Session ended early")
                     .font(.title2.bold())
-                Text(controller.planName)
+                Text(controller.workoutName)
                     .foregroundStyle(.secondary)
             }
 
@@ -677,8 +677,8 @@ struct SessionRunner: View {
         do {
             try await SessionLogger().log(
                 session,
-                planID: controller.planID,
-                planName: controller.planName
+                workoutID: controller.workoutID,
+                workoutName: controller.workoutName
             )
             saving = .saved
         } catch {

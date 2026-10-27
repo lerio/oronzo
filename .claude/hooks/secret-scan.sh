@@ -80,7 +80,7 @@ add_from "ops/keepalive/.dev.vars"     "SUPABASE_PUBLISHABLE_KEY"
 # Deliberately NOT scanned: SUPABASE_PROJECT_REF and VITE_SUPABASE_URL.
 #
 # Both are published on purpose. The ref appears in the JavaScript that every browser
-# running the plan builder downloads, and it is committed by hand in
+# running the workout builder downloads, and it is committed by hand in
 # ops/keepalive/wrangler.jsonc — so scanning for it would block every commit in this
 # repository, which is the fastest way to get a guard switched off. The publishable key is
 # public too (it ships in the same bundle), but it is kept out of the repo as policy, so it

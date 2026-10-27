@@ -23,8 +23,8 @@ enum LoadEditState: Equatable {
 @Observable
 final class SessionController {
 
-    let planID: UUID
-    let planName: String
+    let workoutID: UUID
+    let workoutName: String
 
     private(set) var remaining: TimeInterval?
 
@@ -60,33 +60,33 @@ final class SessionController {
     ///
     /// Deliberately a second flag rather than a reuse of `persistsRecord`, because the two answers
     /// differ for exactly one fixture. `-demoRecord` sets `persistsRecord` — it exists to exercise
-    /// *resume* — and it runs `DemoPlan.make()`, a full-length plan that clears the three-minute
+    /// *resume* — and it runs `DemoWorkout.make()`, a full-length workout that clears the three-minute
     /// bar comfortably. Under one flag, a debug launch would deposit a workout nobody did into
     /// real Apple Health, where it outlives the phone and has to be deleted by hand.
     ///
     /// Read it as: *nobody did this workout, so nothing about it belongs in Health.*
     private let recordsHealth: Bool
 
-    /// Whether this session may write a load adjustment back to the plan.
+    /// Whether this session may write a load adjustment back to the workout.
     ///
     /// A **third** flag rather than a reuse of either above, for the same reason the second one
     /// exists: the three answer three different questions, and one of them differs for exactly one
-    /// case again. `-demoSession` must not write — it runs a realistic plan with no account and no
+    /// case again. `-demoSession` must not write — it runs a realistic workout with no account and no
     /// backend, and the arrows have to be exercisable in it — so for a fixture the commit folds
     /// into the engine and reports success without a request ever being made.
     ///
     /// This is the guard `docs/known-issues.md` §13 asks for on the history write and that the
     /// HealthKit write already has: a fixture must not reach production data. A demo's step ids are
     /// fabricated in a namespace that cannot name a real row, which is the second belt on this.
-    private let savesPlan: Bool
+    private let savesWorkout: Bool
 
     private let audio: WorkoutAudio
-    private let repository = PlanRepository()
+    private let repository = TrainingRepository()
 
-    /// Told when a load adjustment has been written, so the app's own copy of the plan can follow
+    /// Told when a load adjustment has been written, so the app's own copy of the workout can follow
     /// it. Set by the runner, which is the only thing that holds both this session and the store —
-    /// `applyLoadEdit` is what stops the plan list and the next session in this app run from
-    /// disagreeing with the server. See `PlanStore.applyLoadEdit`.
+    /// `applyLoadEdit` is what stops the workout list and the next session in this app run from
+    /// disagreeing with the server. See `TrainingStore.applyLoadEdit`.
     var onLoadEditCommitted: ((StepLoadEdit) -> Void)?
 
     /// Whether this session's outcome has already been offered to Health **by this process**.
@@ -128,22 +128,22 @@ final class SessionController {
     private var lastPushedState: SessionState?
 
     init(
-        plan: Plan,
+        workout: Workout,
         exercises: [UUID: ExerciseInfo],
         audio: WorkoutAudio = WorkoutAudio(),
         persistsRecord: Bool = true,
         recordsHealth: Bool = true,
-        savesPlan: Bool = true
+        savesWorkout: Bool = true
     ) {
-        self.planID = plan.id
-        self.planName = plan.name
+        self.workoutID = workout.id
+        self.workoutName = workout.name
         self.audio = audio
         self.engine = ExecutionEngine(
-            intervals: PlanFlattener.flatten(plan, exercises: exercises)
+            intervals: WorkoutFlattener.flatten(workout, exercises: exercises)
         )
         self.persistsRecord = persistsRecord
         self.recordsHealth = recordsHealth
-        self.savesPlan = savesPlan
+        self.savesWorkout = savesWorkout
         // Deliberately nothing here but construction.
         //
         // `SessionRunner` builds this as a `@State(initialValue:)`, and SwiftUI re-evaluates that
@@ -161,7 +161,7 @@ final class SessionController {
     /// Picks up a workout the phone was already in the middle of.
     ///
     /// Fails when the record cannot describe a real session — see `ExecutionEngine.init?(restoring:)`,
-    /// which refuses rather than half-applying. A refused restore means the plan list, which is a
+    /// which refuses rather than half-applying. A refused restore means the workout list, which is a
     /// worse screen than a resumed runner and a far better one than a runner driving nonsense.
     ///
     /// **Nothing here starts anything.** `SessionHost.restore` calls `start()` on what this returns,
@@ -175,8 +175,8 @@ final class SessionController {
     /// is done to a copy that is about to be discarded.
     init?(restoring record: SessionRecord, audio: WorkoutAudio = WorkoutAudio()) {
         guard let engine = ExecutionEngine(restoring: record) else { return nil }
-        self.planID = record.planID
-        self.planName = record.planName
+        self.workoutID = record.workoutID
+        self.workoutName = record.workoutName
         self.audio = audio
         self.engine = engine
         self.persistsRecord = true
@@ -184,7 +184,7 @@ final class SessionController {
         // that writes one and `-demoRecord` is the only demo that does, but a *restored* session
         // is one that was already running when the app went away, so it is always real.
         self.recordsHealth = true
-        self.savesPlan = true
+        self.savesWorkout = true
     }
 
     // MARK: - What the view reads
@@ -240,7 +240,7 @@ final class SessionController {
                 ?? engine.remainingWhenPaused.map { now.addingTimeInterval($0) },
             isPaused: isPaused,
             isFinished: isFinished,
-            planName: planName,
+            planName: workoutName,
             startedAt: engine.startedAt,
             // The pending edit, so `Adjust` is drawn only over the step it is about — the button
             // and the number above it are then guaranteed to be describing the same change.
@@ -301,11 +301,11 @@ final class SessionController {
 
         Task { @MainActor in
             do {
-                if savesPlan {
+                if savesWorkout {
                     try await writeLoad(edit)
                 } else {
                     // A fixture: the value is real to the session and is never sent anywhere. See
-                    // `savesPlan` — this is what lets `-demoSession` exercise the arrows.
+                    // `savesWorkout` — this is what lets `-demoSession` exercise the arrows.
                     Log.debug("load edit: fixture session, nothing written")
                 }
                 engine.applyLoadEdit(edit)
@@ -338,7 +338,7 @@ final class SessionController {
     }
 
     /// True when the session was renewed, so another attempt is worth making. The same shape as
-    /// `PlanStore.refresh`'s: a signed-out app has no session to renew, and that is `AuthStore`'s
+    /// `TrainingStore.refresh`'s: a signed-out app has no session to renew, and that is `AuthStore`'s
     /// state to report rather than this one's to retry.
     private func renewSession() async -> Bool {
         guard Backend.client.auth.currentSession != nil else { return false }
@@ -354,7 +354,7 @@ final class SessionController {
     /// The SDK's own words for a refused write are unreadable, and this one has a cause worth
     /// naming instead. Everything else is passed through as it came, the same as the history save.
     private static func readable(_ error: Error) -> String {
-        if error is PlanWriteError { return error.localizedDescription }
+        if error is WorkoutWriteError { return error.localizedDescription }
         Log.debug("load edit failed: \(error.localizedDescription)")
         return error.localizedDescription
     }
@@ -402,7 +402,7 @@ final class SessionController {
         refreshFromEngine()
         startTicking()
 
-        // The watch gets the whole plan, so it can keep counting and buzzing even if this
+        // The watch gets the whole workout, so it can keep counting and buzzing even if this
         // phone goes quiet. Sent as part of every update — see SessionSnapshot for why.
         pushState(force: true)
     }
@@ -641,7 +641,7 @@ final class SessionController {
         // Written here, the file follows the engine, and the link follows the file.
         if persistsRecord {
             SessionRecordFile.save(
-                SessionRecord(engine: engine, planID: planID, planName: planName, savedAt: .now)
+                SessionRecord(engine: engine, workoutID: workoutID, workoutName: workoutName, savedAt: .now)
             )
         }
 
@@ -790,7 +790,7 @@ final class SessionController {
         hasWrittenToHealth = true
 
         guard let workout = RecordableWorkout(completed: session) else {
-            // A mis-tap, or a plan tapped through faster than three minutes. Reported rather than
+            // A mis-tap, or a workout tapped through faster than three minutes. Reported rather than
             // hidden: the summary explains the absence, instead of leaving it to be guessed at.
             healthWrite = .tooShort
             Log.health(
@@ -799,7 +799,7 @@ final class SessionController {
             return
         }
 
-        let owed = HealthOwedEntry(planName: planName, workout: workout, createdAt: .now)
+        let owed = HealthOwedEntry(planName: workoutName, workout: workout, createdAt: .now)
         HealthWriteQueue.shared.owe(owed)
         // From here until Health confirms it, there is a reason for the app to stay running —
         // and `stopKeepAlive`, which runs a moment from now, is what makes that true.
@@ -895,7 +895,7 @@ extension SessionController: AdvertisedSession {
     var currentMessage: WatchMessage {
         .session(
             SessionSnapshot(
-                planName: planName,
+                planName: workoutName,
                 intervals: displayedIntervals,
                 startedAt: engine.startedAt ?? .now,
                 state: currentState

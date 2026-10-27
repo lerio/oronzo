@@ -63,8 +63,9 @@ public struct HealthOwedEntry: Codable, Equatable, Sendable {
     /// every attempt for one entry arrives under this same identifier.
     public let id: UUID
 
-    /// Kept so a ledger line — in a log, or in a future screen — can name the workout without the
-    /// plan it came from.
+    /// Kept so a ledger line — in a log, or in a future screen — can name the workout.
+    /// The property and its JSON key are historical; renaming them would lose an owed Health
+    /// write already on disk. It holds the workout's name.
     public let planName: String
 
     /// The span Health is told. Nothing else about the session is here on purpose: the workout is

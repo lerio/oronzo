@@ -18,7 +18,7 @@ import Foundation
 ///
 /// **It carries the interval list, and that is deliberate.** The same argument as
 /// `SessionSnapshot`: the record has to be self-contained, so a workout can be answered and
-/// resumed even if the plan has since been edited or deleted on the server. It is also what makes
+/// resumed even if the workout has since been edited or deleted on the server. It is also what makes
 /// the record and the wire incapable of disagreeing — they are the same intervals out of the same
 /// engine, written in the same closed sequence.
 ///
@@ -33,7 +33,7 @@ public struct SessionRecord: Codable, Equatable, Sendable {
 
     /// How long a written-down session stays resumable.
     ///
-    /// **This bound is doing real work.** A timed plan self-terminates on restore — the engine's
+    /// **This bound is doing real work.** A timed workout self-terminates on restore — the engine's
     /// `tick` walks past every elapsed interval and lands in `.finished` — but a **rep** interval
     /// does not: it has no length, so nothing moves it on, and it would sit there forever waiting
     /// for a tap. The age window is the only thing that stops a forgotten record from resuming a
@@ -42,8 +42,8 @@ public struct SessionRecord: Codable, Equatable, Sendable {
     /// cut off by this.
     public static let maximumAge: TimeInterval = 6 * 60 * 60
 
-    public let planID: UUID
-    public let planName: String
+    public let workoutID: UUID
+    public let workoutName: String
     /// Carried whole. See the type's doc comment.
     public let intervals: [Interval]
     public let startedAt: Date
@@ -66,9 +66,9 @@ public struct SessionRecord: Codable, Equatable, Sendable {
     /// workout is not aged out for having started long ago.
     public let savedAt: Date
 
-    public init(engine: ExecutionEngine, planID: UUID, planName: String, savedAt: Date) {
-        self.planID = planID
-        self.planName = planName
+    public init(engine: ExecutionEngine, workoutID: UUID, workoutName: String, savedAt: Date) {
+        self.workoutID = workoutID
+        self.workoutName = workoutName
         self.intervals = engine.intervals
         self.startedAt = engine.startedAt ?? savedAt
         self.currentIndex = engine.currentIndex
@@ -89,7 +89,7 @@ public struct SessionRecord: Codable, Equatable, Sendable {
     /// sitting there on the next launch — so a field added later must not make it unreadable.
     ///
     /// The split is not arbitrary. What is **required** is exactly what makes the record
-    /// meaningless without it: which plan, which intervals, where in them, and whether it had
+    /// meaningless without it: which workout, which intervals, where in them, and whether it had
     /// started. What is **tolerated** is every detail whose absence only loses something small —
     /// an end date, a held clock, a paused total, the outcomes recorded so far. That way adding a
     /// new detail in a later build is forward-compatible for free, which is the property that
@@ -108,8 +108,8 @@ public struct SessionRecord: Codable, Equatable, Sendable {
             )
         }
 
-        planID = try container.decode(UUID.self, forKey: .planID)
-        planName = try container.decode(String.self, forKey: .planName)
+        workoutID = try container.decode(UUID.self, forKey: .workoutID)
+        workoutName = try container.decode(String.self, forKey: .workoutName)
         intervals = try container.decode([Interval].self, forKey: .intervals)
         startedAt = try container.decode(Date.self, forKey: .startedAt)
         currentIndex = try container.decode(Int.self, forKey: .currentIndex)
@@ -129,8 +129,8 @@ public struct SessionRecord: Codable, Equatable, Sendable {
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(Self.schema, forKey: .schema)
-        try container.encode(planID, forKey: .planID)
-        try container.encode(planName, forKey: .planName)
+        try container.encode(workoutID, forKey: .workoutID)
+        try container.encode(workoutName, forKey: .workoutName)
         try container.encode(intervals, forKey: .intervals)
         try container.encode(startedAt, forKey: .startedAt)
         try container.encode(currentIndex, forKey: .currentIndex)
@@ -145,7 +145,13 @@ public struct SessionRecord: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case schema, planID, planName, intervals, startedAt, currentIndex, phase, savedAt
+        case schema
+        /// The keys predate the workout rename. A record written by an older build must keep
+        /// decoding, and one written mid-workout must stay readable by an older build, so the
+        /// property names follow the model and the wire names do not.
+        case workoutID = "planID"
+        case workoutName = "planName"
+        case intervals, startedAt, currentIndex, phase, savedAt
         case intervalEnd, remainingWhenPaused, pausedTotal, pausedAt, finishedAt, outcomes
     }
 
@@ -166,7 +172,7 @@ public struct SessionRecord: Codable, Equatable, Sendable {
     /// The complete message the watch should be showing. Never partial — see `SessionSnapshot`.
     public var snapshot: SessionSnapshot {
         SessionSnapshot(
-            planName: planName,
+            planName: workoutName,
             intervals: intervals,
             startedAt: startedAt,
             state: state
@@ -212,6 +218,6 @@ public struct SessionRecord: Codable, Equatable, Sendable {
         guard var engine = ExecutionEngine(restoring: self) else { return nil }
         guard engine.phase == .running else { return self }
         _ = engine.tick(now: now)
-        return SessionRecord(engine: engine, planID: planID, planName: planName, savedAt: now)
+        return SessionRecord(engine: engine, workoutID: workoutID, workoutName: workoutName, savedAt: now)
     }
 }

@@ -5,7 +5,7 @@ import WatchKit
 
 /// The watch's half of the link to the phone.
 ///
-/// The phone re-sends the **whole** session — plan and position together — on every change,
+/// The phone re-sends the **whole** session — workout and position together — on every change,
 /// never a "start" followed by separate updates, because the application context is a single
 /// slot and the last write is all that survives. That is what lets the countdown and the
 /// haptics keep working while the phone is out of range or asleep: `WatchProjection` walks
@@ -514,22 +514,22 @@ extension WatchLink {
     /// Seeds a session already in progress, so the screen can be looked at without a paired
     /// phone. Launch with `-demoSession`; debug builds only.
     func loadDemoSession() {
-        let plan = Plan(
+        let workout = Workout(
             name: "Demo",
             blocks: [
-                PlanBlock(name: "Warm-up", steps: [
-                    PlanStep(label: "Easy — 2 min", mode: .time, duration: 120),
+                WorkoutBlock(name: "Warm-up", steps: [
+                    WorkoutStep(label: "Easy — 2 min", mode: .time, duration: 120),
                 ]),
-                PlanBlock(name: "Main work", steps: [
-                    PlanStep(label: "Flat Dumbbell Bench Press", sets: 4, mode: .reps,
+                WorkoutBlock(name: "Main work", steps: [
+                    WorkoutStep(label: "Flat Dumbbell Bench Press", sets: 4, mode: .reps,
                              reps: 8, targetWeightKg: 20, restAfter: 90),
                 ]),
             ]
         )
 
         // No exercise info at all: every step in this fixture carries a label, and nothing here is
-        // two-sided. Passed explicitly rather than defaulted — see `PlanFlattener.flatten`.
-        intervals = PlanFlattener.flatten(plan, exercises: [:])
+        // two-sided. Passed explicitly rather than defaulted — see `WorkoutFlattener.flatten`.
+        intervals = WorkoutFlattener.flatten(workout, exercises: [:])
         state = SessionState(
             currentIndex: 0,
             isPaused: false,

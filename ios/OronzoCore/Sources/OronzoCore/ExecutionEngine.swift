@@ -96,8 +96,8 @@ public struct ExecutionEngine: Sendable {
     /// **Failable, and deliberately strict.** A record is the only thing standing between a
     /// workout and being lost, so every way it could describe something impossible is refused
     /// rather than half-applied: an empty interval list, a session that never started, an index
-    /// past the end of the plan, or an outcome filed against an interval that does not exist.
-    /// The caller shows the plan list instead, which is a worse screen than a resumed runner and
+    /// past the end of the workout, or an outcome filed against an interval that does not exist.
+    /// The caller shows the workout list instead, which is a worse screen than a resumed runner and
     /// a much better one than a runner driving an engine that cannot mean anything.
     ///
     /// **No clock.** Everything the engine needs is in the record, including when a pause began —
@@ -391,7 +391,7 @@ public struct CompletedSession: Equatable, Sendable {
 }
 
 /// Snapshots the exercise *name* and the planned values, so that history still reads
-/// correctly after the plan or the exercise is later renamed or deleted.
+/// correctly after the workout or the exercise is later renamed or deleted.
 public struct CompletedStep: Equatable, Sendable {
     public let position: Int
     /// Which set of the exercise this was (1-based).

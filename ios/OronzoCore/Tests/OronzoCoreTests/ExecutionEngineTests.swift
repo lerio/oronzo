@@ -318,7 +318,7 @@ final class ExecutionEngineTests: XCTestCase {
 
     // MARK: - Adjusting a step's load mid-session
 
-    /// An interval that came from a `plan_steps` row, which is what an adjustment needs to exist.
+    /// An interval that came from a `workout_steps` row, which is what an adjustment needs to exist.
     private func weighted(_ index: Int, step: UUID?, weight: Double, intensity: Intensity? = nil) -> Interval {
         Interval(
             index: index, kind: .exercise, name: "Press", mode: .reps, duration: nil,
@@ -396,12 +396,12 @@ final class ExecutionEngineTests: XCTestCase {
     /// phone that relaunches mid-workout resumes onto the load it was actually using.
     func testACommittedEditSurvivesTheRecord() throws {
         let step = UUID()
-        let planID = UUID()
+        let workoutID = UUID()
         var engine = ExecutionEngine(intervals: [weighted(0, step: step, weight: 20, intensity: .low)])
         _ = engine.start(at: t0)
 
         engine.applyLoadEdit(StepLoadEdit(stepID: step, weightKg: 22.5, intensity: .hard))
-        let record = SessionRecord(engine: engine, planID: planID, planName: "P", savedAt: t0)
+        let record = SessionRecord(engine: engine, workoutID: workoutID, workoutName: "P", savedAt: t0)
 
         let restored = ExecutionEngine(restoring: try WireCodec.decode(
             SessionRecord.self, from: WireCodec.encode(record)
@@ -415,14 +415,14 @@ final class ExecutionEngineTests: XCTestCase {
     // MARK: - End to end
 
     /// "3 x 12 squats, 90s rest", run to completion by tapping through.
-    func testTheCanonicalSetsPlanRunsEndToEnd() {
+    func testTheCanonicalSetsWorkoutRunsEndToEnd() {
         let squat = UUID()
-        let plan = Plan(name: "Squats", blocks: [
-            PlanBlock(steps: [
-                PlanStep(exerciseID: squat, sets: 3, mode: .reps, reps: 12, restAfter: 90),
+        let workout = Workout(name: "Squats", blocks: [
+            WorkoutBlock(steps: [
+                WorkoutStep(exerciseID: squat, sets: 3, mode: .reps, reps: 12, restAfter: 90),
             ]),
         ])
-        let intervals = PlanFlattener.flatten(plan, exercises: [squat: ExerciseInfo(name: "Back Squat")])
+        let intervals = WorkoutFlattener.flatten(workout, exercises: [squat: ExerciseInfo(name: "Back Squat")])
         var engine = ExecutionEngine(intervals: intervals)
 
         _ = engine.start(at: t0)
@@ -446,13 +446,13 @@ final class ExecutionEngineTests: XCTestCase {
 
     /// The other shape: a group that repeats, driven by auto-advance rather than taps.
     func testTheCanonicalCircuitRunsEndToEnd() {
-        let plan = Plan(name: "HIIT", blocks: [
-            PlanBlock(rounds: 3, steps: [
-                PlanStep(label: "Hard", mode: .time, duration: 20),
-                PlanStep(label: "Easy", mode: .time, duration: 40),
+        let workout = Workout(name: "HIIT", blocks: [
+            WorkoutBlock(rounds: 3, steps: [
+                WorkoutStep(label: "Hard", mode: .time, duration: 20),
+                WorkoutStep(label: "Easy", mode: .time, duration: 40),
             ]),
         ])
-        var engine = ExecutionEngine(intervals: PlanFlattener.flatten(plan, exercises: [:]))
+        var engine = ExecutionEngine(intervals: WorkoutFlattener.flatten(workout, exercises: [:]))
         _ = engine.start(at: t0)
 
         // 3 rounds x 60s. Tick once past the end and expect a single coalesced event.

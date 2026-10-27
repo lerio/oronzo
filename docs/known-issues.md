@@ -22,13 +22,13 @@ surface, which was deleted rather than fixed.
 
 ## 1. `label` is supported end-to-end but cannot be set anywhere
 
-**What the code does.** `PlanStep.label` exists in the schema, in `Models.swift`, and in
-`types.ts`. `save_plan` writes it. Both flatteners prefer it over the exercise name, and it is
+**What the code does.** `WorkoutStep.label` exists in the schema, in `Models.swift`, and in
+`types.ts`. `save_workout` writes it. Both flatteners prefer it over the exercise name, and it is
 covered by `testLabelOverridesTheExerciseName`. But the builder sets `label: null` and **no input
-in `PlanEditor.tsx` ever updates it** — so the field is unreachable from the UI.
+in `WorkoutEditor.tsx` ever updates it** — so the field is unreachable from the UI.
 
 One thing labels used to be carrying has since found a home: an interval's *effort*, which the
-seeded plans spell into the label ("Hard — 20 sec"), is `plan_steps.intensity` as of `0013`. That
+seeded workouts spell into the label ("Hard — 20 sec"), is `workout_steps.intensity` as of `0013`. That
 leaves the label with only a rename/alias job, which is what the question below is about.
 
 **Why it may be wrong.** This is exactly the pattern migration `0008` set out to remove: *"Half-
@@ -40,8 +40,8 @@ feature, or is it a leftover that should go the way of `notes`?
 
 ## 2. `sessions.notes` is a dead column
 
-**What the code does.** Nothing reads or writes it. `0008` dropped `plans.notes` and
-`plan_steps.notes` but left this one, while its own header said it was removing *"capabilities the
+**What the code does.** Nothing reads or writes it. `0008` dropped `workouts.notes` and
+`workout_steps.notes` but left this one, while its own header said it was removing *"capabilities the
 app had stopped honouring."*
 
 **Why it may matter.** Harmless in itself, but it is a live column that a future agent could
@@ -50,36 +50,36 @@ reasonably start populating on the assumption that it was kept on purpose.
 **Question.** Drop it in a migration, or is it reserved for a post-session note that was never
 built?
 
-## 3. A failed plan fetch is indistinguishable from an empty account — closed, kept for the reasoning
+## 3. A failed workout fetch is indistinguishable from an empty account — closed, kept for the reasoning
 
-**What the code does.** In `PlanListView.swift:11-32` the error banner lives in the `else` branch
-of `plans.isEmpty`, so it can only render when a *cached* list exists. On a cold start with no
-cache and no network, `plans.isEmpty` matches the empty-state branch first and the user is told:
+**What the code does.** In `TodayView.swift:11-32` the error banner lives in the `else` branch
+of `workouts.isEmpty`, so it can only render when a *cached* list exists. On a cold start with no
+cache and no network, `workouts.isEmpty` matches the empty-state branch first and the user is told:
 
-> "No plans yet — Build one in the web app, then pull to refresh here."
+> "No workouts yet — Build one in the web app, then pull to refresh here."
 
 `store.error` is set and never shown.
 
-**Closed.** `PlanListView` now branches on `plans.isEmpty` *and* `store.error` before the empty
-state, so an unreachable server shows "Can't reach your plans" with the reason and a **Try again**
+**Closed.** `TodayView` now branches on `workouts.isEmpty` *and* `store.error` before the empty
+state, so an unreachable server shows "Can't reach your workouts" with the reason and a **Try again**
 button instead of telling you to go and build one. The second path below is closed with it.
 
 Since `0012`, one more path lands here: a cache file written before that migration lacks
-`twoSidedExerciseIDs`, which is required, so `PlanCache.load()` discards it — deliberately (a file
+`twoSidedExerciseIDs`, which is required, so `TrainingCache.load()` discards it — deliberately (a file
 that decoded would flatten every two-sided exercise once, silently), and with no network the first
-launch after updating shows a *genuinely* empty list. That is now the "No plans yet" branch, which
+launch after updating shows a *genuinely* empty list. That is now the "No workouts yet" branch, which
 is correct: there really is nothing cached to show.
 
 **Why it may be wrong.** The one case the banner was written for — offline with nothing cached —
-is the one case it cannot cover. The copy actively misdirects: it sends the user to build a plan
+is the one case it cannot cover. The copy actively misdirects: it sends the user to build a workout
 they already have.
 
 **Question.** Should the empty-state branch fall through to the error treatment when `store.error`
 is non-nil?
 
-## 4. `PlanCache` is unversioned — closed, kept for the reasoning
+## 4. `TrainingCache` is unversioned — closed, kept for the reasoning
 
-**What the code does.** `PlanStore.swift:64-83` encodes `Plan`/`Interval` straight to JSON with a
+**What the code does.** `TrainingStore.swift:64-83` encodes `Workout`/`Interval` straight to JSON with a
 bare `JSONEncoder()` — no version key, no timestamp, no user keying. `load()` returns `nil` on any
 failure via `try?` with **no `Log.debug` call**.
 
@@ -88,7 +88,7 @@ invalidates every existing cache file, and nothing anywhere reported it — the 
 slower first paint. `PhoneConnectivity` logs *every* skip it makes, so the silence here read as an
 oversight rather than a decision.
 
-**Closed — the log half, and deliberately not the version half.** `PlanCache.load()` now logs the
+**Closed — the log half, and deliberately not the version half.** `TrainingCache.load()` now logs the
 decode failure, which was the actual defect: an unreadable cache and no cache yet were
 indistinguishable in the log, and offline that is the difference between a workout and none. A
 version key was **not** added. It would buy nothing on its own — the decode either succeeds or it
@@ -117,13 +117,13 @@ that writing it was blocked the first time.
 
 ## 6. Web error handling has three different treatments
 
-**What the code does.** `Plans.tsx` and `History.tsx` replace the whole screen with the error, so a
+**What the code does.** `Workouts.tsx`, `WeekPlans.tsx` and `History.tsx` replace the whole screen with the error, so a
 failed *delete* blanks the *list*. `Exercises.tsx` renders it inline above a still-visible list.
-`PlanEditor.tsx` routes load failures through a `!plan` branch rendered in muted, non-error style,
+`WorkoutEditor.tsx` routes load failures through a `!workout` branch rendered in muted, non-error style,
 sharing one `error` string with save failures.
 
 **Why it may be wrong.** There is no stated convention, and the treatments have different
-consequences for the user. Bare `err.message` is also used in three routes while `PlanEditor` uses
+consequences for the user. Bare `err.message` is also used in three routes while `WorkoutEditor` uses
 `err instanceof Error ? … : …`.
 
 **Question.** Which is the intended pattern? `Exercises.tsx` (keep content, show error inline)
@@ -363,10 +363,10 @@ in use, and which is a Watch-runtime question rather than a Health one.
 nothing about whether this launch is a fixture. `SessionController.persistsRecord` — the flag that
 does distinguish them — is `private`, so the view cannot read it.
 
-**Why it matters.** `-demoSession` runs `DemoPlan.make()`, a realistic full-length plan, and it
+**Why it matters.** `-demoSession` runs `DemoWorkout.make()`, a realistic full-length workout, and it
 reaches the summary screen like any other. Today a demo run is kept out of history only
 *incidentally*: either the app is signed out, so `auth.session.user.id` throws, or `plan_id` is a
-fresh random UUID that violates the foreign key to `public.plans`. Neither is a guard. A demo run
+fresh random UUID that violates the foreign key to `public.workouts`. Neither is a guard. A demo run
 with a live keychain session inserts a row named `"Demo — Upper Body A"` into real history, where
 it is indistinguishable from a workout that was done.
 
@@ -386,7 +386,7 @@ fixed, because the fix touches `SessionRecord`.
 **restoring** initialiser hardcodes it to `true` (`SessionController.swift:166`), on the reasoning
 that a record on disk is a real workout by definition. It is not: `-demoRecord` is the one fixture
 that *writes* a record (it exists to exercise resume), so a `-demoRecord` run that is killed
-mid-session leaves `session-record.json` describing `DemoPlan.make()` — and the next ordinary
+mid-session leaves `session-record.json` describing `DemoWorkout.make()` — and the next ordinary
 launch resumes it as a real session. Completing it clears the three-minute bar comfortably and
 offers a workout nobody did to Apple Health.
 

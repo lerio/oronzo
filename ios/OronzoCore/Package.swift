@@ -1,7 +1,7 @@
 // swift-tools-version: 6.0
 import PackageDescription
 
-/// Pure logic shared by the iOS app and the Watch app: the plan model, the flattening
+/// Pure logic shared by the iOS app and the Watch app: the workout model, the flattening
 /// rule, and the session execution engine.
 ///
 /// It is a package rather than a folder of shared sources for one specific reason: it has

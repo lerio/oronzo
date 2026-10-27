@@ -1,6 +1,6 @@
 ---
 name: contract-auditor
-description: Audits Oronzo's mirrored domain model for drift — the flattening rule, the workout model, and the column names that exist in three languages at once. Use after changing anything about blocks, steps, sets, rounds, rest, or the plan/session schema, or when something behaves differently in the web preview than on the phone.
+description: Audits Oronzo's mirrored domain model for drift — the flattening rule, the workout model, and the column names that exist in three languages at once. Use after changing anything about blocks, steps, sets, rounds, rest, or the workout/session schema, or when something behaves differently in the web preview than on the phone.
 tools: Read, Grep, Glob, Bash
 model: inherit
 color: cyan
@@ -16,10 +16,11 @@ agree:
 
 | Concern | Swift | TypeScript | SQL |
 |---|---|---|---|
-| Flattening rule | `ios/OronzoCore/Sources/OronzoCore/PlanFlattener.swift` | `flattenPlan` in `web/src/lib/types.ts` | `save_plan` in `supabase/migrations/` |
+| Flattening rule | `ios/OronzoCore/Sources/OronzoCore/WorkoutFlattener.swift` | `flattenWorkout` in `web/src/lib/types.ts` | `save_workout` in `supabase/migrations/` |
 | Exercise facts it resolves against | `ExerciseInfo` in `Models.swift` | the `Exercise` record | `exercises.name`, `exercises.has_two_sides`, `exercises.alternates_sides` |
-| Plan shape | `Models.swift` | `types.ts` (`Plan`, `PlanBlock`, `PlanStep`) | `plan_blocks`, `plan_steps` |
-| Reading a plan | `PlanRepository.swift` row types | `api.ts` (`PLAN_SELECT`, `PlanRow`) | the column names themselves |
+| Workout shape | `Models.swift` (`Workout`, `WorkoutBlock`, `WorkoutStep`, `PreferredTime`) | `types.ts` (`Workout`, `WorkoutBlock`, `WorkoutStep`) | `workouts`, `workout_blocks`, `workout_steps` |
+| Reading a workout | `TrainingRepository.workoutSelect` | `api.ts` (`WORKOUT_SELECT`, `WorkoutRow`) | the column names themselves |
+| Weekly schedule | `WeekPlan`, `PlanSlot`, `WeekSchedule`, `PreferredTime` | `types.ts` (`WeekPlan`, `PlanSlot`, `compareWorkoutsByTimeThenName`) | `plans`, `plan_workouts.weekday` |
 | Writing a session | `SessionLogger.swift` row types | — | `sessions`, `session_steps` |
 
 A change in one and not the others is the single most likely way this codebase breaks, and it
@@ -52,15 +53,24 @@ when you build it and runs another way when you do it.
    outside the step loop and so can never be preceded by one. The prepare carries the context of
    the interval it precedes and no `stepID`; `kind` is `.exercise`, never a case of its own.
 
-2. **Field-by-field parity.** Walk every field of `PlanStep`, `PlanBlock`, `Plan` and `Interval`
+2. **Field-by-field parity.** Walk every field of `WorkoutStep`, `WorkoutBlock`, `Workout` and `Interval`
    across Swift and TypeScript. For each, say whether it exists in both. Then check the SQL
-   columns those fields map to actually exist in the migrations — and note that `save_plan` has
+   columns those fields map to actually exist in the migrations — and note that `save_workout` has
    been redefined several times, so **the newest definition is the current shape**, not `0001`.
 
-3. **The row types.** `PlanRepository.swift` and `api.ts` each hand-write a `select` string and a
+3. **The row types.** `TrainingRepository.swift` and `api.ts` each hand-write a `select` string and a
    Decodable/type mirroring it. These are the most fragile files in the repo: a column dropped
    from the database but still named in a select string produces a 400 at runtime, in an app, on
-   a device. Compare both select strings against the actual current columns.
+   a device. Compare both select strings against the actual current columns. The weekly-plan
+   select is small but just as literal: `plan_workouts(workout_id,weekday)`.
+
+4. **The schedule.** `plan_workouts.weekday` is ISO (1 = Monday … 7 = Sunday) in SQL, Swift and
+   TypeScript. Same-day order must be identical in `WeekSchedule.precedes` and
+   `compareWorkoutsByTimeThenName`: preferred time ascending (null last), then name
+   case-insensitively, then id. The schedule is written one row at a time — there is no weekly
+   `save_plan` RPC; a whole-plan writer would be drift. Check that `sessions.plan_id`/`plan_name`
+   are still the historical names that reference `workouts`, and that
+   `SessionSnapshot.planName` and the on-disk `SessionRecord` keys were not renamed.
 
 4. **The wire format.** `SessionSnapshot` and `SessionState` in
    `ios/OronzoCore/Sources/OronzoCore/Link.swift` are `Codable` and cross a process boundary.

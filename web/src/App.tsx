@@ -3,14 +3,16 @@ import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { signOut, useAuth } from './auth';
 import Login from './routes/Login';
 
-// The four signed-in routes load on navigation, not on first paint.
+// The signed-in routes load on navigation, not on first paint.
 //
 // They used to be imported eagerly, which put all of them — and the whole Supabase client, the
 // largest thing in the bundle, along with the `realtime-js` it bundles and this app never calls —
 // on the critical path of the sign-in screen. Split, the login screen ships without any of it, and
 // what is behind it arrives per tab.
-const Plans = lazy(() => import('./routes/Plans'));
-const PlanEditor = lazy(() => import('./routes/PlanEditor'));
+const WeekPlans = lazy(() => import('./routes/WeekPlans'));
+const WeekPlanEditor = lazy(() => import('./routes/WeekPlanEditor'));
+const Workouts = lazy(() => import('./routes/Workouts'));
+const WorkoutEditor = lazy(() => import('./routes/WorkoutEditor'));
 const Exercises = lazy(() => import('./routes/Exercises'));
 const History = lazy(() => import('./routes/History'));
 
@@ -23,6 +25,7 @@ export default function App() {
 
   const tabs = [
     { to: '/plans', label: 'Plans' },
+    { to: '/workouts', label: 'Workouts' },
     { to: '/exercises', label: 'Exercises' },
     { to: '/history', label: 'History' },
   ];
@@ -32,7 +35,7 @@ export default function App() {
       <header className="topbar">
         <div className="brand">
           <span className="brand-mark">Oronzo</span>
-          <span className="brand-sub">plan builder</span>
+          <span className="brand-sub">workout builder</span>
         </div>
         <nav className="tabs">
           {tabs.map((tab) => (
@@ -56,9 +59,13 @@ export default function App() {
         <Suspense fallback={<div className="centered muted">Loading…</div>}>
           <Routes>
             <Route path="/" element={<Navigate to="/plans" replace />} />
-            <Route path="/plans" element={<Plans />} />
-            <Route path="/plans/new" element={<PlanEditor />} />
-            <Route path="/plans/:id" element={<PlanEditor />} />
+            <Route path="/plans" element={<WeekPlans />} />
+            {/* Old bookmarks: /plans/new is no longer a form; the list creates and navigates. */}
+            <Route path="/plans/new" element={<Navigate to="/plans" replace />} />
+            <Route path="/plans/:id" element={<WeekPlanEditor />} />
+            <Route path="/workouts" element={<Workouts />} />
+            <Route path="/workouts/new" element={<WorkoutEditor />} />
+            <Route path="/workouts/:id" element={<WorkoutEditor />} />
             <Route path="/exercises" element={<Exercises />} />
             <Route path="/history" element={<History />} />
             <Route path="*" element={<Navigate to="/plans" replace />} />

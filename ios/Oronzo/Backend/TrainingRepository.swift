@@ -8,10 +8,13 @@ import Supabase
 // so that decoding needs no CodingKeys and cannot silently drift from the schema. They are
 // mapped to OronzoCore domain types immediately and never escape this file.
 
-private struct PlanRow: Decodable {
+private struct WorkoutRow: Decodable {
     let id: UUID
     let name: String
-    let plan_blocks: [BlockRow]?
+    /// PostgREST serialises `time` as `"07:00:00"`; `PreferredTime(postgres:)` accepts both that
+    /// and the builder's `"07:00"`. Nil is "Anytime".
+    let preferred_time: String?
+    let workout_blocks: [BlockRow]?
 }
 
 private struct BlockRow: Decodable {
@@ -20,7 +23,7 @@ private struct BlockRow: Decodable {
     let name: String?
     let rounds: Int
     let rest_between_rounds_seconds: Int?
-    let plan_steps: [StepRow]?
+    let workout_steps: [StepRow]?
 }
 
 private struct StepRow: Decodable {
@@ -35,12 +38,23 @@ private struct StepRow: Decodable {
     let target_weight_kg: Double?
     let rest_after_seconds: Int?
     /// The three words live in the database's check constraint; an unknown one decodes to nil
-    /// rather than failing the whole step, because a plan that will not load is worse than a plan
+    /// rather than failing the whole step, because a workout that will not load is worse than one
     /// whose effort is missing.
     let intensity: String?
     /// Optional for the same reason every column on this row is: an older database — or a
     /// response that predates `0014` — must still decode.
     let prepare_seconds: Int?
+}
+
+private struct WeekPlanRow: Decodable {
+    let id: UUID
+    let name: String
+    let plan_workouts: [PlanSlotRow]?
+}
+
+private struct PlanSlotRow: Decodable {
+    let workout_id: UUID
+    let weekday: Int
 }
 
 private struct ExerciseRow: Decodable {
@@ -53,7 +67,7 @@ private struct ExerciseRow: Decodable {
     let alternates_sides: Bool
 }
 
-/// The `plan_steps` columns a load adjustment writes, as a PATCH body.
+/// The `workout_steps` columns a load adjustment writes, as a PATCH body.
 ///
 /// Both are optional, and a nil one is **omitted from the JSON** rather than sent as `null` — which
 /// for PostgREST means "leave this column alone". That is exactly right here: an edit carries the
@@ -69,44 +83,45 @@ private struct PatchedStep: Decodable {
     let id: UUID
 }
 
-/// A plan write that did not happen.
-enum PlanWriteError: LocalizedError {
+/// A workout write that did not happen.
+enum WorkoutWriteError: LocalizedError {
 
     /// The step was not there to update — either the id is stale, or RLS refused the row.
     ///
     /// **Both look identical from here, and both are silent without this case.** PostgREST answers
     /// a PATCH that matched nothing with `200` and an empty array, so without checking the response
     /// the app would report success over a change that went nowhere. The likeliest cause by far is
-    /// `save_plan`'s whole-tree replace: it mints new step ids, so a plan edited on the web while a
-    /// session is running leaves the phone holding an id that no longer exists.
+    /// `save_workout`'s whole-tree replace: it mints new step ids, so a workout edited on the web
+    /// while a session is running leaves the phone holding an id that no longer exists.
     case stepNotFound
 
     var errorDescription: String? {
         switch self {
         case .stepNotFound:
-            "this plan changed elsewhere, so there was nothing to update"
+            "this workout changed elsewhere, so there was nothing to update"
         }
     }
 }
 
 // MARK: - Mapping
 
-private extension PlanRow {
-    func toDomain() -> Plan {
-        Plan(
+private extension WorkoutRow {
+    func toDomain() -> Workout {
+        Workout(
             id: id,
             name: name,
-            blocks: (plan_blocks ?? [])
+            preferredTime: preferred_time.flatMap(PreferredTime.init(postgres:)),
+            blocks: (workout_blocks ?? [])
                 .sorted { $0.position < $1.position }
                 .map { block in
-                    PlanBlock(
+                    WorkoutBlock(
                         name: block.name,
                         rounds: max(1, block.rounds),
                         restBetweenRounds: block.rest_between_rounds_seconds.map(TimeInterval.init),
-                        steps: (block.plan_steps ?? [])
+                        steps: (block.workout_steps ?? [])
                             .sorted { $0.position < $1.position }
                             .map { step in
-                                PlanStep(
+                                WorkoutStep(
                                     id: step.id,
                                     exerciseID: step.exercise_id,
                                     label: step.label,
@@ -126,26 +141,59 @@ private extension PlanRow {
     }
 }
 
+private extension WeekPlanRow {
+    func toDomain() -> WeekPlan {
+        WeekPlan(
+            id: id,
+            name: name,
+            slots: (plan_workouts ?? [])
+                .compactMap { slot in
+                    guard let weekday = Weekday(rawValue: slot.weekday) else { return nil }
+                    return PlanSlot(workoutID: slot.workout_id, weekday: weekday)
+                }
+                // The web sorts its slots by weekday too; a workout's "Scheduled in" line should
+                // read Mon, Thu in the same order on both surfaces.
+                .sorted { $0.weekday.rawValue < $1.weekday.rawValue }
+        )
+    }
+}
+
 // MARK: - Repository
 
-struct PlanRepository: Sendable {
+struct TrainingRepository: Sendable {
 
     /// One line on purpose: PostgREST parses this as a query string, so embedded newlines
     /// or stray whitespace break it.
-    private static let planSelect =
-        "id,name,plan_blocks(id,position,name,rounds,rest_between_rounds_seconds,"
-        + "plan_steps(id,position,exercise_id,label,sets,mode,duration_seconds,reps,"
+    private static let workoutSelect =
+        "id,name,preferred_time,workout_blocks(id,position,name,rounds,rest_between_rounds_seconds,"
+        + "workout_steps(id,position,exercise_id,label,sets,mode,duration_seconds,reps,"
         + "target_weight_kg,rest_after_seconds,intensity,prepare_seconds))"
 
-    func fetchPlans() async throws -> [Plan] {
-        let rows: [PlanRow] = try await Backend.client
-            .from("plans")
-            .select(Self.planSelect)
-            // The order the user arranged the list in on the web, not when it was last edited.
-            // `position` is deliberately absent from `planSelect`: PostgREST applies `order`
-            // independently of the select list, and leaving it out keeps `PlanRow` — and the
-            // unversioned `PlanCache` file written from it — byte-for-byte what it was.
+    /// Kept on one line for the same reason.
+    private static let weekPlanSelect = "id,name,plan_workouts(workout_id,weekday)"
+
+    func fetchWorkouts() async throws -> [Workout] {
+        let rows: [WorkoutRow] = try await Backend.client
+            .from("workouts")
+            .select(Self.workoutSelect)
+            // The order the user arranged the library in on the web, not when it was last edited.
+            // `position` is deliberately absent from `workoutSelect`: PostgREST applies `order`
+            // independently of the select list, and leaving it out keeps `WorkoutRow` — and the
+            // unversioned cache file written from it — byte-for-byte what it was.
             .order("position", ascending: true)
+            .execute()
+            .value
+        return rows.map { $0.toDomain() }
+    }
+
+    /// The weekly templates, `created_at` then name. `created_at` is ordered but not selected,
+    /// exactly as `position` is above; the plans are few and this keeps the payload small.
+    func fetchWeekPlans() async throws -> [WeekPlan] {
+        let rows: [WeekPlanRow] = try await Backend.client
+            .from("plans")
+            .select(Self.weekPlanSelect)
+            .order("created_at", ascending: true)
+            .order("name", ascending: true)
             .execute()
             .value
         return rows.map { $0.toDomain() }
@@ -169,23 +217,23 @@ struct PlanRepository: Sendable {
 
     /// Writes one step's load — the runner's Adjust button, and the only **write** this type has.
     ///
-    /// **Narrow on purpose.** The alternative is `save_plan`, which is the only other way a step's
-    /// load can change and is the wrong tool twice over: it replaces the whole tree, so it mints
-    /// new block and step ids (invalidating the very id this session is holding, and any other
-    /// session's), and it would write back a plan the web builder may have changed since this
-    /// session started. One row, two columns, the values the user chose.
+    /// **Narrow on purpose.** The alternative is `save_workout`, which is the only other way a
+    /// step's load can change and is the wrong tool twice over: it replaces the whole tree, so it
+    /// mints new block and step ids (invalidating the very id this session is holding, and any
+    /// other session's), and it would write back a workout the web builder may have changed since
+    /// this session started. One row, two columns, the values the user chose.
     ///
-    /// It needs no new SQL: `plan_steps` carries a `for all` RLS policy resolving ownership through
-    /// `plan_blocks → plans.user_id`, and the `update` grant on it, both from `0001`. The two CHECK
-    /// constraints that still apply are the ones the caller already respects — a weight at or above
-    /// zero (`LoadDial` floors there) and one of the three effort words.
+    /// It needs no new SQL: `workout_steps` carries a `for all` RLS policy resolving ownership
+    /// through `workout_blocks → workouts.user_id`, and the `update` grant on it, both from `0001`.
+    /// The two CHECK constraints that still apply are the ones the caller already respects — a
+    /// weight at or above zero (`LoadDial` floors there) and one of the three effort words.
     ///
     /// A load is not a receipt. Retrying this is safe, unlike the history insert — it writes an
     /// absolute value rather than appending a row — so `SessionController` retries once through a
-    /// renewed session, the way `PlanStore.refresh` does.
+    /// renewed session, the way `TrainingStore.refresh` does.
     func updateStepLoad(stepID: UUID, weightKg: Double?, intensity: Intensity?) async throws {
         let patched: [PatchedStep] = try await Backend.client
-            .from("plan_steps")
+            .from("workout_steps")
             .update(StepLoadPatch(
                 target_weight_kg: weightKg,
                 // The three words are the same three in all three languages, so no mapping.
@@ -196,7 +244,7 @@ struct PlanRepository: Sendable {
             .execute()
             .value
 
-        // **An empty echo is a failure, not a success.** See `PlanWriteError.stepNotFound`.
-        guard !patched.isEmpty else { throw PlanWriteError.stepNotFound }
+        // **An empty echo is a failure, not a success.** See `WorkoutWriteError.stepNotFound`.
+        guard !patched.isEmpty else { throw WorkoutWriteError.stepNotFound }
     }
 }

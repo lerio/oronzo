@@ -66,7 +66,7 @@ final class PhoneConnectivity: NSObject {
         // **A session that exists but has not claimed the link yet is still a session.**
         //
         // This is the window between `SessionHost.begin` and the runner's `start`: the controller
-        // exists, the engine holds the whole plan, and nothing has been said to the watch yet.
+        // exists, the engine holds the whole workout, and nothing has been said to the watch yet.
         // Answering "nothing running" there is not a harmless gap — it is the phone *telling the
         // watch there is no workout at the exact moment one is starting*, and that clear goes into
         // the single-slot application context with the same authority as everything else, where it
@@ -320,7 +320,7 @@ final class PhoneConnectivity: NSObject {
     /// Re-reads the registration facts when the app comes forward.
     ///
     /// `sessionWatchStateDidChange` only fires while the process is alive to receive it — a phone
-    /// suspended through a drop wakes holding whatever it last knew, on the plan screen the next
+    /// suspended through a drop wakes holding whatever it last knew, on the workout screen the next
     /// workout is chosen from. One property read on a scene activation is the whole cost.
     func refreshWatchState() {
         guard let session else { return }

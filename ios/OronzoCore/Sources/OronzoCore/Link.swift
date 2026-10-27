@@ -24,15 +24,18 @@ public enum WatchMessage: Codable, Sendable {
     case sessionEnded
 }
 
-/// The whole picture: the plan, and where the session is within it.
+/// The whole picture: the workout, and where the session is within it.
 ///
 /// This is ONE message rather than a "start" followed by "updates", and that is not a style
 /// choice. The application context is a single slot — whatever you write last is all that
 /// survives — so sending a start and then an update back to back leaves only the update. A
-/// watch app that was asleep at that moment would wake to a position with no plan in it,
+/// watch app that was asleep at that moment would wake to a position with no workout in it,
 /// and sit there showing "no workout" while the phone thought it had been told everything.
-/// Sending the plan every time costs a few kilobytes and removes that entire class of bug.
+/// Sending the workout every time costs a few kilobytes and removes that entire class of bug.
 public struct SessionSnapshot: Codable, Sendable {
+    /// The workout's display name. **The key is historical and must not be renamed:** it crosses
+    /// two independently installed apps, and a rename would make every mixed-install snapshot
+    /// fail to decode — a silent "No workout" on the wrist.
     public let planName: String
     public let intervals: [Interval]
     public let startedAt: Date

@@ -16,7 +16,7 @@ import OronzoCore
 /// A session is not a view's business. It outlives the screen that started it: it keeps ticking
 /// while the phone is in a pocket, it must survive the runner being re-created, and it is written
 /// down so it can survive the app itself. So it lives here, created once by `OronzoApp` and handed
-/// to whoever needs it, exactly like `AuthStore` and `PlanStore`.
+/// to whoever needs it, exactly like `AuthStore` and `TrainingStore`.
 ///
 /// The guards stay. They cost nothing and they catch a regression. What changes is that nothing
 /// new needs them.
@@ -30,9 +30,6 @@ final class SessionHost {
     /// Whether the runner should be on screen. The one thing a view has to ask.
     var isPresented: Bool { controller != nil }
 
-    /// The plan a live session belongs to, so a plan's own screen can tell whether *it* started it.
-    var planID: UUID? { controller?.planID }
-
     /// Starts a workout, or returns the one already running.
     ///
     /// **Idempotent, and that is the point.** The runner is built and thrown away repeatedly; if
@@ -41,25 +38,25 @@ final class SessionHost {
     /// so there is exactly one engine per workout no matter how often the UI asks.
     @discardableResult
     func begin(
-        plan: Plan,
+        workout: Workout,
         exercises: [UUID: ExerciseInfo],
         persistsRecord: Bool = true,
         recordsHealth: Bool = true,
-        savesPlan: Bool = true
+        savesWorkout: Bool = true
     ) -> SessionController {
-        if let controller, controller.planID == plan.id { return controller }
+        if let controller, controller.workoutID == workout.id { return controller }
 
-        // A different plan is only reachable by ending the one on screen first, which `end()` does.
+        // A different workout is only reachable by ending the one on screen first, which `end()` does.
         // Replacing rather than stacking is the single-owner rule: there is one workout at a time.
         let started = SessionController(
-            plan: plan,
+            workout: workout,
             exercises: exercises,
             persistsRecord: persistsRecord,
             recordsHealth: recordsHealth,
-            savesPlan: savesPlan
+            savesWorkout: savesWorkout
         )
         controller = started
-        Log.debug("host: began a session for \"\(plan.name)\"")
+        Log.debug("host: began a session for \"\(workout.name)\"")
         return started
     }
 
@@ -102,7 +99,7 @@ final class SessionHost {
         }
 
         controller = restored
-        Log.debug("host: resumed \"\(record.planName)\" at interval \(record.currentIndex) of \(record.intervals.count)")
+        Log.debug("host: resumed \"\(record.workoutName)\" at interval \(record.currentIndex) of \(record.intervals.count)")
         // Back at work immediately, whether or not a screen is ever presented for it — see the
         // note above. Claiming the link is the part that matters: without it the watch's controls
         // reach nothing.
